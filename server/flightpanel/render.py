@@ -1,15 +1,18 @@
 """Display-Modell -> 128x32-Bild -> Frame-Bytes für den ESP32 / PNG für den Browser.
 
-Layouts (LAYOUT in .env):
-  C    Logo links (30x30), rechts drei Zeilen: Airline, Route + Typ, wechselnde Info
+Was gezeigt wird (render): Notfall-Squawk vor allem, dann Airline-Flüge, sonst
+Leerlauf-Karten (idle.py, cards/), zu denen auch Privatflieger, Hubschrauber und
+Militär im Sichtfeld gehören.
+
+Layouts für Flüge (LAYOUT in .env):
+  C    Logo links (32 x 32), rechts drei Zeilen: Airline, Route + Typ, wechselnde Info
   A    ohne Logo, drei Zeilen über die ganze Breite (Airline + Callsign, Route, Info)
   B    zwei Flüge, je eine Zeile
-  auto C wenn für den Flug ein Logo da ist, sonst A
+  AUTO C, wenn für den Flug ein Logo da ist, sonst A
 
-Bei mehreren Flügen wechseln A und C nach jedem Durchlauf der Infozeilen
-zum nächsten Flug (nächster zuerst). Sonst Leerlauf-Karten (idle.py, cards.py):
-Uhr, nächster Flieger, Radar, Statistik, Wetter, ISS, Privatflieger, Witze ...
-"""
+Bei mehreren Flügen wechseln A und C nach jedem Durchlauf der Infozeilen zum
+nächsten Flug, Landende in Landefolge zuerst. Sind mindestens zwei im Sichtfeld,
+zeigen Himmelspunkte, welcher gerade dran ist."""
 
 import io
 from dataclasses import replace
@@ -19,22 +22,17 @@ from PIL import Image
 
 from .aircraft import second_line, shown_elsewhere
 from .cards import CARDS
-from .colors import ARR_C, CLOCK, DEP_C, INFO, MUTED, OVF_C, dim
+from .colors import CLOCK, INFO, MUTED, dim
 from .config import Config
+from .draw import ROW1, ROW2, ROW3, STATUS_COLORS, line, right, status_glyph, text
 from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from .geo import kompass
 from .idle import IdleScreen
 from .logos import LogoStore
-from .model import ARR, DEP, DisplayModel, Flight
+from .model import DisplayModel, Flight
 
-# Satte Farben, kein Weiß als Textfarbe (Strom, Blendung), siehe colors.py.
-COLORS = {ARR: ARR_C, DEP: DEP_C, "OVF": OVF_C}
-STALE_FACTOR = 0.4
-
-PROTO_VERSION = 1
-
-# Zeilenraster für 32 px Höhe
-ROW1, ROW2, ROW3 = 0, 12, 24       # gleicher Abstand; die untere Zeile sitzt auf der Kante
+PROTO_VERSION = 1       # Byte 0 von /frame, muss zur Firmware passen
+STALE_FACTOR = 0.4      # so hell bei alten Daten
 
 # Himmelspunkte: ein Punkt pro Flug im Wechsel, der im Sichtfeld ist, in Lesereihenfolge:
 # links landet zuerst, dann die Landefolge, danach der Rest; der gezeigte leuchtet.
@@ -45,22 +43,12 @@ LOGO_COL = 32           # Logospalte, Logo bündig in der Ecke
 LOGO_WITH_DOTS = 28     # mit Himmelspunkten darunter (3 px Punkte, 1 px Abstand)
 
 
-_dim = dim
-
-
-def status_glyph(f: Flight) -> str:
-    return "↓" if f.status == ARR else "↑" if f.status == DEP else "→"
-
-
 def alt_text(f: Flight) -> str:
     if f.alt_ft is None:
         return ""
     if f.alt_ft >= 18000:
         return f"FL{f.alt_ft // 100}"
     return f"{(f.alt_ft // 100) * 100}ft"
-
-
-WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 
 
 def info_pages(f: Flight, hide_callsign: bool = False) -> list[str]:
@@ -79,16 +67,6 @@ def info_pages(f: Flight, hide_callsign: bool = False) -> list[str]:
     if not hide_callsign:
         pages.append(f.callsign)
     return pages
-
-
-def text_line(img: Image.Image, x: int, y: int, text: str, color, max_w: int) -> None:
-    """Eine Textzeile in FONT_MID; passt sie nicht in max_w, in FONT_SMALL (bündig
-    mit der Unterkante der Großbuchstaben), erst dann gekürzt. Abschneiden ändert
-    sonst den Sinn ("Kurs SW" -> "Kurs S")."""
-    if FONT_MID.text_width(text) <= max_w:
-        FONT_MID.draw(img, x, y, text, color)
-    else:
-        FONT_SMALL.draw(img, x, y + FONT_MID.cap_height - FONT_SMALL.cap_height, FONT_SMALL.fit(text, max_w), color)
 
 
 def type_width(fl: Flight, line2: str, avail: int) -> int:
@@ -111,19 +89,10 @@ class Renderer:
         self.idle = idle
 
     # ---------------------------------------------------------------- API --
-    def _pick(self, model: DisplayModel, now: float) -> tuple[Flight, int]:
-        """Welcher Flug und welche Infoseite gerade dran ist."""
-        tick = int(now // self.cfg.page_seconds)
-        n_pages = 4 if any(fl.land_eta_s is not None for fl in model.flights) else 3   # Landende: + Landezeit
-        idx = (tick // n_pages) % len(model.flights)
-        return model.flights[idx], tick % n_pages
-
     def render(self, model: DisplayModel, now: float, card: str | None = None) -> Image.Image:
-        """Notfall-Squawk vor allem; dann Airline-Flüge; sonst Leerlauf-Karten, zu denen
-        auch Privatflieger, Hubschrauber und Militär im Sichtfeld gehören (ohne Vorrang).
+        """Notfall-Squawk vor allem; dann Airline-Flüge; sonst Leerlauf-Karten.
         card erzwingt eine Leerlauf-Karte (Vorschau)."""
-        W, H = self.cfg.width, self.cfg.height
-        img = Image.new("RGB", (W, H), (0, 0, 0))
+        img = Image.new("RGB", (self.cfg.width, self.cfg.height), (0, 0, 0))
         f = STALE_FACTOR if model.stale else 1.0
 
         if card:
@@ -147,7 +116,7 @@ class Renderer:
         return img
 
     def draw_flight(self, img: Image.Image, model: DisplayModel, fl: Flight, page: int, f: float) -> None:
-        """Ein Flug in Layout C (mit Logo) oder A; B zeigt einzelne Flüge wie auto."""
+        """Ein Flug in Layout C (mit Logo) oder A; B zeigt einzelne Flüge wie AUTO."""
         logo = self.logos.get(fl.airline_iata, fl.airline_icao)
         dots = self._sky_dots(model, fl)
         layout = self.cfg.layout
@@ -158,32 +127,8 @@ class Renderer:
         else:
             self._layout_a(img, fl, page, f, dots)
 
-    def _sky_dots(self, model: DisplayModel, fl: Flight) -> list[tuple[tuple[int, int, int], bool]]:
-        """(Statusfarbe, ist der gezeigte Flug) für jeden Flug im Wechsel, der im
-        Sichtfeld ist. Gelesen wird von links nach rechts: links der, der zuerst
-        landet, dann die Landefolge; Starts und Überflüge danach, nach Richtung im
-        Sichtfeld. (Vom Balkon aus gesehen landet der rechteste zuerst; nach dieser
-        Geometrie zu sortieren war nicht intuitiv.) Nur Flüge, die das Panel auch
-        zeigt: Jeder Punkt leuchtet irgendwann. Leer bei weniger als zwei oder wenn
-        der gezeigte Flug nicht im Sichtfeld ist."""
-        seen = sorted((f for f in model.flights if f.visible),
-                      key=lambda f: (f.seq is None, f.seq or 0, (f.bearing - self.cfg.view_from) % 360))
-        idx = next((i for i, f in enumerate(seen) if f is fl), None)
-        if len(seen) < 2 or idx is None:
-            return []
-        lo = max(0, min(idx - MAX_DOTS // 2, len(seen) - MAX_DOTS))   # Fenster um den gezeigten
-        return [(COLORS[f.status], f is fl) for f in seen[lo:lo + MAX_DOTS]]
-
-    def _draw_dots(self, img: Image.Image, x: int, y: int, dots, f: float) -> None:
-        for i, (col, lit) in enumerate(dots):
-            c = _dim(col, f if lit else f * DOT_DIM)
-            img.paste(c, (x + i * DOT_PITCH, y, x + i * DOT_PITCH + DOT, y + DOT))
-
-    @staticmethod
-    def _dots_width(dots) -> int:
-        return len(dots) * DOT_PITCH - (DOT_PITCH - DOT) if dots else 0
-
     def frame_bytes(self, img: Image.Image, brightness: int) -> bytes:
+        """Für den ESP32: [Version, Helligkeit, Breite, Höhe] + RGB, zeilenweise."""
         W, H = img.size
         return bytes([PROTO_VERSION, max(0, min(255, brightness)), W, H]) + img.tobytes()
 
@@ -210,6 +155,40 @@ class Renderer:
         big.save(buf, format="PNG")
         return buf.getvalue()
 
+    # ------------------------------------------------------------ Auswahl --
+    def _pick(self, model: DisplayModel, now: float) -> tuple[Flight, int]:
+        """Welcher Flug und welche Infoseite gerade dran ist."""
+        tick = int(now // self.cfg.page_seconds)
+        n_pages = 4 if any(fl.land_eta_s is not None for fl in model.flights) else 3   # Landende: + Landezeit
+        idx = (tick // n_pages) % len(model.flights)
+        return model.flights[idx], tick % n_pages
+
+    def _sky_dots(self, model: DisplayModel, fl: Flight) -> list[tuple[tuple[int, int, int], bool]]:
+        """(Statusfarbe, ist der gezeigte Flug) für jeden Flug im Wechsel, der im
+        Sichtfeld ist. Gelesen wird von links nach rechts: links der, der zuerst
+        landet, dann die Landefolge; Starts und Überflüge danach, nach Richtung im
+        Sichtfeld. (Vom Fenster aus gesehen landet oft der rechteste zuerst; nach
+        dieser Geometrie zu sortieren war nicht intuitiv.) Nur Flüge, die das Panel
+        auch zeigt: Jeder Punkt leuchtet irgendwann. Leer bei weniger als zwei oder
+        wenn der gezeigte Flug nicht im Sichtfeld ist."""
+        seen = sorted((f for f in model.flights if f.visible),
+                      key=lambda f: (f.seq is None, f.seq or 0, (f.bearing - self.cfg.view_from) % 360))
+        idx = next((i for i, f in enumerate(seen) if f is fl), None)
+        if len(seen) < 2 or idx is None:
+            return []
+        lo = max(0, min(idx - MAX_DOTS // 2, len(seen) - MAX_DOTS))   # Fenster um den gezeigten
+        return [(STATUS_COLORS[f.status], f is fl) for f in seen[lo:lo + MAX_DOTS]]
+
+    @staticmethod
+    def _draw_dots(img: Image.Image, x: int, y: int, dots, f: float) -> None:
+        for i, (col, lit) in enumerate(dots):
+            c = dim(col, f if lit else f * DOT_DIM)
+            img.paste(c, (x + i * DOT_PITCH, y, x + i * DOT_PITCH + DOT, y + DOT))
+
+    @staticmethod
+    def _dots_width(dots) -> int:
+        return len(dots) * DOT_PITCH - (DOT_PITCH - DOT) if dots else 0
+
     # ------------------------------------------------------------ Layouts --
     def _layout_c(self, img: Image.Image, fl: Flight, page: int, logo: Image.Image, f: float,
                   dots=()) -> None:
@@ -226,72 +205,70 @@ class Renderer:
             img.paste(logo, (0, 0))
         x0 = LOGO_COL + 2               # Text beginnt immer gleich weit rechts
         avail = img.width - x0
-        col = _dim(COLORS[fl.status], f)
 
         # Zeile 1: Pfeil + Airline (oder Callsign, wenn kein Name bekannt)
         name = fl.airline or fl.callsign
-        FONT_BIG.draw(img, x0, ROW1, FONT_BIG.fit(f"{status_glyph(fl)} {name}", avail), col)
+        text(img, FONT_BIG, x0, ROW1, f"{status_glyph(fl.status)} {name}", STATUS_COLORS[fl.status], f, avail)
 
         # Zeile 2: Route, sonst was der Flug ist, sonst ?→BER; rechtsbündig der Typ
         route = second_line(fl.origin, fl.dest, fl.status, fl.label, self.cfg.local_airport_iata)
         tw = type_width(fl, route, avail)
-        text_line(img, x0, ROW2, route, _dim(INFO, f), avail - tw)
+        line(img, x0, ROW2, route, INFO, f, avail - tw)
         if tw:
-            FONT_MID.draw(img, img.width - FONT_MID.text_width(fl.actype), ROW2, fl.actype, _dim(MUTED, f))
+            right(img, FONT_MID, ROW2, fl.actype, MUTED, f)
 
         # Zeile 3: wechselnde Info, ohne das Rufzeichen, wenn es oben schon steht
         pages = info_pages(fl, hide_callsign=shown_elsewhere(fl.callsign, name, route))
-        text_line(img, x0, ROW3, pages[page % len(pages)], _dim(INFO, f), avail)
+        line(img, x0, ROW3, pages[page % len(pages)], INFO, f, avail)
 
     def _layout_a(self, img: Image.Image, fl: Flight, page: int, f: float, dots=()) -> None:
-        col = _dim(COLORS[fl.status], f)
         W = img.width
         # Zeile 1: Pfeil + Name links, Rufzeichen rechts, wenn beides passt und der Name
         # es nicht schon ist. Sonst geht der Name vor (Christoph 31 statt "Christop CHX31"),
         # und das Rufzeichen kommt unten in den Wechsel.
         name = fl.airline or ""
-        head = f"{status_glyph(fl)} {name}".rstrip() if name else status_glyph(fl)
+        glyph = status_glyph(fl.status)
+        head = f"{glyph} {name}".rstrip() if name else glyph
         cs = "" if shown_elsewhere(fl.callsign, name) else fl.callsign
         if cs and name and FONT_BIG.text_width(head) + 6 + FONT_BIG.text_width(cs) > W:
             cs = ""
         csw = FONT_BIG.text_width(cs) if cs else 0
-        left = FONT_BIG.fit(head, W - (csw + 6 if cs else 0))
-        FONT_BIG.draw(img, 0, ROW1, left, col)
+        col = STATUS_COLORS[fl.status]
+        text(img, FONT_BIG, 0, ROW1, head, col, f, W - (csw + 6 if cs else 0))
         if cs:
-            FONT_BIG.draw(img, W - csw, ROW1, cs, col)
+            right(img, FONT_BIG, ROW1, cs, col, f)
 
         # Zeile 2: Route, sonst was der Flug ist, sonst ?→BER; Typ rechts
         route = second_line(fl.origin, fl.dest, fl.status, fl.label, self.cfg.local_airport_iata)
         tw = type_width(fl, route, W)
-        text_line(img, 0, ROW2, route, _dim(INFO, f), W - tw)
+        line(img, 0, ROW2, route, INFO, f, W - tw)
         if tw:
-            FONT_MID.draw(img, W - FONT_MID.text_width(fl.actype), ROW2, fl.actype, _dim(MUTED, f))
+            right(img, FONT_MID, ROW2, fl.actype, MUTED, f)
 
         # Zeile 3: wechselnde Info, rechts die Himmelspunkte, wenn Platz ist; ohne
         # Rufzeichen, wenn es schon oben steht
         pages = info_pages(fl, hide_callsign=bool(cs) or shown_elsewhere(fl.callsign, name, route))
         dw = self._dots_width(dots)
-        text_line(img, 0, ROW3, pages[page % len(pages)], _dim(INFO, f), W - (dw + 6 if dots else 0))
+        line(img, 0, ROW3, pages[page % len(pages)], INFO, f, W - (dw + 6 if dots else 0))
         if dots:
             self._draw_dots(img, W - dw, img.height - DOT, dots, f)
 
     def _layout_b(self, img: Image.Image, model: DisplayModel, now: float, f: float) -> None:
-        rows = [3, 19]
         W = img.width
-        for i, y in enumerate(rows):
+        for i, y in enumerate((3, 19)):
             if i >= len(model.flights):
                 if i == 1:
                     txt = datetime.fromtimestamp(now).strftime("%H:%M")
-                    FONT_SMALL.draw(img, W - FONT_SMALL.text_width(txt), y, txt, _dim(CLOCK, f))
+                    FONT_SMALL.draw(img, W - FONT_SMALL.text_width(txt), y, txt, dim(CLOCK, f))
                 continue
             fl = model.flights[i]
-            col = _dim(COLORS[fl.status], f)
+            col = dim(STATUS_COLORS[fl.status], f)
             name = fl.airline or fl.callsign
-            x = FONT_SMALL.draw(img, 0, y, f"{status_glyph(fl)} ", col)
+            x = FONT_SMALL.draw(img, 0, y, f"{status_glyph(fl.status)} ", col)
             x = FONT_SMALL.draw(img, x, y, FONT_SMALL.fit(name, 60), col)
-            right = f"{fl.other_airport[:3]} {alt_text(fl)}".strip()
-            if fl.actype and FONT_SMALL.text_width(right + " " + fl.actype) <= W - x - 6:
-                right = f"{right} {fl.actype}"
-            while right and FONT_SMALL.text_width(right) > W - x - 4:
-                right = right[:-1]
-            FONT_SMALL.draw(img, W - FONT_SMALL.text_width(right), y, right, _dim(INFO, f))
+            info = f"{fl.other_airport[:3]} {alt_text(fl)}".strip()
+            if fl.actype and FONT_SMALL.text_width(info + " " + fl.actype) <= W - x - 6:
+                info = f"{info} {fl.actype}"
+            while info and FONT_SMALL.text_width(info) > W - x - 4:
+                info = info[:-1]
+            FONT_SMALL.draw(img, W - FONT_SMALL.text_width(info), y, info, dim(INFO, f))

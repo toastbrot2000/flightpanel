@@ -1,16 +1,15 @@
 """Bedingungen der Karten (wann sie etwas zu sagen haben) und das Rendern."""
 
-import json
-import os
 from datetime import datetime, timezone
 
 import pytest
 from PIL import Image
 
 from conftest import DATA, NAMES, make_cfg, state
-from flightpanel import cards as C
+from flightpanel.cards import album, fun, runway, sky, traffic
 from flightpanel.astro import Pass, sun_day
 from flightpanel.cards import CARDS
+from flightpanel.data import load_fun
 from flightpanel.idle import Ctx, IdleScreen
 from flightpanel.logos import make_logo_store
 from flightpanel.metar import MetarSource, parse
@@ -43,27 +42,28 @@ def metar_src(raw, now):
 def test_next_countdown_and_urgency():
     t = ts(2026, 10, 10, 15, 0)
     m = DisplayModel(source="test", generated_at=t, upcoming=fl(), upcoming_eta_s=400, upcoming_az=150)
-    assert not C.next_cond(ctx(t, m)).urgent
-    assert C.next_cond(ctx(t + 300, m)).urgent              # 100 s übrig
-    assert C.next_cond(ctx(t + 395, m)) is None             # schon da
+    assert not traffic.next_cond(ctx(t, m)).urgent
+    assert traffic.next_cond(ctx(t + 300, m)).urgent              # 100 s übrig
+    assert traffic.next_cond(ctx(t + 395, m)) is None             # schon da
     m.upcoming_eta_s = 700
-    assert C.next_cond(ctx(t, m)) is None                   # zu weit weg
+    assert traffic.next_cond(ctx(t, m)) is None                   # zu weit weg
 
 
 def test_weather_only_when_it_explains_an_empty_sky():
     t = ts(2026, 10, 10, 15, 0)
     near = DisplayModel(source="test", nearby=[{"alt_ft": 5000}, {"alt_ft": 1000}])
     stamp = datetime.fromtimestamp(t, timezone.utc).strftime("%d%H%MZ")
-    assert C.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 21007KT CAVOK 13/05 Q1007", t))) is None
-    h = C.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 21007KT 9999 BKN012 13/05 Q1007", t)))
+    assert runway.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 21007KT CAVOK 13/05 Q1007", t))) is None
+    h = runway.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 21007KT 9999 BKN012 13/05 Q1007", t)))
     assert h.data["kind"] == "cloud" and h.data["above"] == 1
-    h = C.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 00000KT 0400 FG VV002 03/03 Q1021", t)))
+    h = runway.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 00000KT 0400 FG VV002 03/03 Q1021", t)))
     assert h.data["kind"] == "fog"
-    h = C.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 27012KT 9999 TSRA BKN030CB 21/15 Q1008", t)))
+    h = runway.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 27012KT 9999 TSRA BKN030CB 21/15 Q1008", t)))
     assert h.data["kind"] == "ts"
     old = datetime.fromtimestamp(t - 3 * 3600, timezone.utc).strftime("%d%H%MZ")
-    assert C.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {old} 00000KT 0400 FG VV002 03/03 Q1021", t))) is None
-    assert C.weather_cond(ctx(t, near, metar=None)) is None
+    stale_fog = metar_src(f"EDDB {old} 00000KT 0400 FG VV002 03/03 Q1021", t)
+    assert runway.weather_cond(ctx(t, near, metar=stale_fog)) is None
+    assert runway.weather_cond(ctx(t, near, metar=None)) is None
 
 
 def _stats(tmp_path, course=249, since_min=60, seen_min=5, prev=None, now=None):
@@ -77,56 +77,58 @@ def _stats(tmp_path, course=249, since_min=60, seen_min=5, prev=None, now=None):
 def test_runway_card_only_when_stable(tmp_path):
     t = ts(2026, 10, 10, 15, 0)
     stamp = datetime.fromtimestamp(t, timezone.utc).strftime("%d%H%MZ")
-    h = C.runway_cond(ctx(t, stats=_stats(tmp_path, now=t)))
+    h = runway.runway_cond(ctx(t, stats=_stats(tmp_path, now=t)))
     assert h.data == {"course": 249, "wind": "Westwind"}
-    assert C.runway_cond(ctx(t, stats=_stats(tmp_path, since_min=10, now=t))) is None      # frisch gewechselt
-    assert C.runway_cond(ctx(t, stats=_stats(tmp_path, seen_min=300, now=t))) is None      # lange kein Verkehr
+    assert runway.runway_cond(ctx(t, stats=_stats(tmp_path, since_min=10, now=t))) is None      # frisch gewechselt
+    assert runway.runway_cond(ctx(t, stats=_stats(tmp_path, seen_min=300, now=t))) is None      # lange kein Verkehr
     head = metar_src(f"EDDB {stamp} 25012KT CAVOK 13/05 Q1007", t)
-    assert C.runway_cond(ctx(t, stats=_stats(tmp_path, now=t), metar=head)).data["wind"] == "Wind W 12 kt"
+    assert runway.runway_cond(ctx(t, stats=_stats(tmp_path, now=t), metar=head)).data["wind"] == "Wind W 12 kt"
     tail = metar_src(f"EDDB {stamp} 07012KT CAVOK 13/05 Q1007", t)
-    assert C.runway_cond(ctx(t, stats=_stats(tmp_path, now=t), metar=tail)) is None        # Rückenwind
-    assert C.runway_change_cond(ctx(t, stats=_stats(tmp_path, since_min=10, prev=69, now=t))) is not None
-    assert C.runway_change_cond(ctx(t, stats=_stats(tmp_path, since_min=90, prev=69, now=t))) is None
+    assert runway.runway_cond(ctx(t, stats=_stats(tmp_path, now=t), metar=tail)) is None        # Rückenwind
+    assert runway.runway_change_cond(ctx(t, stats=_stats(tmp_path, since_min=10, prev=69, now=t))) is not None
+    assert runway.runway_change_cond(ctx(t, stats=_stats(tmp_path, since_min=90, prev=69, now=t))) is None
 
 
 def test_view_line_texts():
     c = ctx(cfg=make_cfg())
-    assert C._view_line(c, 249)[0] == "An- und Abflüge im Blick"
-    assert C._view_line(ctx(cfg=make_cfg(view_from=300, view_to=359)), 249)[0] == "so nicht im Blick"
+    assert runway._view_line(c, 249)[0] == "An- und Abflüge im Blick"
+    assert runway._view_line(ctx(cfg=make_cfg(view_from=300, view_to=359)), 249)[0] == "so nicht im Blick"
 
 
 def test_date_and_time_windows():
-    assert C.curfew_cond(ctx(ts(2026, 10, 10, 2, 0))) is not None
-    assert C.curfew_cond(ctx(ts(2026, 10, 10, 12, 0))) is None
-    assert C.santa_cond(ctx(ts(2026, 12, 24, 18, 0))).data["km"] > 0
-    assert C.santa_cond(ctx(ts(2026, 12, 25, 5, 0))) is not None
-    assert C.santa_cond(ctx(ts(2026, 12, 24, 10, 0))) is None
-    assert C.fireworks_cond(ctx(ts(2026, 12, 31, 23, 30))) is not None
-    assert C.fireworks_cond(ctx(ts(2027, 1, 1, 1, 0))) is not None
-    assert C.fireworks_cond(ctx(ts(2027, 1, 1, 3, 0))) is None
+    assert runway.curfew_cond(ctx(ts(2026, 10, 10, 2, 0))) is not None
+    assert runway.curfew_cond(ctx(ts(2026, 10, 10, 12, 0))) is None
+    assert fun.santa_cond(ctx(ts(2026, 12, 24, 18, 0))).data["km"] > 0
+    assert fun.santa_cond(ctx(ts(2026, 12, 25, 5, 0))) is not None
+    assert fun.santa_cond(ctx(ts(2026, 12, 24, 10, 0))) is None
+    assert fun.fireworks_cond(ctx(ts(2026, 12, 31, 23, 30))) is not None
+    assert fun.fireworks_cond(ctx(ts(2027, 1, 1, 1, 0))) is not None
+    assert fun.fireworks_cond(ctx(ts(2027, 1, 1, 3, 0))) is None
 
 
 def test_sunset_and_sunrise_windows():
     c = make_cfg()
     sd = sun_day(ts(2026, 10, 10, 12, 0), c.home_lat, c.home_lon)
-    assert C.sunset_cond(ctx(sd["sunset"] - 3600, cfg=c)) is not None
-    assert C.sunset_cond(ctx(sd["sunset"] - 3 * 3600, cfg=c)) is None
-    assert C.sunrise_cond(ctx(sd["sunrise"] - 1800, cfg=c)) is not None
-    assert C.sunrise_cond(ctx(sd["sunrise"] + 600, cfg=c)) is None
+    assert sky.sunset_cond(ctx(sd["sunset"] - 3600, cfg=c)) is not None
+    assert sky.sunset_cond(ctx(sd["sunset"] - 3 * 3600, cfg=c)) is None
+    assert sky.sunrise_cond(ctx(sd["sunrise"] - 1800, cfg=c)) is not None
+    assert sky.sunrise_cond(ctx(sd["sunrise"] + 600, cfg=c)) is None
 
 
 def test_jokes_prefer_todays_date():
-    fun = json.load(open(os.path.join(DATA, "jokes.json"), encoding="utf-8"))
-    h = C.joke_cond(ctx(ts(2026, 10, 31, 15, 0), fun=fun))
+    jokes = load_fun(DATA, "BER")
+    h = fun.joke_cond(ctx(ts(2026, 10, 31, 15, 0), fun=jokes))
     assert h.weight == 4 and "BER wird" in h.data["lines"][0]
-    assert not C.joke_cond(ctx(ts(2026, 10, 10, 15, 0), fun=fun)).data.get("dates")
-    assert C.joke_cond(ctx(fun={})) is None and C.delay_cond(ctx(fun={})) is None
+    assert not fun.joke_cond(ctx(ts(2026, 10, 10, 15, 0), fun=jokes)).data.get("dates")
+    assert fun.joke_cond(ctx(fun={})) is None and fun.delay_cond(ctx(fun={})) is None
+    assert load_fun(DATA, "MUC") == {}                      # Berliner Witze nur am BER
 
 
 def test_private_planes_are_a_card_not_a_takeover():
     m = DisplayModel(source="test", flights=[fl("other")])
-    assert C.private_cond(ctx(model=m, draw_flight=lambda *a: None)).data[0].callsign == "DEFGH"
-    assert C.private_cond(ctx(model=DisplayModel(source="test", flights=[fl()]), draw_flight=lambda *a: None)) is None
+    assert traffic.private_cond(ctx(model=m, draw_flight=lambda *a: None)).data[0].callsign == "DEFGH"
+    airline_only = DisplayModel(source="test", flights=[fl()])
+    assert traffic.private_cond(ctx(model=airline_only, draw_flight=lambda *a: None)) is None
 
 
 def test_quiet_rare_new(tmp_path):
@@ -136,15 +138,15 @@ def test_quiet_rare_new(tmp_path):
     st.observe([], DisplayModel(flights=[fl()]), t - 900)
     st.observe([state(icao="big", cs="UAE45", actype="A388", lat=52.0, lon=14.2, alt=11000),
                 state(icao="new", cs="DLH9")], DisplayModel(), t)
-    assert C.quiet_cond(ctx(t + 10, stats=st)).data["quiet"] >= 900
-    h = C.rare_cond(ctx(t + 10, stats=st))
+    assert album.quiet_cond(ctx(t + 10, stats=st)).data["quiet"] >= 900
+    h = album.rare_cond(ctx(t + 10, stats=st))
     assert h.urgent and h.data["label"] == "A380"
-    assert C.rare_cond(ctx(t + 200, stats=st)).urgent is False
+    assert album.rare_cond(ctx(t + 200, stats=st)).urgent is False
     shown = DisplayModel(source="test", flights=[fl(icao="big")])
-    assert C.rare_cond(ctx(t + 10, model=shown, stats=st)) is None
-    n = C.new_cond(ctx(t + 10, stats=st))
+    assert album.rare_cond(ctx(t + 10, model=shown, stats=st)) is None
+    n = album.new_cond(ctx(t + 10, stats=st))
     assert n.urgent and {n.data["name"]} <= {"Lufthansa", "Emirates"}
-    assert C.new_cond(ctx(t + 300, stats=st)) is None
+    assert album.new_cond(ctx(t + 300, stats=st)) is None
 
 
 def test_iss_card_countdown_and_now():
@@ -161,19 +163,18 @@ def test_iss_card_countdown_and_now():
             return (250.0, 35.0, 700.0, True)
 
     p = Pass(start=t + 600, end=t + 900, max_elev=50, max_time=t + 750, az_start=260, az_end=80)
-    assert not C.iss_cond(ctx(t, astro=FakeIss(p))).urgent
-    assert C.iss_cond(ctx(t + 700, astro=FakeIss(p))).urgent
-    assert C.iss_cond(ctx(t - 3600, astro=FakeIss(p))) is None
-    assert C.iss_cond(ctx(t, astro=FakeIss(None))) is None
-    assert C.iss_cond(ctx(t, astro=None)) is None
+    assert not sky.iss_cond(ctx(t, astro=FakeIss(p))).urgent
+    assert sky.iss_cond(ctx(t + 700, astro=FakeIss(p))).urgent
+    assert sky.iss_cond(ctx(t - 3600, astro=FakeIss(p))) is None
+    assert sky.iss_cond(ctx(t, astro=FakeIss(None))) is None
+    assert sky.iss_cond(ctx(t, astro=None)) is None
 
 
 # --------------------------------------------------------------- Rendern --
 def _renderer(cfg):
-    fun = json.load(open(os.path.join(DATA, "jokes.json"), encoding="utf-8"))
     logos = make_logo_store(cfg)
     logos.fetch_enabled = False
-    return Renderer(cfg, logos, idle=IdleScreen(cfg, CARDS, logos=logos, names=NAMES, fun=fun))
+    return Renderer(cfg, logos, idle=IdleScreen(cfg, CARDS, logos=logos, names=NAMES, fun=load_fun(DATA, "BER")))
 
 
 @pytest.mark.parametrize("cid", [c.id for c in CARDS])
