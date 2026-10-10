@@ -1,0 +1,10 @@
+.env
+data/cache.json
+data/cache.json.tmp
+data/logos/*_preview.png
+data/logos/.missing.json
+firmware/include/secrets.h
+firmware/.pio/
+__pycache__/
+*.pyc
+.venv/
