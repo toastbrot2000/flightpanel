@@ -1,5 +1,6 @@
 """data/airports.json aus OurAirports (gemeinfrei) erzeugen: Flughäfen mit
-IATA-Code und Linienverkehr, für den Abflughafen aus der Flugspur (origins.py).
+IATA-Code und Linienverkehr. Gebraucht für den Heimatflughafen (Position, Höhe,
+METAR-Station, config.py) und den Abflughafen aus der Flugspur (origins.py).
 
     python3 tools/make_airports.py                 # lädt airports.csv von OurAirports
     python3 tools/make_airports.py airports.csv    # oder aus einer vorhandenen Datei
@@ -16,6 +17,16 @@ import urllib.request
 
 URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 OUT = os.path.join(os.path.dirname(__file__), "..", "data", "airports.json")
+M_PER_FT = 0.3048
+
+
+def icao_code(r: dict) -> str:
+    """Vierbuchstabiger ICAO-Code, sonst "" (manche Plätze haben nur lokale Kennungen wie "4A2")."""
+    for key in ("icao_code", "gps_code", "ident"):
+        code = (r.get(key) or "").strip().upper()
+        if len(code) == 4 and code.isalpha():
+            return code
+    return ""
 
 
 def main() -> None:
@@ -36,12 +47,15 @@ def main() -> None:
             lat, lon = round(float(r["latitude_deg"]), 4), round(float(r["longitude_deg"]), 4)
         except (KeyError, ValueError):
             continue
-        icao = (r.get("gps_code") or r.get("ident") or "").strip().upper()
-        rows.append([iata, icao, lat, lon])
+        try:
+            elev = round(float(r["elevation_ft"]) * M_PER_FT)
+        except (KeyError, ValueError):
+            elev = None
+        rows.append([iata, icao_code(r), lat, lon, elev])
     rows.sort()
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
-        json.dump({"_comment": "IATA, ICAO, Breite, Länge. Quelle: OurAirports (gemeinfrei), "
-                               "erzeugt mit tools/make_airports.py",
+        json.dump({"_comment": "IATA, ICAO (4 Buchstaben oder leer), Breite, Länge, Höhe in m (oder null). "
+                               "Quelle: OurAirports (gemeinfrei), erzeugt mit tools/make_airports.py",
                    "airports": rows}, f, separators=(",", ":"))
         f.write("\n")
     print(f"{len(rows)} Flughäfen -> {os.path.normpath(OUT)}")

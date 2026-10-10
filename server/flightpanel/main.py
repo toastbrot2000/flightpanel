@@ -278,6 +278,9 @@ class App:
             "mock": cfg.mock,
             "layout": cfg.layout,
             "calm": cfg.calm,
+            "display": {"page_seconds": cfg.page_seconds, "flight_seconds": cfg.flight_seconds,
+                        "idle_seconds": cfg.idle_seconds, "blink": cfg.blink, "info_pages": list(cfg.info_pages),
+                        "cards_off": sorted(cfg.cards_off)},
             "brightness_now": cfg.brightness(now),
             "model_age_s": round(now - self.last_model_ok) if self.last_model_ok else None,
             "model_stale": self.model.stale,
@@ -337,9 +340,20 @@ class App:
         if self.iss and not self.cfg.mock:
             loops.append(self.astro_loop())
         self._tasks = [asyncio.create_task(c) for c in loops]
+        for t in self._tasks:
+            t.add_done_callback(self._task_ended)
         log.info("flightpanel läuft auf :%d (mock=%s, layout=%s, %dx%d)",
                  self.cfg.http_port, self.cfg.mock, self.cfg.layout, self.cfg.width, self.cfg.height)
         return runner
+
+    def _task_ended(self, task: asyncio.Task) -> None:
+        """Eine Schleife ist abgestürzt (sie fangen ihre Fehler sonst selbst): ins Log
+        und nach /issues, statt still nichts mehr zu tun."""
+        if task.cancelled() or task.exception() is None:
+            return
+        e = task.exception()
+        log.error("Hintergrundschleife beendet: %s", e, exc_info=e)
+        self.issues.note("exception", f"loop {task.get_coro().__name__}", error=(str(e) or type(e).__name__)[:300])
 
     async def stop(self, runner: web.AppRunner) -> None:
         self._stop.set()
@@ -351,9 +365,9 @@ class App:
 
 
 async def _main() -> None:
-    cfg = Config.from_env()
-    logging.basicConfig(level=getattr(logging, cfg.log_level.upper(), logging.INFO),
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    cfg = Config.from_env()             # Warnungen zur Konfiguration schon im richtigen Format
+    logging.getLogger().setLevel(getattr(logging, cfg.log_level.upper(), logging.INFO))
     app = App(cfg)
     runner = await app.start()
     stop = asyncio.Event()

@@ -65,6 +65,16 @@ class OpenSky:
         den letzten Stand behalten kann."""
         if time.time() < self.backoff_until:
             raise RuntimeError("OpenSky im Backoff")
+        try:
+            j = await self._get_states(bbox)
+        except (aiohttp.ClientConnectionError, TimeoutError) as e:
+            self.last_error = str(e) or type(e).__name__        # Netz weg: auch in /health
+            raise
+        self.last_ok = time.time()
+        self.last_error = None
+        return parse_states(j)
+
+    async def _get_states(self, bbox: tuple[float, float, float, float]) -> dict:
         headers = await self.auth_headers()
         lamin, lomin, lamax, lomax = bbox
         params = {"lamin": f"{lamin:.4f}", "lomin": f"{lomin:.4f}", "lamax": f"{lamax:.4f}", "lomax": f"{lomax:.4f}"}
@@ -92,26 +102,28 @@ class OpenSky:
             if r.status >= 400:
                 self.last_error = f"HTTP {r.status}"
             r.raise_for_status()
-            j = await r.json()
-        self.last_ok = time.time()
-        self.last_error = None
-        out: list[State] = []
-        for s in j.get("states") or []:
-            try:
-                if s[5] is None or s[6] is None:
-                    continue
-                out.append(State(
-                    icao24=str(s[0]).lower(),
-                    callsign=(s[1] or "").strip().upper(),
-                    lon=float(s[5]), lat=float(s[6]),
-                    baro_alt_m=float(s[7]) if s[7] is not None else None,
-                    on_ground=bool(s[8]),
-                    velocity_ms=float(s[9]) if s[9] is not None else None,
-                    track_deg=float(s[10]) if s[10] is not None else None,
-                    vrate_ms=float(s[11]) if s[11] is not None else None,
-                    geo_alt_m=float(s[13]) if len(s) > 13 and s[13] is not None else None,
-                    squawk=str(s[14] or "") if len(s) > 14 else "",
-                ))
-            except (IndexError, TypeError, ValueError):
+            return await r.json()
+
+
+def parse_states(j: dict) -> list[State]:
+    """Antwort von /states/all -> State, Einträge ohne Position fallen weg."""
+    out: list[State] = []
+    for s in j.get("states") or []:
+        try:
+            if s[5] is None or s[6] is None:
                 continue
-        return out
+            out.append(State(
+                icao24=str(s[0]).lower(),
+                callsign=(s[1] or "").strip().upper(),
+                lon=float(s[5]), lat=float(s[6]),
+                baro_alt_m=float(s[7]) if s[7] is not None else None,
+                on_ground=bool(s[8]),
+                velocity_ms=float(s[9]) if s[9] is not None else None,
+                track_deg=float(s[10]) if s[10] is not None else None,
+                vrate_ms=float(s[11]) if s[11] is not None else None,
+                geo_alt_m=float(s[13]) if len(s) > 13 and s[13] is not None else None,
+                squawk=str(s[14] or "") if len(s) > 14 else "",
+            ))
+        except (IndexError, TypeError, ValueError):
+            continue
+    return out

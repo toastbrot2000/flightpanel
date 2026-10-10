@@ -67,3 +67,24 @@ def test_calm_mode_sets_defaults_explicit_values_win():
     assert normal.info_pages == ("eta", "alt", "dist", "callsign")
     with pytest.raises(ValueError, match="INFO_PAGES"):
         Config.from_env(env(INFO_PAGES="eta,wetter"))
+
+
+def test_airport_height_and_station_checks(caplog):
+    muc = Config.from_env(env(LOCAL_AIRPORT_IATA="MUC"))
+    assert muc.airport_alt_m == 453                         # Höhe aus airports.json
+    with caplog.at_level("WARNING"):
+        Config.from_env(env(LOCAL_AIRPORT_IATA="HAM", AIRPORT_LAT="52.3667", AIRPORT_LON="13.5033",
+                            METAR_STATION="EDDB"))           # alte .env nach dem Umzug
+    assert "km von HAM" in caplog.text and "METAR_STATION=EDDB" in caplog.text
+    elsewhere = Config.from_env(env(LOCAL_AIRPORT_IATA="QQQ", AIRPORT_LAT="50", AIRPORT_LON="10"))
+    assert not elsewhere.metar                              # ohne Station kein Wetter statt Berliner Wetter
+
+
+def test_values_out_of_range_and_old_names(caplog):
+    for name, value in (("PAGE_SECONDS", "0"), ("IDLE_SECONDS", "-5"), ("IDLE_CLOCK_SHARE", "2"),
+                        ("BRIGHTNESS_DAY", "300")):
+        with pytest.raises(ValueError, match=name):
+            Config.from_env(env(**{name: value}))
+    with caplog.at_level("WARNING"):
+        Config.from_env(env(IDLE_OFF="joke", CALM="1", PAGE_SECONDS="4"))
+    assert "IDLE_OFF gibt es nicht mehr" in caplog.text and "PAGE_SECONDS=4" in caplog.text

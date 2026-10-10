@@ -15,9 +15,10 @@ from .storage import read_json
 
 class Airport(NamedTuple):
     iata: str
-    icao: str
+    icao: str               # vier Buchstaben oder leer
     lat: float
     lon: float
+    elev_m: float | None = None
 
 
 def load_airlines(data_dir: str) -> dict[str, dict]:
@@ -40,7 +41,8 @@ def load_airports(data_dir: str) -> list[Airport]:
     out = []
     for r in raw.get("airports", []):
         try:
-            out.append(Airport(r[0], r[1], float(r[2]), float(r[3])))
+            elev = float(r[4]) if len(r) > 4 and r[4] is not None else None
+            out.append(Airport(r[0], r[1], float(r[2]), float(r[3]), elev))
         except (IndexError, TypeError, ValueError):
             continue
     return out

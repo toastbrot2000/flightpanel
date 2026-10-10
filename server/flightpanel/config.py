@@ -3,8 +3,10 @@
 
 Alles Ortsabhängige steht hier und nirgends sonst: Standort und Sichtfeld
 (HOME_*, VIEW_*) und der Heimatflughafen (LOCAL_AIRPORT_IATA, RUNWAY_COURSE ...).
-Position und METAR-Station des Flughafens kommen aus data/airports.json, wenn sie
-nicht gesetzt sind. Die Defaults sind Berlin und BER.
+Position, Höhe und METAR-Station des Flughafens kommen aus data/airports.json, wenn
+sie nicht gesetzt sind. Die Defaults sind Berlin und BER. Unsinnige Werte (etwa
+PAGE_SECONDS=0) brechen den Start mit dem Namen der Variablen ab; Verdächtiges
+steht als Warnung im Log.
 
 Leerlauf-Karten lassen sich einzeln abschalten: CARD_<ID>=0, z. B. CARD_JOKE=0
 (alle IDs unter /idle und in docs/screens.md).
@@ -12,6 +14,7 @@ Leerlauf-Karten lassen sich einzeln abschalten: CARD_<ID>=0, z. B. CARD_JOKE=0
 CALM=1, der ruhige Modus, setzt nur Defaults (CALM_PRESET): Was ausdrücklich in
 der Umgebung steht, gilt trotzdem."""
 
+import logging
 import math
 import os
 from collections.abc import Mapping
@@ -19,6 +22,12 @@ from dataclasses import dataclass, field, fields
 from datetime import datetime
 
 from .data import load_airports
+from .geo import haversine_km
+
+log = logging.getLogger("config")
+
+# Gibt es nicht mehr: Variable -> was stattdessen
+REMOVED = {"IDLE_OFF": "CARD_<ID>=0 je Karte, z. B. CARD_JOKE=0", "LOGO_URL": "LOGO_URLS"}
 
 
 def _bool(s: str) -> bool:
@@ -46,6 +55,23 @@ def _pages(s: str) -> tuple[str, ...]:
     if unknown or not pages:
         raise ValueError(f"unbekannte Infoseite {', '.join(unknown)}; möglich: {', '.join(INFO_PAGES)}")
     return pages
+
+
+def _int(lo: int, hi: int | None = None):
+    """Ganzzahl in Grenzen, z. B. Sekunden pro Infoseite mindestens 1."""
+    def parse(s: str) -> int:
+        v = int(s)
+        if v < lo or (hi is not None and v > hi):
+            raise ValueError(f"erlaubt: {lo} bis {hi}" if hi is not None else f"mindestens {lo}")
+        return v
+    return parse
+
+
+def _share(s: str) -> float:
+    v = float(s)
+    if not 0 <= v <= 1:
+        raise ValueError("erlaubt: 0 bis 1")
+    return v
 
 
 def in_hours(rng: tuple[int, int], minute: int) -> bool:
@@ -98,7 +124,7 @@ class Config:
     # OpenSky ein. opensky: nur OpenSky.
     mock: bool = _env("MOCK", False)
     source: str = _env("SOURCE", "adsblol", str.lower)
-    poll_interval: int = _env("POLL_INTERVAL", 20)
+    poll_interval: int = _env("POLL_INTERVAL", 20, _int(5))
     opensky_client_id: str = _env("OPENSKY_CLIENT_ID", "")
     opensky_client_secret: str = _env("OPENSKY_CLIENT_SECRET", "")
     # Routen: adsb.im zuerst, dann adsbdb; ohne Route der Abflughafen aus der Flugspur
@@ -110,16 +136,16 @@ class Config:
     width: int = _env("WIDTH", 128)
     height: int = _env("HEIGHT", 32)
     layout: str = _env("LAYOUT", "AUTO", str.upper)         # AUTO | A | B | C, siehe render.py
-    max_flights: int = _env("MAX_FLIGHTS", 3)
+    max_flights: int = _env("MAX_FLIGHTS", 3, _int(1))
     calm: bool = _env("CALM", False)                        # ruhiger Modus, setzt CALM_PRESET
-    page_seconds: int = _env("PAGE_SECONDS", 4)             # so lange steht eine Infoseite
-    flight_seconds: int = _env("FLIGHT_SECONDS", 0)         # so lange mindestens ein Flug; 0: jede Seite einmal
+    page_seconds: int = _env("PAGE_SECONDS", 4, _int(1))    # so lange steht eine Infoseite
+    flight_seconds: int = _env("FLIGHT_SECONDS", 0, _int(0))  # so lange mindestens ein Flug; 0: jede Seite einmal
     info_pages: tuple[str, ...] = _env("INFO_PAGES", INFO_PAGES, _pages)
     blink: bool = _env("BLINK", True)                       # sonst blinkt nur ein Notfall
 
     # --- Leerlauf-Karten, wenn keine Airline zu sehen ist
-    idle_seconds: int = _env("IDLE_SECONDS", 12)
-    idle_clock_share: float = _env("IDLE_CLOCK_SHARE", 0.35)
+    idle_seconds: int = _env("IDLE_SECONDS", 12, _int(1))
+    idle_clock_share: float = _env("IDLE_CLOCK_SHARE", 0.35, _share)
     cards_off: frozenset[str] = frozenset()                 # CARD_<ID>=0, siehe from_env
     iss: bool = _env("ISS", True)                           # Bahndaten von Celestrak
 
@@ -128,20 +154,20 @@ class Config:
     # leer = logos.DEFAULT_URLS.
     logo_fetch: bool = _env("LOGO_FETCH", True)
     logo_urls: str = _env("LOGO_URLS", "")
-    logo_size: int = _env("LOGO_SIZE", 32)
+    logo_size: int = _env("LOGO_SIZE", 32, _int(8))
     logo_max_aspect: float = _env("LOGO_MAX_ASPECT", 1.5)
 
     # --- Helligkeit und Ruhezeiten
-    brightness_day: int = _env("BRIGHTNESS_DAY", 90)
-    brightness_evening: int = _env("BRIGHTNESS_EVENING", 35)
+    brightness_day: int = _env("BRIGHTNESS_DAY", 90, _int(0, 255))
+    brightness_evening: int = _env("BRIGHTNESS_EVENING", 35, _int(0, 255))
     day_hours: tuple[int, int] = _env("DAY_HOURS", (8 * 60, 19 * 60), _hours)
     quiet_hours: tuple[int, int] = _env("QUIET_HOURS", (23 * 60, 6 * 60 + 30), _hours)
 
     # --- Betrieb
     data_dir: str = _env("DATA_DIR", "./data")
-    http_port: int = _env("HTTP_PORT", 8080)
-    stale_after: int = _env("STALE_AFTER", 120)             # Sekunden ohne Daten bis gedimmt
-    empty_after: int = _env("EMPTY_AFTER", 600)             # ... bis leer
+    http_port: int = _env("HTTP_PORT", 8080, _int(1, 65535))
+    stale_after: int = _env("STALE_AFTER", 120, _int(0))    # Sekunden ohne Daten bis gedimmt
+    empty_after: int = _env("EMPTY_AFTER", 600, _int(0))    # ... bis leer
     log_level: str = _env("LOG_LEVEL", "INFO")
 
     @classmethod
@@ -159,8 +185,15 @@ class Config:
                     raise ValueError(f"{name}={raw!r}: {e}") from None
         values.setdefault("scan_radius_km", values.get("radius_km", cls.scan_radius_km))
         if values.get("calm"):
+            kept = [k for k in CALM_PRESET if k in values]
+            if kept:
+                log.warning("CALM=1, aber ausdrücklich gesetzt und damit gültig: %s",
+                            ", ".join(f"{_env_name(k)}={values[k]}" for k in kept))
             for k, v in CALM_PRESET.items():
                 values.setdefault(k, v)
+        for name, instead in REMOVED.items():
+            if (env.get(name) or "").strip():
+                log.warning("%s gibt es nicht mehr und wird ignoriert; stattdessen %s", name, instead)
         values["cards_off"] = frozenset(k[len("CARD_"):].lower() for k, v in env.items()
                                         if k.startswith("CARD_") and v.strip() and not _bool(v))
         _airport_from_list(values, values.get("data_dir", cls.data_dir))
@@ -209,19 +242,43 @@ CALM_PRESET = {"page_seconds": 10, "flight_seconds": 20, "idle_seconds": 30, "bl
                "info_pages": ("eta", "alt")}
 
 
+def _env_name(field_name: str) -> str:
+    return next(f.metadata["env"] for f in fields(Config) if f.name == field_name)
+
+
 def _airport_from_list(values: dict, data_dir: str) -> None:
-    """Position und METAR-Station des Heimatflughafens aus data/airports.json, soweit
-    nicht gesetzt. Ein Flughafen, der dort fehlt, braucht AIRPORT_LAT/AIRPORT_LON."""
-    if {"airport_lat", "airport_lon", "metar_station"} <= values.keys():
-        return
+    """Position, Höhe und METAR-Station des Heimatflughafens aus data/airports.json,
+    soweit nicht gesetzt. Fehlt der Flughafen dort, müssen sie in .env stehen; ohne
+    METAR-Station gibt es dann kein Wetter. Passt Gesetztes nicht zur Liste (alte
+    .env nach einem Flughafenwechsel), steht das im Log."""
     iata = values.get("local_airport_iata", Config.local_airport_iata)
     ap = next((a for a in load_airports(data_dir) if a.iata == iata), None)
     if ap is None:
-        if iata != Config.local_airport_iata and not {"airport_lat", "airport_lon"} <= values.keys():
+        if iata == Config.local_airport_iata:
+            return                  # BER ohne airports.json: die Defaults sind BER
+        missing = [_env_name(k) for k in ("airport_lat", "airport_lon") if k not in values]
+        if missing:
             raise ValueError(f"LOCAL_AIRPORT_IATA={iata} steht nicht in {data_dir}/airports.json: "
-                             "AIRPORT_LAT und AIRPORT_LON setzen")
+                             f"{' und '.join(missing)} setzen, dazu AIRPORT_ALT_M und METAR_STATION")
+        if "airport_alt_m" not in values:
+            log.warning("AIRPORT_ALT_M fehlt für %s, nehme %.0f m", iata, Config.airport_alt_m)
+        if "metar_station" not in values and values.get("metar", True):
+            log.warning("METAR_STATION fehlt für %s: kein Wetter", iata)
+            values["metar"] = False
         return
+    if "airport_lat" in values and "airport_lon" in values:
+        d = haversine_km(values["airport_lat"], values["airport_lon"], ap.lat, ap.lon)
+        if d > 10:
+            log.warning("AIRPORT_LAT/AIRPORT_LON liegen %.0f km von %s laut airports.json", d, iata)
     values.setdefault("airport_lat", ap.lat)
     values.setdefault("airport_lon", ap.lon)
-    if ap.icao:
-        values.setdefault("metar_station", ap.icao)
+    if ap.elev_m is not None:
+        values.setdefault("airport_alt_m", float(ap.elev_m))
+    if "metar_station" in values:
+        if ap.icao and values["metar_station"] != ap.icao:
+            log.warning("METAR_STATION=%s, airports.json kennt für %s %s", values["metar_station"], iata, ap.icao)
+    elif ap.icao:
+        values["metar_station"] = ap.icao
+    elif values.get("metar", True):
+        log.warning("%s hat keinen ICAO-Code in airports.json: METAR_STATION setzen, sonst kein Wetter", iata)
+        values["metar"] = False
