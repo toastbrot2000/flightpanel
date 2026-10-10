@@ -66,7 +66,7 @@ def blink(now: float) -> bool:
 
 def km(n: float) -> str:
     """12345 -> "12 345"."""
-    return f"{int(round(n)):,}".replace(",", " ")
+    return f"{round(n):,}".replace(",", " ")
 
 
 def minutes(s: float) -> str:

@@ -16,10 +16,10 @@ import sys
 
 import aiohttp
 
+from . import USER_AGENT
 from .config import Config
 from .data import load_airlines
 from .logos import make_logo_store
-from . import USER_AGENT
 
 
 async def run(cfg: Config, codes: list[tuple[str, str]], force: bool) -> int:

@@ -2,7 +2,7 @@
 
 import math
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from conftest import FIXTURES, make_cfg
 from flightpanel.astro import Iss, parse_tle, sun_crossing, sun_position, sun_radec, tle_epoch
@@ -11,7 +11,7 @@ BERLIN = (52.52, 13.405)
 
 
 def utc(*a):
-    return datetime(*a, tzinfo=timezone.utc).timestamp()
+    return datetime(*a, tzinfo=UTC).timestamp()
 
 
 def near(t, *expected, tol_min=3):

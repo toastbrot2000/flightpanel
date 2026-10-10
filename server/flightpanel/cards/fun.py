@@ -62,7 +62,7 @@ def delay_draw(img, ctx, d, t_in, f):
     spät eröffnete): zwei Zeilen, das Jahr rechts unten, wenn es neben die zweite passt."""
     W = img.width
     text(img, FONT_SMALL, 0, ROW1 + 1, f"Verspätungsgrund {ctx.cfg.local_airport_iata}", ARR_C, f, W)
-    a, b, year = (_fmt(d["reason"], ctx).split("|") + ["", "", ""])[:3]
+    a, b, year = [*_fmt(d["reason"], ctx).split("|"), "", "", ""][:3]
     line(img, 0, ROW2, a, INFO, f)
     yw = FONT_SMALL.text_width(year) + 6 if year else 0
     show_year = bool(year) and FONT_MID.text_width(b) + yw <= W
@@ -156,7 +156,7 @@ def pigeon_draw(img, ctx, d, t_in, f):
 # ------------------------------------------------------------------- Saison --
 def santa_cond(ctx: Ctx):
     t = datetime.fromtimestamp(ctx.now)
-    if (t.month, t.day) == (12, 24) and t.hour >= 15 or (t.month, t.day) == (12, 25) and t.hour < 6:
+    if ((t.month, t.day) == (12, 24) and t.hour >= 15) or ((t.month, t.day) == (12, 25) and t.hour < 6):
         start = t.replace(month=12, day=24, hour=15, minute=0, second=0, microsecond=0).timestamp()
         if t.day == 25:
             start -= 86400
@@ -185,7 +185,7 @@ def santa_draw(img, ctx, d, t_in, f):
 
 def fireworks_cond(ctx: Ctx):
     t = datetime.fromtimestamp(ctx.now)
-    if (t.month, t.day) == (12, 31) and t.hour >= 18 or (t.month, t.day) == (1, 1) and t.hour < 2:
+    if ((t.month, t.day) == (12, 31) and t.hour >= 18) or ((t.month, t.day) == (1, 1) and t.hour < 2):
         return Hit({}, weight=8)
     return None
 

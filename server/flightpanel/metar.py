@@ -10,7 +10,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiohttp
 
@@ -26,7 +26,8 @@ FT_M = 0.3048
 WX_NAMES = {"FG": "Nebel", "BR": "Dunst", "TS": "Gewitter", "SN": "Schnee", "RA": "Regen",
             "DZ": "Niesel", "GR": "Hagel", "GS": "Graupel", "FZ": "gefrierend", "SH": "Schauer",
             "HZ": "Dunst", "FU": "Rauch", "SQ": "Böen"}
-_WX = re.compile(r"^(\+|-|VC)?((MI|BC|PR|DR|BL|SH|TS|FZ)?(DZ|RA|SN|SG|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|PO|SQ|FC|SS|DS)*)$")
+_WX = re.compile(r"^(\+|-|VC)?((MI|BC|PR|DR|BL|SH|TS|FZ)?"
+                 r"(DZ|RA|SN|SG|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|PO|SQ|FC|SS|DS)*)$")
 _WIND = re.compile(r"^(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?(KT|MPS)$")
 _VAR = re.compile(r"^(\d{3})V(\d{3})$")
 _CLOUD = re.compile(r"^(FEW|SCT|BKN|OVC|VV)(\d{3}|///)")
@@ -53,11 +54,11 @@ class Metar:
 
 def _obs_time(day: int, hh: int, mm: int, now: float) -> float:
     """Tag/Uhrzeit (UTC) aus dem METAR -> Zeitstempel; im laufenden Monat, sonst im Vormonat."""
-    ref = datetime.fromtimestamp(now, tz=timezone.utc)
+    ref = datetime.fromtimestamp(now, tz=UTC)
     y, mo = ref.year, ref.month
     for _ in range(2):
         try:
-            t = datetime(y, mo, day, hh, mm, tzinfo=timezone.utc).timestamp()
+            t = datetime(y, mo, day, hh, mm, tzinfo=UTC).timestamp()
             if t <= now + 3600:
                 return t
         except ValueError:

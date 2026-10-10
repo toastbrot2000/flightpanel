@@ -8,8 +8,10 @@ from conftest import make_cfg
 from flightpanel.idle import Card, Hit, IdleScreen
 from flightpanel.model import DisplayModel
 
+ACTIVE = Hit()
 
-def card(cid, hit=Hit(), weight=1.0, live=False, draw=None):
+
+def card(cid, hit=ACTIVE, weight=1.0, live=False, draw=None):
     return Card(cid, lambda ctx, h=hit: h, draw or (lambda *a: None), weight=weight, live=live)
 
 

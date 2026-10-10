@@ -1,12 +1,9 @@
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import pytest
 
-import pytest  # noqa: E402
-
-from flightpanel.config import Config  # noqa: E402
-from flightpanel.model import State  # noqa: E402
+from flightpanel.config import Config
+from flightpanel.model import State
 
 DATA = os.path.join(os.path.dirname(__file__), "..", "..", "data")
 FIXTURES = os.path.join(os.path.dirname(__file__), "data")

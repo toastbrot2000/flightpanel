@@ -1,0 +1,22 @@
+# Nur Werkzeuge für die Entwicklung: Tests und Lint vom Repo-Wurzelverzeichnis aus.
+#   pip install -r server/requirements-dev.txt
+#   pytest
+#   ruff check .
+
+[tool.pytest.ini_options]
+testpaths = ["server/tests"]
+pythonpath = ["server"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP", "RUF"]
+ignore = [
+    "UP031",    # %-Format in der Vorschauseite: das HTML enthält JavaScript mit geschweiften Klammern
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["flightpanel", "conftest"]

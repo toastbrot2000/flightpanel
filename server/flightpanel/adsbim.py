@@ -19,6 +19,7 @@ BER-NCE-BER. Gezeigt wird die Teilstrecke, auf der das Flugzeug gerade ist
 """
 
 import logging
+from itertools import pairwise
 from typing import NamedTuple
 
 import aiohttp
@@ -69,7 +70,7 @@ def current_leg(stops: list[Stop], s: State) -> tuple[Stop, Stop] | None:
     Strecke, oder kurz vor oder nach einer Zwischenlandung), entscheidet die
     Richtung: tief in Flughafennähe steigend = Start dort, sonst Landung dort;
     unterwegs der Kurs. None, wenn nichts davon hilft."""
-    legs = list(zip(stops, stops[1:], strict=False))
+    legs = list(pairwise(stops))
     if not legs:
         return None
 

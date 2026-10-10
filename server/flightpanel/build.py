@@ -13,10 +13,18 @@
 import logging
 
 from .aircraft import describe
-from .airlines import (AIRLINER_CATEGORIES, callsign_airline, is_airline, note_operator, route_plausible,
-                       short_airline)
-from .airport import (APPROACH_AREA_KM, DEP_AIR_KM, DEP_GROUND_KM, TERMINAL_ALT_M, find_departures,
-                      landing_course_votes, landing_sequence, predict_entry, returning)
+from .airlines import AIRLINER_CATEGORIES, callsign_airline, is_airline, note_operator, route_plausible, short_airline
+from .airport import (
+    APPROACH_AREA_KM,
+    DEP_AIR_KM,
+    DEP_GROUND_KM,
+    TERMINAL_ALT_M,
+    find_departures,
+    landing_course_votes,
+    landing_sequence,
+    predict_entry,
+    returning,
+)
 from .config import Config
 from .geo import FPM_PER_MS, FT_PER_M, KT_PER_MS, haversine_km
 from .issues import Issues
@@ -54,9 +62,9 @@ async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, d
     # wer startet gerade, wer landet als nächstes
     preds = {s.icao24: predict_entry(cfg, s, course, s.icao24 in b.seq) for s, _, _ in cands}
     routes = {s.callsign: await b.route_for(s) for s in states
-              if callsign_airline(s.callsign) and (s.icao24 in b.seq or needs_route(cfg, s)
+              if callsign_airline(s.callsign) and (s.icao24 in b.seq or (needs_route(cfg, s)
                                                    and haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon)
-                                                   <= DEP_AIR_KM)}
+                                                   <= DEP_AIR_KM))}
     in_view_ids = {s.icao24 for s, _, vis in cands if vis > 0}
     model = DisplayModel(flights=flights, source=source, empty=not flights,
                          nearby=_nearby(cfg, cands, b.seq, b.etas, preds),

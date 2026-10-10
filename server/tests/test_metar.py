@@ -1,17 +1,17 @@
 """METAR-Parser mit echten und typischen EDDB-Meldungen."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from flightpanel.metar import MAX_AGE_S, Metar, MetarSource, describe_wx, parse
 
-NOW = datetime(2026, 10, 10, 18, 0, tzinfo=timezone.utc).timestamp()
+NOW = datetime(2026, 10, 10, 18, 0, tzinfo=UTC).timestamp()
 
 
 def test_cavok_live_sample():
     m = parse("METAR EDDB 101720Z AUTO 21007KT CAVOK 13/05 Q1007 NOSIG", NOW)
     assert (m.wind_dir, m.wind_kt, m.gust_kt) == (210, 7, None)
     assert m.cavok and m.vis_m == 10000 and m.ceiling_m is None and m.wx == []
-    assert m.obs_time == datetime(2026, 10, 10, 17, 20, tzinfo=timezone.utc).timestamp()
+    assert m.obs_time == datetime(2026, 10, 10, 17, 20, tzinfo=UTC).timestamp()
 
 
 def test_rain_low_clouds_trend_ignored():
@@ -36,8 +36,8 @@ def test_thunderstorm_mps_and_noaa_format():
 
 
 def test_previous_month_and_garbage():
-    m = parse("EDDB 302350Z VRB02KT 9999 NSC 05/04 Q1015", datetime(2026, 10, 1, 0, 30, tzinfo=timezone.utc).timestamp())
-    assert datetime.fromtimestamp(m.obs_time, tz=timezone.utc).month == 9 and m.wind_dir is None
+    m = parse("EDDB 302350Z VRB02KT 9999 NSC 05/04 Q1015", datetime(2026, 10, 1, 0, 30, tzinfo=UTC).timestamp())
+    assert datetime.fromtimestamp(m.obs_time, tz=UTC).month == 9 and m.wind_dir is None
     assert parse("<html>Service unavailable</html>") is None
     assert parse("") is None
 

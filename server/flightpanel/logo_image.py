@@ -42,7 +42,7 @@ def remove_background(img: Image.Image, threshold: int = 235) -> Image.Image:
         if seen[i] or not bright(x, y):
             continue
         seen[i] = 1
-        r, g, b, a = px[x, y]
+        r, g, b, _ = px[x, y]
         px[x, y] = (r, g, b, 0)
         if x > 0:
             stack.append((x - 1, y))

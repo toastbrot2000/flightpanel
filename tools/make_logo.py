@@ -20,9 +20,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
-from PIL import Image, ImageColor  # noqa: E402
+from PIL import Image, ImageColor
 
-from flightpanel.logo_image import prepare_logo, remove_background  # noqa: E402
+from flightpanel.logo_image import prepare_logo, remove_background
 
 
 def load(path: str, px: int = 512) -> Image.Image:

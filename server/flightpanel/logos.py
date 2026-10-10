@@ -54,6 +54,7 @@ class LogoStore:
         self.session = session
         self._cache: dict[str, tuple[float, Image.Image | None]] = {}
         self._inflight: set[str] = set()
+        self._tasks: set[asyncio.Task] = set()      # laufende Abrufe, festgehalten bis sie fertig sind
         self._errors: dict[str, float] = {}
         self._placeholders: dict[str, str | None] = {}
         self._missing_path = os.path.join(directory, ".missing.json")
@@ -146,7 +147,9 @@ class LogoStore:
         if time.time() - self._errors.get(k, 0) < ERROR_RETRY:
             return
         self._inflight.add(k)
-        asyncio.create_task(self._fetch(iata, icao))
+        task = asyncio.create_task(self._fetch(iata, icao))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def fetch_now(self, iata: str, icao: str = "") -> bool:
         """Direkter Abruf, für das Seed-Skript."""

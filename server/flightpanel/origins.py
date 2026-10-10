@@ -50,7 +50,7 @@ def track_start(track: dict, callsign: str) -> tuple[float, float] | None:
     path = track.get("path") or []
     if not path or (track.get("callsign") or "").strip().upper() != callsign:
         return None
-    t, lat, lon, alt = path[0][:4]
+    _, lat, lon, alt = path[0][:4]
     if lat is None or lon is None or alt is None or alt > MAX_START_ALT_M:
         return None
     return float(lat), float(lon)

@@ -1,0 +1,16 @@
+# Firmware: kompiliert sie mit PlatformIO (dasselbe Skript wie lokal), wenn sie sich ändert.
+name: firmware
+
+on:
+  push:
+    paths: ["firmware/**", "tools/check_firmware.sh", ".github/workflows/firmware.yml"]
+  pull_request:
+    paths: ["firmware/**", "tools/check_firmware.sh", ".github/workflows/firmware.yml"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Firmware bauen
+        run: sh tools/check_firmware.sh

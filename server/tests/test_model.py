@@ -5,9 +5,9 @@ import math
 import random
 
 from conftest import BER, NAMES, FakeAdsb, make_cfg, state
-from flightpanel.geo import destination
 from flightpanel.airport import landing_course_votes, path_in_view, predict_entry, runway_name
 from flightpanel.build import build_model, find_alert
+from flightpanel.geo import destination
 from flightpanel.model import ARR
 from flightpanel.view import entry_eta, in_view, sighting, visibility
 

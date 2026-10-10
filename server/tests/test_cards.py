@@ -1,14 +1,13 @@
 """Bedingungen der Karten (wann sie etwas zu sagen haben) und das Rendern."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from PIL import Image
 
 from conftest import DATA, NAMES, make_cfg, state
-from flightpanel.cards import album, fun, runway, sky, traffic
 from flightpanel.astro import Pass, sun_day
-from flightpanel.cards import CARDS
+from flightpanel.cards import CARDS, album, fun, runway, sky, traffic
 from flightpanel.data import load_fun
 from flightpanel.idle import Ctx, IdleScreen
 from flightpanel.logos import make_logo_store
@@ -52,7 +51,7 @@ def test_next_countdown_and_urgency():
 def test_weather_only_when_it_explains_an_empty_sky():
     t = ts(2026, 10, 10, 15, 0)
     near = DisplayModel(source="test", nearby=[{"alt_ft": 5000}, {"alt_ft": 1000}])
-    stamp = datetime.fromtimestamp(t, timezone.utc).strftime("%d%H%MZ")
+    stamp = datetime.fromtimestamp(t, UTC).strftime("%d%H%MZ")
     assert runway.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 21007KT CAVOK 13/05 Q1007", t))) is None
     h = runway.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 21007KT 9999 BKN012 13/05 Q1007", t)))
     assert h.data["kind"] == "cloud" and h.data["above"] == 1
@@ -60,7 +59,7 @@ def test_weather_only_when_it_explains_an_empty_sky():
     assert h.data["kind"] == "fog"
     h = runway.weather_cond(ctx(t, near, metar=metar_src(f"EDDB {stamp} 27012KT 9999 TSRA BKN030CB 21/15 Q1008", t)))
     assert h.data["kind"] == "ts"
-    old = datetime.fromtimestamp(t - 3 * 3600, timezone.utc).strftime("%d%H%MZ")
+    old = datetime.fromtimestamp(t - 3 * 3600, UTC).strftime("%d%H%MZ")
     stale_fog = metar_src(f"EDDB {old} 00000KT 0400 FG VV002 03/03 Q1021", t)
     assert runway.weather_cond(ctx(t, near, metar=stale_fog)) is None
     assert runway.weather_cond(ctx(t, near, metar=None)) is None
@@ -76,7 +75,7 @@ def _stats(tmp_path, course=249, since_min=60, seen_min=5, prev=None, now=None):
 
 def test_runway_card_only_when_stable(tmp_path):
     t = ts(2026, 10, 10, 15, 0)
-    stamp = datetime.fromtimestamp(t, timezone.utc).strftime("%d%H%MZ")
+    stamp = datetime.fromtimestamp(t, UTC).strftime("%d%H%MZ")
     h = runway.runway_cond(ctx(t, stats=_stats(tmp_path, now=t)))
     assert h.data == {"course": 249, "wind": "Westwind"}
     assert runway.runway_cond(ctx(t, stats=_stats(tmp_path, since_min=10, now=t))) is None      # frisch gewechselt

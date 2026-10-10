@@ -1,17 +1,21 @@
+# Eigene Einstellungen (Standort!) und Zugangsdaten
 .env
-data/cache.json
-data/cache.json.tmp
-data/logos/*_preview.png
-data/logos/.missing.json
 firmware/include/secrets.h
+
+# Im Betrieb erzeugt (Docker-Volume ./data)
+data/cache.json
+data/issues.json
+data/stats.json
+data/tle.txt
+data/*.tmp
+# Logos holt der Server selbst; nur handgemachte gehören ins Repo (git add -f)
+data/logos/*
+!data/logos/SVI.png
+
+# Werkzeuge
 firmware/.pio/
 __pycache__/
 *.pyc
 .venv/
-data/issues.json
-data/issues.json.tmp
-data/stats.json
-data/stats.json.tmp
-data/tle.txt
-data/tle.txt.tmp
 .pytest_cache/
+.ruff_cache/

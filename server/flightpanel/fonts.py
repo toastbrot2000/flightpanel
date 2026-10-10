@@ -57,7 +57,7 @@ class Font:
         self.font = _load(kind, size)
         self.size = size
         self.threshold = THRESHOLD if threshold is None else threshold
-        x0, y0, x1, y1 = self.font.getbbox("H")
+        _, y0, _, y1 = self.font.getbbox("H")
         self.y_offset = -y0          # Großbuchstaben beginnen bei y
         self.cap_height = y1 - y0
         self._rows: dict[str, tuple[int, int]] = {}
@@ -91,7 +91,7 @@ class Font:
         draw() (mit Schwelle): Ein schwach gezeichneter Rand bleibt auf dem Panel dunkel."""
         hit = self._cols.get(ch)
         if hit is None:
-            adv = int(round(self.font.getlength(ch)))
+            adv = round(self.font.getlength(ch))
             n = self.size * 3
             mask = Image.new("L", (n, n), 0)
             ImageDraw.Draw(mask).text((self.size, self.size + self.y_offset), ch, font=self.font, fill=255)
@@ -129,7 +129,7 @@ class Font:
         w = 0
         for kind, s in segs:
             if kind == "text":
-                w += int(round(self.font.getlength(s)))
+                w += round(self.font.getlength(s))
             else:
                 w += len(_ARROWS[s][0]) + _ARROW_GAP
         if segs:
@@ -167,7 +167,7 @@ class Font:
                 ImageDraw.Draw(mask).text((x, y + self.y_offset), s, font=self.font, fill=255)
                 mask = mask.point(lambda v: 255 if v > self.threshold else 0)
                 img.paste(Image.new("RGB", img.size, color), (0, 0), mask)
-                x += int(round(self.font.getlength(s)))
+                x += round(self.font.getlength(s))
             else:
                 rows = _ARROWS[s]
                 ay = y + (self.cap_height - len(rows)) // 2
