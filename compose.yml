@@ -7,4 +7,4 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/data        # cache.json, logos/, airlines.json
+      - ./data:/data        # mitgelieferte Daten (airlines.json ...), Logos, Cache, Statistik

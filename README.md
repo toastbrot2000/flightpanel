@@ -1,163 +1,122 @@
 # flightpanel
 
-LED-Anzeige fürs Wohnzimmer, die das Flugzeug in der Nähe zeigt, mit Airline-Logo (Vorbild: The Flight Wall). 2 × Waveshare HUB75 P2.5 64 × 32 nebeneinander = 128 × 32 Pixel auf 32 × 8 cm, ESP32, Server im Homelab. Der komplette Bauplan liegt in `docs/flugpanel-bauplan.md`.
+LED-Anzeige fürs Wohnzimmer: zeigt das Flugzeug, das man gerade vor dem Fenster sieht, mit Airline-Logo, Route, Typ, Höhe und Minuten bis zur Landung (Vorbild: The Flight Wall). Zwei Waveshare-HUB75-Panels P2.5 (64 × 32) nebeneinander ergeben 128 × 32 Pixel auf 32 × 8 cm. Ein ESP32 steuert sie an, ein kleiner Server im Homelab macht den Rest. Ist gerade kein Flugzeug zu sehen, wechseln Karten: Abflüge und Landungen am Flughafen, der nächste Flieger, Radar, Wetter, ISS, Statistik und ein paar Spielereien.
+
+Hardware, Mechanik und Stromversorgung: [docs/flugpanel-bauplan.md](docs/flugpanel-bauplan.md). Alle Bildschirme und ihre Rangfolge: [docs/screens.md](docs/screens.md).
 
 ```
-adsb.lol ─┐  (Ersatz: OpenSky)
-adsbdb ───┼─> server (Python, Container) ──HTTP /frame──> ESP32 ──HUB75──> 2 Panels
-Logo-CDNs ┘    pollt, cachet, holt Logos,   12 KB alle 2 s     DMA-Refresh
-               rendert 128x32
+adsb.lol (Ersatz: OpenSky) ─┐
+adsb.im, adsbdb (Routen) ───┤
+OpenSky-Flugspur (Herkunft) ┼─> Server (Python, Docker) ──HTTP /frame──> ESP32 ──HUB75──> 2 Panels
+METAR, Celestrak (ISS) ─────┤   ruft alle 20 s ab, rendert    12 KB alle 2 s     DMA-Refresh
+Logo-CDNs ──────────────────┘   128 x 32 bei jedem Abruf
 ```
 
-Der Server rendert das komplette Bild. Der ESP32 holt es ab und schreibt es in die Panels; er kennt weder Flüge noch Fonts noch Logos. Jede Layoutänderung passiert in Python, Vorschau im Browser, kein Flashen.
+Der Server rendert das komplette Bild. Der ESP32 holt es nur ab und schreibt es in die Panels; er kennt weder Flüge noch Schriften noch Logos. Jede Änderung am Aussehen passiert in Python, mit Vorschau im Browser und ohne Flashen.
 
-## Schnellstart (ohne Hardware, ohne API-Zugang)
+## Schnellstart (ohne Hardware, ohne Netz)
 
 ```bash
-cp .env.example .env            # MOCK=1 ist schon gesetzt
+cp .env.example .env            # MOCK=1 ist schon gesetzt: Fantasieflüge
 docker compose up -d --build
 open http://localhost:8080      # Vorschau, wechselt alle 2 s
-docker compose exec flightpanel python3 -m flightpanel.fetch_logos   # Logos für ~130 Betreiber holen
 ```
 
-Oder ohne Docker (braucht DejaVu-Fonts, `fonts-dejavu-core`):
+Die Vorschauseite hat Links für die Layouts und jede Leerlauf-Karte; `/frame.png?card=radar&scale=8` geht auch direkt.
 
-```bash
-cd server && pip install -r requirements.txt
-cd .. && MOCK=1 DATA_DIR=./data PYTHONPATH=server python3 -m flightpanel.main
-```
+## Einrichten
 
-Die Vorschauseite hat Links für die Layouts. `/frame.png?layout=C&scale=8&gap=0` geht auch direkt.
+Alles Ortsabhängige steht in `.env` (nicht im Repo; jede Einstellung ist in [.env.example](.env.example) erklärt). Für echte Daten: `MOCK=0`, dann vier Dinge.
 
-## Endpoints
+**1. Standort.** `HOME_LAT`, `HOME_LON` (Dezimalgrad), `HOME_ALT_M` (Augenhöhe am Fenster über dem Meer). Angezeigt wird, was höchstens `RADIUS_KM` weit weg und `MAX_ALT_M` hoch ist.
+
+**2. Sichtfeld.** Was man vom Fenster aus sieht: Richtung im Uhrzeigersinn von `VIEW_FROM` bis `VIEW_TO` (0 = Nord, 90 = Ost), Mindesthöhe über dem Horizont `VIEW_MIN_ELEV` (Häuser, Bäume), Obergrenze `VIEW_MAX_ELEV` (Balkon darüber), Sichtweite `VIEW_MAX_KM`. `VIEW_ONLY=1` zeigt nur, was im Sichtfeld ist. Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen Richtung (`az`) und Höhenwinkel (`elev`) ablesen.
+
+**3. Heimatflughafen.** `LOCAL_AIRPORT_IATA` genügt: Position und METAR-Station kommen aus `data/airports.json`. Dazu `RUNWAY_COURSE`, der Kurs im Endanflug einer Landerichtung (BER 25: 249°, MUC 26: 263°), und `CURFEW_HOURS` für das Nachtflugverbot. Die Berlin-Karten (Tegel, BER-Eröffnung) und die Witze in `data/jokes.json` gelten nur am BER; für einen anderen Flughafen eine eigene `jokes.json` schreiben.
+
+**4. Karten und Ruhe.** Jede Leerlauf-Karte lässt sich abschalten: `CARD_<ID>=0`, z. B. `CARD_JOKE=0`. `CALM=1` ist der ruhige Modus: nichts blinkt außer einem Notfall, Infoseiten wechseln alle 10 s statt 4 s, unten stehen nur Landezeit und Höhe/Tempo. Jede dieser Einzelheiten ist auch einzeln einstellbar (`PAGE_SECONDS`, `FLIGHT_SECONDS`, `INFO_PAGES`, `BLINK`, `IDLE_SECONDS`).
+
+Dann `docker compose up -d --build` und einmal die Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`.
+
+## Was angezeigt wird
+
+Bei jedem Abruf ordnet der Server alle Flugzeuge im Radius:
+
+1. **Sichtfeld zuerst.** Zählt auch, wer bis zum nächsten Abruf hineinfliegt (aus Tempo, Kurs und Steigrate weitergerechnet), sonst wären Anflüge schon durch, bevor sie auf dem Panel stehen.
+2. **Airlines vor dem Rest.** Linien-, Charter- und Frachtflüge zählen als Airline. Privatflieger, Hubschrauber, Polizei und Militär (`"airline": false` in `data/airlines.json`) kommen nur dran, wenn keine Airline zu sehen ist, dann als Leerlauf-Karte; `SHOW_OTHER=0` blendet sie aus.
+3. **Landefolge, dann kürzeste Sichtlinie.** Wer als nächstes landet, kommt zuerst. Die Landefolge schätzt der Server aus der Reststrecke bis zur Piste: im Endanflug die Entfernung, im Gegenanflug weiter bis zum Eindrehen und den ganzen Endanflug zurück, im Queranflug quer zur Achse plus Rest. Die Landerichtung erkennt er am Verkehr in Platznähe.
+
+Bis zu `MAX_FLIGHTS` Flüge wechseln sich ab, jeder mit allen Infoseiten, mindestens `FLIGHT_SECONDS`.
+
+**Layouts** (`LAYOUT`): **C** Logo links (32 × 32), rechts drei Zeilen; **A** ohne Logo über die ganze Breite; **B** zwei Flüge, je eine Zeile; **auto** C mit Logo, sonst A. Zeile 1: Pfeil (↓ Landung, ↑ Start, → Überflug) und Airline. Zeile 2: Route, sonst was der Flug ist (Luftrettung, Polizei, Kleinflugzeug: aus `airlines.json`, ADS-B-Kategorie oder Kennzeichen), sonst `?→BER` oder `BER→?`; rechts der Typ. Zeile 3 wechselt (`INFO_PAGES`): "landet in ~7 min", Höhe und Tempo, Entfernung und Kurs, Rufzeichen. Farben: Landung amber, Start grün, Überflug blau, kein Weiß.
+
+**Himmelspunkte:** Sind mindestens zwei gezeigte Flugzeuge im Sichtfeld, steht unter dem (dann 28 × 28 kleinen) Logo eine Punktreihe, ein Punkt pro Flug in Lesereihenfolge: links der, der zuerst landet. Der Punkt des gezeigten Flugs leuchtet.
+
+**Grundsätze:** Nichts steht doppelt (das Rufzeichen fällt aus dem Wechsel, wenn es oben schon steht). Text wird nie so gekürzt, dass sich der Sinn ändert: erst kleinere Schrift, dann eine kürzere Fassung. Alle Pixel werden genutzt; Text am Rand sitzt auf der ersten oder letzten Spalte. Privatflieger heißen nach ihrem Kennzeichen (D-EHGB), Rettungshubschrauber nach ihrer Nummer (Christoph 31); Halternamen kommen nie aufs Panel.
+
+**Leerlauf:** Ohne Airline im Sichtfeld wechseln Karten alle `IDLE_SECONDS` in festen Stufen: Verkehr am Platz (Abflüge, Landungen, nächster Flieger, Privatflieger) vor Informationen (Radar, Landerichtung, Wetter, Statistik, ISS, Sonne) vor Spielereien, die nur kommen, wenn am Flughafen seit 15 min nichts los war. Ein Notfall-Squawk (7700, 7600, 7500) geht allem vor. Liste und Regeln: [docs/screens.md](docs/screens.md).
+
+## Datenquellen
+
+| Was | Quelle | Bemerkung |
+|---|---|---|
+| Flugzeuge | [adsb.lol](https://adsb.lol) (`SOURCE=adsblol`) | Community-Netz aus ADS-B-Empfängern, ohne Account, alle `POLL_INTERVAL` Sekunden. Liefert auch Typ und ADS-B-Kategorie (Hubschrauber, Leichtflugzeug). Daten unter ODbL. |
+| Ersatz | [OpenSky](https://opensky-network.org) | springt ein, wenn adsb.lol ausfällt, so oft das Tagesbudget erlaubt (anonym 400 Credits, mit Account 4000: `OPENSKY_CLIENT_ID`/`_SECRET`). `SOURCE=opensky` nimmt nur OpenSky. |
+| Routen | adsb.im, dann adsbdb.com | pro Callsign gespeichert und oft alt; liegt das Flugzeug weit neben der Strecke, verwirft der Server sie. Fliegt eine Airline hin und zurück unter einem Callsign (BER-NCE-BER), zählt die Teilstrecke, auf der das Flugzeug gerade ist. |
+| Herkunft ohne Route | OpenSky-Flugspur | beginnt die Spur am Boden, ist der nächste Flughafen aus `data/airports.json` der Start. |
+| Wetter | aviationweather.gov, NOAA | METAR alle 20 min (`METAR=0` schaltet ab). |
+| ISS | Celestrak | Bahndaten einmal am Tag, Überflüge rechnet der Server (`ISS=0`). |
+| Logos | Kiwi.com, FlightAware, Google | holt der Server beim ersten Auftauchen einer Airline; nicht im Repo. |
+| Flughäfen | [OurAirports](https://ourairports.com) | gemeinfrei, `tools/make_airports.py` erzeugt `data/airports.json`. |
+
+Fällt eine Quelle aus, fehlen nur ihre Teile: ohne Routen keine Herkunft, ohne METAR keine Wetterkarten. Ohne frische Flugdaten wird das Bild nach 2 min gedimmt und nach 10 min leer (`STALE_AFTER`, `EMPTY_AFTER`). Fehler stehen in `/issues` und `/health`.
+
+## Airline-Logos
+
+Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dann zeigt das Panel Layout A ohne Logo. Der Server probiert die Quellen der Reihe nach, nimmt das erste Bild mit Seitenverhältnis bis `LOGO_MAX_ASPECT`, entfernt weißen Hintergrund, schneidet zu und legt `data/logos/<IATA>.png` ab (ohne IATA-Code `<ICAO>.png`). Platzhalterbilder der Quellen erkennt er. Fehlschläge stehen in `/health` → `logos_missing` und werden nach 7 Tagen erneut probiert.
+
+- Alle auf einmal: `python3 -m flightpanel.fetch_logos` (im Container: `docker compose exec flightpanel …`), gezielt `… fetch_logos LH U2 FR`, `--force` überschreibt.
+- Handgemachte Logos haben Vorrang: `tools/make_logo.py bild.svg LH` macht aus PNG, JPG oder SVG das passende Format, mit Vorschau. Ins Repo kommen nur solche, mit `git add -f data/logos/LH.png` (abgerufene sind in `.gitignore`).
+- `data/airlines.json` bildet ICAO-Codes auf kurze Namen und den Logo-Code ab: die Marke, nicht unbedingt der Tochterbetrieb (Malta Air → `FR`). Leer heißt Logo per ICAO, wenn der IATA-Code doppelt vergeben ist.
+
+## Endpunkte
 
 | Pfad | Zweck |
 |---|---|
 | `/` | Vorschauseite |
-| `/frame` | Binär für den ESP32: `[1, helligkeit, 128, 32]` + 12 288 Byte RGB |
-| `/frame.png` | Vorschau, Parameter `layout`, `scale`, `gap` |
-| `/display.json` | Display-Modell (Flüge, Status, Route, Höhe, Airline-Codes …), dazu `nearby`: alle Flugzeuge im Radius mit Richtung (`az`), Höhenwinkel (`elev`) und `in_view` |
-| `/health` | Quelle, OpenSky-Credits, Cache, vorhandene/fehlende Logos, letzter ESP32-Abruf, Anzahl Auffälligkeiten. `esp32.alive=false` heißt: Panel hängt. |
+| `/frame` | Binär für den ESP32: `[1, Helligkeit, 128, 32]` + 12 288 Byte RGB |
+| `/frame.png` | Vorschau; `layout`, `card`, `scale`, `gap=0` |
+| `/display.json` | Display-Modell, dazu `nearby`: alle Flugzeuge im Radius mit Richtung, Höhenwinkel, Sichtbarkeit, Landefolge |
+| `/health` | Quellen, Cache, Logos, letzter ESP32-Abruf (`esp32.alive=false`: Panel hängt) |
 | `/issues` | gesammelte Auffälligkeiten (siehe unten), `POST /issues/clear` leert |
 | `/stats` | Tagesstatistik, Sammelalbum, seltene Sichtungen, Landerichtung |
-| `/idle` | Leerlauf-Karten: welche gerade etwas zu sagen haben, welche dran ist |
-
-## Layouts
-
-Drei Zeilen à 11 px, DejaVu Sans als harte Pixelschrift, Pfeile als Pixelmuster.
-
-- **C** Logo links (30 × 30), rechts: Pfeil + Airline, Route + Typ, wechselnde Infozeile (Höhe/Speed, Entfernung/Kurs, Callsign)
-- **A** ohne Logo, volle Breite, Callsign rechts oben
-- **B** zwei Flüge, je eine Zeile
-- **auto** C, wenn für die Airline ein Logo liegt, sonst A
-
-Bei zwei Flügen im Modell wechseln A und C alle 12 s zum nächsten Flug. Ohne Airline im Sichtfeld: Leerlauf-Karten (siehe unten). Farben: Ankunft amber, Abflug grün, Überflug blau, kein Weiß als Textfarbe.
-
-## Was angezeigt wird
-
-Pro Abruf ordnet der Server alle Flugzeuge im Radius (unter `MAX_ALT_M`, nicht am Boden):
-
-1. **Sichtfeld zuerst.** `VIEW_FROM`/`VIEW_TO` (Richtung im Uhrzeigersinn, 0 = Nord, 90 = Ost), `VIEW_MIN_ELEV` (Grad über dem Horizont) und `VIEW_MAX_KM` beschreiben, was man vom Fenster aus sieht. Zählt auch, wer bis zum nächsten Abruf hineinfliegt (aus Geschwindigkeit, Kurs und Steigrate weitergerechnet), sonst wären Anflüge schon durch, bevor sie auf dem Panel stehen. `VIEW_ONLY=1` zeigt nur das Sichtfeld und sonst die Uhr, `VIEW_ONLY=0` zeigt Sichtbares zuerst und sonst das nächste Flugzeug. Default: rundum.
-2. **Airlines vor dem Rest.** Linien-, Charter- und Frachtflüge zählen als Airline: Betreiber aus `data/airlines.json` oder mit Route bei adsbdb. Privatflüge (Callsign = Kennzeichen), Rettungshubschrauber, Polizei und Luftwaffe (`"airline": false` in `airlines.json`) kommen nur dran, wenn keine Airline zu sehen ist; `SHOW_OTHER=0` blendet sie ganz aus.
-3. **Landefolge, dann kürzeste Sichtlinie.** Wer als nächstes landet, kommt zuerst. Die Landefolge schätzt der Server aus der Reststrecke bis zur Piste: im Endanflug die Entfernung, im Gegenanflug weiter bis zum Eindrehen plus Endanflug, im Queranflug quer zur Achse plus Rest. Die Landerichtung (BER 25 oder 07) erkennt er am Verkehr in Platznähe. Fluglotsen können umsortieren, für Flugzeuge im Endanflug stimmt die Folge aber praktisch immer.
-
-Bis zu `MAX_FLIGHTS` Flüge wechseln sich ab. Sind mindestens zwei Flugzeuge im Sichtfeld, steht unter dem (dann kleineren) Logo eine Punktreihe: ein Punkt pro gezeigtem Flug im Sichtfeld, in der Farbe seines Status, in Lesereihenfolge: links der, der zuerst landet, dann die Landefolge, danach Starts und Überflüge. Der Punkt des gerade gezeigten Flugs leuchtet hell. (Vom Balkon aus nach Süden gesehen steht der, der zuerst landet, am weitesten rechts, Richtung BER.) Ohne Logo (Layout A) stehen die Punkte rechts unten.
-
-Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen `az` und `elev` ablesen. `seq` ist der Platz in der Landefolge.
-
-**Routen**, der Reihe nach: adsb.im (der Routendienst hinter den tar1090-Karten, aktuell, eine Abfrage für alle Flüge), dann adsbdb. Beide speichern Routen pro Callsign, und Airlines verwenden Callsigns für andere Strecken weiter; liegt das Flugzeug weit neben der Strecke, verwirft der Server sie. Kennt keine Quelle den Flug, sucht der Server für gezeigte Flüge den Abflughafen aus der OpenSky-Flugspur: Beginnt sie tief, ist der nächste Linienflughafen (`data/airports.json`, aus OurAirports) der Start. Landende enden am eigenen Platz. `ADSBIM=0`, `TRACK_ORIGIN=0` schalten ab.
-
-**Zeile 2** zeigt die Route, sonst was der Flug ist (Luftrettung, Polizei, Kleinflugzeug, Hubschrauber, aus `airlines.json` mit `"label"`, ADS-B-Kategorie oder deutschem Kennzeichen), sonst bei Landung `?→BER`, bei Start `BER→?`, sonst nichts. Nichts steht doppelt: Das Rufzeichen fällt aus den wechselnden Infoseiten, wenn es oben schon steht. Landende haben eine Infoseite mehr, "landet in ~N min": Reststrecke bis zur Piste nach Flugphase, mit Tempo zwischen jetzt und Endanflug (Landende werden langsamer).
-
-**Alle Pixel:** Logos 32 x 32 bündig in der Ecke (mit Himmelspunkten 28 x 28, Punkte auf der letzten Zeile), Zeilen bei 0, 12 und 24. Die untere Zeile sitzt auf der Kante; Text mit Unterlängen (g, p, y) rückt dort so weit hoch, dass nichts abgeschnitten wird. Text am Rand beginnt bzw. endet auf der ersten bzw. letzten Spalte (`Font.draw`, `Font.text_width`). Privatflieger heißen nach ihrem Kennzeichen (D-EHGB), Rettungshubschrauber nach ihrer Nummer (Christoph 31); Halternamen kommen nie aufs Panel.
-
-## Leerlauf: wenn keine Airline im Sichtfeld ist
-
-Statt nur Uhr und Datum wechseln Karten, alle `IDLE_SECONDS` (12 s), in festen Stufen (Übersicht und Entscheidungen: `docs/screens.md`): **2 Verkehr am BER** (Abflüge, Landungen, nächster Flieger, Privatflieger und Hubschrauber im Sichtfeld, Pistenwechsel) vor **3 wenig los** (Radar, Landerichtung, Wetter, Statistik, ISS, Sonne, Saison) vor **4 Spielereien** (Witze, Verspätungsgründe, Animationen). Eine Stufe kommt nur dran, wenn keine höhere etwas zu zeigen hat; Spielereien nur, wenn seit 15 min am BER nichts gestartet oder gelandet ist und in den nächsten 10 min keiner landet. Die Uhr ist in jeder Stufe dabei, etwa in einem Drittel der Fälle (`IDLE_CLOCK_SHARE`). Dringendes bricht durch.
-
-| Karte | Wann | Was |
-|---|---|---|
-| `alert` | Squawk 7700/7600/7500 im Abrufradius | Vollbild, vor allem anderen, auch vor Flügen |
-| `departures` | am BER rollt oder startet ein Flug mit Route ab BER, oder ist vor wenigen Minuten gestartet | "↑ Abflug BER", Piste, bis zu zwei Flüge mit Ziel und "rollt" / "startet" / "vor 2 min" |
-| `arrivals` | Landende in den nächsten 15 min | "↓ Landung BER", Piste, die nächsten zwei mit Herkunft und Minuten |
-| `next` | ein Flugzeug kommt in 15 s bis 10 min ins Sichtfeld, unter 3 min dringend | wer, "Sichtbar in ~N min" (Zeit bis zum Sichtfeld, nicht bis zur Landung), auf welcher Seite des Fensters (← →) |
-| `private` | Privatflieger, Hubschrauber, Militär im Sichtfeld | wie ein Flug in Layout A/C |
-| `radar` | Flugzeuge im Radius | Rundumblick, Sichtfeld als Band in der Mitte, Punkte nach Richtung und Höhenwinkel in Statusfarbe; der nächste blinkt |
-| `runway` | Landerichtung seit 30 min stabil, in den letzten 2 h vom Verkehr bestätigt, laut METAR kein Rückenwind | "BER landet auf 25", Wind, ob Landungen oder Starts durchs Sichtfeld kommen |
-| `runway_change` | bis 1 h nach einem Pistenwechsel | neue Richtung, was das fürs Fenster heißt |
-| `weather` | METAR erklärt den leeren Himmel: Gewitter, Nebel/Sicht unter 2 km, Wolken unter 1500 m, Schnee | z. B. "Wolken auf 600 m, Flieger versteckt, 3 Flieger darüber" |
-| `curfew` | `CURFEW_HOURS` (BER 0-5 Uhr) | nur zu sehen, wenn `QUIET_HOURS` das Panel dann nicht abschaltet |
-| `scoreboard` | ab 10 Flugzeugen am Tag | Flugzeuge, Airlines, wie viele im Sichtfeld, das höchste |
-| `pokedex` | ab der ersten Airline | Sammelalbum: gesehene Marken aus `airlines.json`, dazu Exoten |
-| `new` | Airline zum ersten Mal gesehen, 2 min dringend | "NEU!" mit Logo. Nicht in den ersten 6 h nach dem ersten Start, da füllt sich das Album still |
-| `rare` | Typ oder Betreiber aus `data/rare.json` im Abrufradius | "Weit weg, aber selten: A380 Emirates, 70 km SO"; Typen 2 min dringend |
-| `quiet` | ab 10 min ohne Flug im Sichtfeld | Flaute und Tagesrekord; nach einer Abruflücke (Quiet Hours) beginnt die Uhr neu |
-| `iss` | sichtbarer ISS-Überflug in den nächsten 30 min, oder er läuft gerade (dringend) | Richtung, Höhe, ob er durchs Fenster kommt |
-| `sunset`, `sunrise` | 2 h vor Sonnenuntergang, 90 min vor Sonnenaufgang | Uhrzeit; "Gegenlicht", wenn die Sonne im Sichtfeld steht |
-| `joke`, `delay`, `txl`, `ber_opening`, `plane`, `pigeon` | immer, mit kleinem Gewicht | aus `data/jokes.json`; Jahrestage (BER 31.10., letzter Tegel-Flug 8.11., Luftbrücke) kommen an ihrem Tag öfter |
-| `santa`, `fireworks` | 24.12. ab 15 Uhr, 31.12. ab 18 Uhr bis 2 Uhr | Schlitten 1 im Anflug, Feuerwerk |
-
-**Nächster Flieger:** Der Server rechnet jedes Flugzeug im Radius 10 min weiter (Tempo, Kurs, Steigrate). Landende fliegen aber nicht geradeaus, sie drehen in den Endanflug. Liegt der Endanflug der aktuellen Landerichtung im Sichtfeld, zählt für sie die Reststrecke bis dorthin. Welche Teile von An- und Abflug im Sichtfeld liegen, rechnet der Server aus dem Sichtfeld (3°-Gleitpfad, Steigen mit 10 %).
-
-**Quellen und Ausfälle:** Wetter ist das METAR von aviationweather.gov, ersatzweise vom NOAA-Server, alle 20 min (`METAR=0` schaltet ab). Die ISS-Bahndaten kommen einmal am Tag von Celestrak, ersatzweise von einer zweiten Quelle, liegen in `data/tle.txt` und gelten 14 Tage (`ISS=0`). Sonne und Überflüge rechnet der Server selbst. Fällt eine Quelle aus, fehlen nur ihre Karten; Fehler stehen in `/issues` (`source_error: metar` oder `tle`) und in `/health` → `metar`, `iss`. Karten, die frische Flugdaten brauchen (`next`, `radar`, `quiet`, `private`), pausieren, solange das Bild gedimmt ist. Stürzt eine Karte ab, kommt die Uhr und das Log bekommt einen Traceback.
-
-**Vorschau:** Die Vorschauseite hat Links für jede Karte, oder direkt `/frame.png?card=radar`. Passt die Lage gerade nicht, zeigt die Karte Beispieldaten. `/idle` listet alle Karten: aktiv, dringend, abgeschaltet, mit ihren Daten. `IDLE_OFF=joke,pigeon` schaltet Karten ab.
-
-**Statistik:** `data/stats.json` (übersteht Neustarts, `GET /stats`): heute, die letzten 60 Tage, Sammelalbum mit fehlenden Airlines, seltene Sichtungen, Landerichtung. `SCAN_RADIUS_KM` (Default wie `RADIUS_KM`) vergrößert den Abruf für Statistik, seltene Flugzeuge und Notfälle, ohne mehr anzuzeigen. Seltene Typen und Betreiber stehen in `data/rare.json`, Witze und Verspätungsgründe in `data/jokes.json`.
-
-## Airline-Logos
-
-Nur quadratische Bildmarken: Schriftzüge sind bei 30 × 30 Pixeln unlesbar, dann zeigt das Panel Layout A ohne Logo. Der Server holt fehlende Logos selbst und probiert die Quellen der Reihe nach: Kiwi.com (App-Icons, per IATA), dann FlightAware (Bildmarken, per ICAO). Er nimmt das erste Bild mit Seitenverhältnis bis `LOGO_MAX_ASPECT` (1,5), entfernt weißen Hintergrund, skaliert auf 30 × 30 und legt `data/logos/<IATA>.png` ab (ohne IATA-Code `<ICAO>.png`). Platzhalterbilder der Quellen (graues Flugzeug) erkennt er, indem er jede Quelle einmal nach einem Code fragt, den es nicht gibt. Fehlschläge stehen in `/health` → `logos_missing` und werden nach 7 Tagen erneut probiert.
-
-- Alles auf einmal: `python3 -m flightpanel.fetch_logos` (alle Airlines aus `data/airlines.json`), oder gezielt `… fetch_logos LH U2 FR`, `--force` überschreibt.
-- Handgemachte Logos haben Vorrang: eine 30 × 30-PNG als `data/logos/<IATA>.png` oder `<ICAO>.png` ablegen. Neue Dateien werden im Betrieb erkannt.
-- `tools/make_logo.py bild.svg LH` macht aus beliebigen Bildern (PNG/JPG/SVG) das passende Format, mit Vorschau. `--bg "#ff6600"` legt eine Markenfarbe hinter das Logo, `--crop 10` schneidet Rand ab.
-- `LOGO_FETCH=0` schaltet den Abruf ab, `LOGO_URLS` ersetzt die Quellen (kommagetrennt, `{iata}` oder `{icao}`).
-
-`data/airlines.json` bildet ICAO-Codes auf kurze Anzeigenamen und den Logo-Code ab (adsbdb liefert sonst "Deutsche Lufthansa AG"). Der Logo-Code ist die IATA-Marke, nicht unbedingt die des Tochterbetriebs: Malta Air → `FR`, DHL-Betriebe → `D0`. Leer heißt: Logo per ICAO, weil der IATA-Code doppelt vergeben ist (Cargolux `CV` ist bei Kiwi Air Chathams). Rund 130 Einträge: alles, was in Berlin regelmäßig fliegt, große Überflieger und Frachter.
-
-## Echte Daten
-
-In `.env` `MOCK=0`, `HOME_LAT`, `HOME_LON` setzen, `docker compose up -d --build`. Kein Account nötig.
-
-**Quelle `SOURCE=adsblol` (Default):** [adsb.lol](https://adsb.lol), ein Community-Netz aus ADS-B-Empfängern plus MLAT. Ohne Account und ohne Tageslimit, Abruf alle `POLL_INTERVAL` Sekunden (20 s). Liefert auch den Flugzeugtyp und die ADS-B-Kategorie, daran erkennt der Server Hubschrauber (`A7`) und Leichtflugzeuge. adsb.lol kündigt an, die API künftig nur noch mit Key herauszugeben (für Leute, die einen Empfänger beisteuern).
-
-**Ersatz OpenSky:** Fällt adsb.lol aus (Timeout, Fehler, Key-Pflicht), springt OpenSky ein, aber nur so oft, wie dessen Tagesbudget erlaubt. adsb.lol wird bei jedem Abruf weiter probiert, ein Aussetzer kostet also nur einen Abruf. Anonym gibt OpenSky 400 Credits am Tag (rund alle 2,5 min), mit Account 4000:
-
-1. OpenSky-Account anlegen, unter *API Clients* einen Client erzeugen.
-2. In `.env`: `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET`. `SOURCE=opensky` nimmt nur OpenSky.
-
-Das OpenSky-Intervall rechnet der Server selbst aus: nie kürzer als `POLL_INTERVAL`, aber so lang, dass das Tagesbudget für die Stunden außerhalb `QUIET_HOURS` reicht (in den Quiet Hours ist das Panel schwarz, es wird nicht gepollt). Bei unter 10 % Rest-Credits verdoppelt er das Intervall, bei HTTP 429 wartet er so lange, wie OpenSky es sagt. `/health` → `source` zeigt, welche Quelle gerade liefert.
-
-Routen und Flugzeugtypen kommen von adsbdb.com (kostenlos, ohne Account) und werden 24 h bzw. 30 Tage in `data/cache.json` gehalten.
+| `/idle` | Leerlauf-Karten: Stufe, ob sie gerade etwas zu sagen haben, welche dran ist |
 
 ## Betrieb auf dem Server
 
 ```bash
 git clone https://github.com/toastbrot2000/flightpanel && cd flightpanel
-cp /pfad/zur/alten/.env .env       # steht nicht im Repo: Standort, Sichtfeld, Zugangsdaten
+cp /pfad/zur/alten/.env .env
 docker compose up -d --build
 docker compose exec flightpanel python3 -m flightpanel.fetch_logos
 ```
 
-Dann `/health` ansehen: `source.active` sollte `adsblol` sein, `poll_interval_s` 20. Der ESP32 zeigt mit `FRAME_URL` in `secrets.h` auf diesen Server. Updates: `git pull && docker compose up -d --build`; Cache, Logos und Auffälligkeiten liegen in `data/` und bleiben.
+Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Updates: `git pull && docker compose up -d --build`. Cache, Logos, Statistik und Auffälligkeiten liegen in `data/` und bleiben. In den `QUIET_HOURS` ist das Panel schwarz und der Server ruft nichts ab.
 
-### Auffälligkeiten: `/issues`
-
-Der Server sammelt im Betrieb, was nachgepflegt oder angesehen werden sollte, mit Zähler, erstem und letztem Auftreten, Callsigns und einem Beispiel:
+**Auffälligkeiten (`/issues`)** sammelt der Server im Betrieb, mit Zähler, erstem und letztem Auftreten, Callsigns und einem Beispiel:
 
 | Art | Bedeutung | Was tun |
 |---|---|---|
-| `unknown_operator` | Betreibercode nicht in `airlines.json` | eintragen (Name, Logo-Code), `"airline": false` für Rettung/Polizei/Militär |
-| `name_mismatch` | unser Name passt nicht zu adsbdb | meist alte Daten bei adsbdb (SDR = Sundair), sonst Fehler bei uns |
-| `route_implausible` | adsbdb-Route passt nicht zur Position, verworfen | nichts, zur Kontrolle |
-| `route_unknown` | gezeigter Airline-Flug ohne Route | nichts, weder adsb.im noch adsbdb noch die Flugspur kennen ihn |
+| `unknown_operator` | Betreibercode nicht in `airlines.json` | eintragen (Name, Logo-Code), `"airline": false` für Rettung, Polizei, Militär |
+| `name_mismatch` | unser Name passt nicht zu adsbdb | meist alte Daten bei adsbdb, sonst Fehler bei uns |
+| `route_implausible` | Route passt nicht zur Position, verworfen | nichts, zur Kontrolle |
+| `route_unknown` | gezeigter Airline-Flug ohne Route | nichts, keine Quelle kennt ihn |
 | `source_error`, `rate_limit`, `fallback` | Fehler, HTTP 429, OpenSky eingesprungen | bei Häufung `POLL_INTERVAL` erhöhen |
 | `stale` | Bild gedimmt oder leer mangels Daten | Quellen prüfen |
 | `esp32_gap` | ESP32 hat länger keinen Frame geholt | WLAN, Stromversorgung |
 | `exception` | Fehler im Code, mit Datei und Zeile | Bug, Traceback im Container-Log |
 
-Dazu `logos_missing` und Abrufe seit dem Start. Liegt in `data/issues.json`, übersteht Neustarts. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`. `/health` → `issues` zeigt die Anzahl je Art.
+Liegt in `data/issues.json`. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`.
 
 ## Firmware
 
@@ -166,7 +125,7 @@ PlatformIO, Board `esp32dev` (NodeMCU ESP32, WROOM-32), Bibliothek ESP32-HUB75-M
 ```bash
 cd firmware
 cp include/secrets.h.example include/secrets.h   # WLAN (2,4 GHz!), Server-URL, OTA-Passwort
-pio run -t upload                                # erstes Mal per USB, VIN-Pin dabei abstecken
+pio run -t upload                                # erstes Mal per USB, VIN dabei abstecken
 pio device monitor
 pio run -e esp32dev_ota -t upload                # danach per WLAN
 ```
@@ -183,28 +142,60 @@ Verdrahtung ESP32 → HUB75 (Standard der Bibliothek, Tabelle auch im Bauplan 4.
 | B2 | 13 | LAT | 4 |
 | CLK | 16 | OE | 15 |
 
-Beim Boot zeigt die Firmware ein Testbild: linkes Panel rot, rechtes grün (Kettenreihenfolge), dann Rahmen plus Diagonale (Geometrie), dann Schriftzug (Orientierung). Danach holt sie alle 2 s `/frame`. Schalter in `include/config.h`: `SWAP_HALVES`, `HUB75_CLKPHASE`, `HUB75_LATCH_BLANKING`, `MAX_BRIGHTNESS 160`. Ohne Server-Kontakt bleibt das letzte Bild stehen und nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu.
+Beim Boot zeigt die Firmware ein Testbild: linkes Panel rot, rechtes grün (Kettenreihenfolge), dann Rahmen und Diagonale (Geometrie), dann Schrift (Orientierung). Danach holt sie alle 2 s `/frame`. Schalter in `include/config.h`: `SWAP_HALVES`, `HUB75_CLKPHASE`, `HUB75_LATCH_BLANKING`, `MAX_BRIGHTNESS`. Ohne Server bleibt das letzte Bild stehen, nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu. Kompilieren ohne lokales PlatformIO: `sh tools/check_firmware.sh` (Docker).
 
-Die Firmware ist gegen die Bibliotheksquelle 3.0.14 geschrieben. Kompilieren lässt sie sich auch ohne lokale PlatformIO-Installation in Docker, siehe `tools/check_firmware.sh`.
-
-## Struktur
-
-```
-server/flightpanel/   config, geo, fonts, opensky, adsblol, adsbdb, model, logos, fetch_logos, render, main
-                      Leerlauf: idle (Auswahl), cards (Karten), sprites, stats, metar, astro (Sonne, ISS)
-server/tests/         pytest
-firmware/             platformio.ini, src/main.cpp, include/config.h, include/secrets.h.example
-tools/make_logo.py    Bild -> data/logos/<CODE>.png
-data/                 airlines.json, rare.json, jokes.json, logos/; im Betrieb cache.json, issues.json,
-                      stats.json, tle.txt (Volume)
-docs/                 Bauplan
-```
-
-## Tests
+## Entwicklung
 
 ```bash
-pip install -r server/requirements-dev.txt
-python -m pytest server/tests
+pip install -r server/requirements-dev.txt    # dazu DejaVu-Schriften (fonts-dejavu-core), wie im Container
+pytest                                        # vom Repo-Wurzelverzeichnis, ohne Netz
+ruff check .
+MOCK=1 DATA_DIR=./data PYTHONPATH=server python3 -m flightpanel.main
 ```
 
-Ohne Netz: Scheduler, Vorhersage, Pistengeometrie, Statistik, METAR-Parser, Sonne (gegen veröffentlichte Auf- und Untergangszeiten), ISS (gegen eine unabhängige Positionsangabe) und jede Karte mit Beispieldaten.
+Die Tests prüfen ohne Netz: Einstellungen, Sichtfeld und Vorhersage, Landefolge, Routen, Kartenauswahl, Statistik, METAR, Sonne (gegen veröffentlichte Zeiten), ISS (gegen eine unabhängige Position), jede Karte mit Beispieldaten und jeden HTTP-Endpunkt. GitHub Actions baut bei jedem Push den Container und führt darin Lint und Tests aus; bei Änderungen an `firmware/` kompiliert es die Firmware.
+
+### Aufbau
+
+```
+server/flightpanel/
+  main.py        Einstieg: App, Abruf-, Wetter-, ISS- und Speicherschleife
+  web.py         HTTP-Endpunkte und Vorschauseite
+  config.py      Einstellungen aus .env (Config.from_env), ruhiger Modus, Helligkeit
+  data.py        mitgelieferte Daten laden; storage.py Dateien atomar schreiben
+  issues.py      Auffälligkeiten sammeln (/issues); cache.py Antworten mit Ablaufzeit
+
+  Quellen        adsblol.py, opensky.py (Flugzeuge), adsbim.py, adsbdb.py (Routen),
+                 origins.py (Herkunft aus der Flugspur), metar.py (Wetter), astro.py (Sonne, ISS),
+                 logos.py, logo_image.py, fetch_logos.py (Logos)
+  model.py       State (ein Flugzeug von der Quelle), Flight (fürs Panel), DisplayModel
+  build.py       baut bei jedem Abruf das DisplayModel
+  airlines.py    Betreiber, Airline oder nicht, Routenprüfung
+  aircraft.py    Kennzeichen, Flugzeugklasse, Text für Zeile 2
+  view.py        Sichtfeld: Richtung, Höhenwinkel, wann einer hineinfliegt
+  airport.py     Landerichtung, Landefolge und -zeit, Abflüge
+  stats.py       Tagesstatistik, Sammelalbum, seltene Flugzeuge, Flaute
+  mock.py        Fantasieflüge für MOCK=1
+
+  render.py      Fluglayouts, Himmelspunkte, Frame-Bytes und PNG
+  draw.py        Zeilenraster und Texthelfer; fonts.py, colors.py, sprites.py
+  idle.py        Auswahl der Leerlauf-Karten (Stufen, Gewichte, Dringendes)
+  cards/         die Karten: traffic, runway, album, sky, fun; Liste in __init__.py
+server/tests/    pytest
+firmware/        ESP32: platformio.ini, src/main.cpp, include/config.h, secrets.h.example
+tools/           make_logo.py, make_airports.py, check_firmware.sh
+data/            airlines.json, airports.json, rare.json, jokes.json, logos/;
+                 im Betrieb cache.json, issues.json, stats.json, tle.txt
+docs/            Bauplan (Hardware), screens.md (alle Bildschirme)
+```
+
+### Eine Leerlauf-Karte hinzufügen
+
+1. In der passenden Datei unter `server/flightpanel/cards/` zwei Funktionen: `foo_cond(ctx)` gibt `Hit(daten)` zurück oder `None`, wenn die Karte gerade nichts zu sagen hat; `foo_draw(img, ctx, daten, t_in, f)` zeichnet. Optional `foo_demo(ctx)` mit Beispieldaten. Was `ctx` mitbringt: `idle.Ctx`; Texthelfer: `draw.py`.
+2. Eintrag in `CARDS` in `cards/__init__.py`, mit Stufe (`tier`) und Gewicht.
+3. Ansehen: `/frame.png?card=foo`. Der Test `test_every_card_renders_with_demo_data` zeichnet sie automatisch mit.
+4. `CARD_FOO=1` in `.env.example` und eine Zeile in `docs/screens.md`.
+
+### Eine Airline nachtragen
+
+In `data/airlines.json`: `"ICAO": {"name": "Kurzname", "iata": "XY"}`. Für Rettung, Polizei, Militär `"airline": false` und `"label": "Polizei"`; mit `"number": true` wird aus CHX31 "Christoph 31". Danach das Logo holen (`fetch_logos XY`) oder von Hand machen (`tools/make_logo.py`). Kandidaten sammelt `/issues` unter `unknown_operator`.

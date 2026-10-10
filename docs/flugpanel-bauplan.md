@@ -151,6 +151,8 @@ Nicht gleichzeitig über USB und über VIN versorgen. Zum Flashen per USB den VI
 
 ## 5. Software
 
+> Der aktuelle Stand der Software steht in der [README](../README.md) und in [screens.md](screens.md). Dieser Abschnitt ist der ursprüngliche Plan; seitdem geändert: adsb.lol ist die Hauptquelle (OpenSky nur Ersatz), Routen kommen zuerst von adsb.im, Logos sind 32 × 32, die Himmelspunkte stehen in Landefolge, der Server ist in mehr Module aufgeteilt, und es gibt Leerlauf-Karten.
+
 ### 5.1 Architektur
 
 ```
