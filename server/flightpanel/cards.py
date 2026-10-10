@@ -699,20 +699,25 @@ def delay_cond(ctx: Ctx):
     if not reasons:
         return None
     r = _rng(ctx, "delay")
-    i = r.randrange(len(reasons))
-    return Hit({"n": r.randint(2, 99), "reason": reasons[i]})
+    return Hit({"reason": reasons[r.randrange(len(reasons))]})
 
 
 def delay_demo(ctx: Ctx):
-    return {"n": 37, "reason": "Rolltreppe zu kurz|(wirklich passiert)"}
+    return {"reason": "Rolltreppen einige|Stufen zu kurz|2012"}
 
 
 def delay_draw(img, ctx, d, t_in, f):
+    """Echte Gründe, warum der BER neun Jahre zu spät eröffnete (data/jokes.json):
+    zwei Zeilen, das Jahr rechts unten, wenn es neben die zweite passt."""
     W = img.width
-    text(img, FONT_SMALL, 0, ROW1 + 1, f"Verspätungsgrund #{d['n']}:", ARR_C, f, W)
-    parts = _fmt(d["reason"], ctx).split("|")
-    for i, s in enumerate(parts[:2]):
-        text(img, FONT_MID, 0, (ROW2, ROW3)[i], s, INFO, f, W)
+    text(img, FONT_SMALL, 0, ROW1 + 1, "Verspätungsgrund BER", ARR_C, f, W)
+    a, b, year = (_fmt(d["reason"], ctx).split("|") + ["", "", ""])[:3]
+    line(img, 0, ROW2, a, INFO, f)
+    yw = FONT_SMALL.text_width(year) + 6 if year else 0
+    show_year = bool(year) and FONT_MID.text_width(b) + yw <= W
+    line(img, 0, ROW3, b, INFO, f, W - yw if show_year else None)
+    if show_year:
+        right(img, FONT_SMALL, ROW3 + 1, year, MUTED, 0.8 * f)
 
 
 def txl_cond(ctx: Ctx):

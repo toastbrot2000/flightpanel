@@ -36,8 +36,9 @@ PROTO_VERSION = 1
 # Zeilenraster für 32 px Höhe
 ROW1, ROW2, ROW3 = 0, 12, 24       # gleicher Abstand; die untere Zeile sitzt auf der Kante
 
-# Himmelspunkte: ein Punkt pro Flug im Wechsel, der im Sichtfeld ist, von links nach
-# rechts wie vom Fenster aus gesehen; der gezeigte leuchtet. Dann wird das Logo kleiner.
+# Himmelspunkte: ein Punkt pro Flug im Wechsel, der im Sichtfeld ist, in Lesereihenfolge:
+# links landet zuerst, dann die Landefolge, danach der Rest; der gezeigte leuchtet.
+# Dann wird das Logo kleiner.
 DOT, DOT_PITCH, MAX_DOTS = 3, 5, 6
 DOT_DIM = 0.3
 LOGO_COL = 32           # Logospalte, Logo bündig in der Ecke
@@ -141,11 +142,14 @@ class Renderer:
 
     def _sky_dots(self, model: DisplayModel, fl: Flight) -> list[tuple[tuple[int, int, int], bool]]:
         """(Statusfarbe, ist der gezeigte Flug) für jeden Flug im Wechsel, der im
-        Sichtfeld ist, im Uhrzeigersinn ab VIEW_FROM sortiert, also von links nach
-        rechts, wenn man ins Sichtfeld schaut. Nur Flüge, die das Panel auch zeigt:
-        Jeder Punkt leuchtet irgendwann. Leer bei weniger als zwei oder wenn der
-        gezeigte Flug nicht im Sichtfeld ist."""
-        seen = sorted((f for f in model.flights if f.visible), key=lambda f: (f.bearing - self.cfg.view_from) % 360)
+        Sichtfeld ist. Gelesen wird von links nach rechts: links der, der zuerst
+        landet, dann die Landefolge; Starts und Überflüge danach, nach Richtung im
+        Sichtfeld. (Vom Balkon aus gesehen landet der rechteste zuerst; nach dieser
+        Geometrie zu sortieren war nicht intuitiv.) Nur Flüge, die das Panel auch
+        zeigt: Jeder Punkt leuchtet irgendwann. Leer bei weniger als zwei oder wenn
+        der gezeigte Flug nicht im Sichtfeld ist."""
+        seen = sorted((f for f in model.flights if f.visible),
+                      key=lambda f: (f.seq is None, f.seq or 0, (f.bearing - self.cfg.view_from) % 360))
         idx = next((i for i, f in enumerate(seen) if f is fl), None)
         if len(seen) < 2 or idx is None:
             return []
