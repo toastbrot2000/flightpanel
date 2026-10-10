@@ -752,9 +752,15 @@ def ber_opening_draw(img, ctx, d, t_in, f):
             img.paste(dim(RED, f), (x, ROW2 + 4, x + w, ROW2 + 5))
         x += w + 5
     if shown > len(years):
-        FONT_BIG.draw(img, 0, ROW3, "2020", dim(DEP_C, f))
-        sprites.blit(img, sprites.CHECK, FONT_BIG.text_width("2020") + 4, ROW3 + 2, DEP_C, f)
-        text(img, FONT_SMALL, 52, ROW3 + 1, "nur 9 Jahre später", MUTED, f, W - 52)
+        # Untere Zeile aus den echten Breiten: "2020", Haken, Text. Passt "nur 9 Jahre
+        # später" nicht daneben, die kürzere Fassung statt abgeschnitten ("... spä").
+        y = img.height - FONT_BIG.cap_height
+        x = FONT_BIG.draw(img, 0, y, "2020", dim(DEP_C, f)) + 2
+        sprites.blit(img, sprites.CHECK, x, y + FONT_BIG.cap_height - len(sprites.CHECK) - 1, DEP_C, f)
+        x += sprites.width(sprites.CHECK) + 4
+        msg = next((m for m in ("nur 9 Jahre später", "9 Jahre später") if x + FONT_SMALL.text_width(m) <= W),
+                   "9 Jahre später")
+        text(img, FONT_SMALL, x, img.height - FONT_SMALL.cap_height, msg, MUTED, f, W - x)
 
 
 PLANE_TEXTS = ["Himmel frei", "Warteschleife …", "gleich kommt einer", "Funkstille über Berlin"]

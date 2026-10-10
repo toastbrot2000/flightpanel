@@ -22,7 +22,7 @@ from .cards import CARDS
 from .colors import ARR_C, CLOCK, DEP_C, INFO, MUTED, OVF_C, dim
 from .config import Config, in_hours
 from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
-from .geo import compass
+from .geo import kompass
 from .idle import IdleScreen
 from .logos import LogoStore
 from .model import ARR, DEP, DisplayModel, Flight
@@ -74,11 +74,29 @@ def info_pages(f: Flight, hide_callsign: bool = False) -> list[str]:
         vr = "↑" if (f.vrate_fpm or 0) > 300 else "↓" if (f.vrate_fpm or 0) < -300 else ""
         spd = f" {f.speed_kt}kt" if f.speed_kt is not None else ""
         pages.append(f"{alt_text(f)}{vr}{spd}")
-    trk = f" Kurs {compass(f.track)}" if f.track is not None else ""
-    pages.append(f"{int(f.dist_km)}km {compass(f.bearing)}{trk}")
+    trk = f" Kurs {kompass(f.track)}" if f.track is not None else ""
+    pages.append(f"{int(f.dist_km)}km {kompass(f.bearing)}{trk}")
     if not hide_callsign:
         pages.append(f.callsign)
     return pages
+
+
+def text_line(img: Image.Image, x: int, y: int, text: str, color, max_w: int) -> None:
+    """Eine Textzeile in FONT_MID; passt sie nicht in max_w, in FONT_SMALL (bündig
+    mit der Unterkante der Großbuchstaben), erst dann gekürzt. Abschneiden ändert
+    sonst den Sinn ("Kurs SW" -> "Kurs S")."""
+    if FONT_MID.text_width(text) <= max_w:
+        FONT_MID.draw(img, x, y, text, color)
+    else:
+        FONT_SMALL.draw(img, x, y + FONT_MID.cap_height - FONT_SMALL.cap_height, FONT_SMALL.fit(text, max_w), color)
+
+
+def type_width(fl: Flight, line2: str, avail: int) -> int:
+    """Platz für den Typ rechts in Zeile 2, oder 0, wenn er nicht neben die Zeile passt."""
+    if not fl.actype:
+        return 0
+    tw = FONT_MID.text_width(fl.actype) + 6
+    return tw if FONT_MID.text_width(line2) + tw <= avail else 0
 
 
 class Renderer:
@@ -216,15 +234,14 @@ class Renderer:
 
         # Zeile 2: Route, sonst was der Flug ist, sonst ?→BER; rechtsbündig der Typ
         route = second_line(fl.origin, fl.dest, fl.status, fl.label, self.cfg.local_airport_iata)
-        FONT_MID.draw(img, x0, ROW2, route, _dim(INFO, f))
-        if fl.actype:
-            tw = FONT_MID.text_width(fl.actype)
-            if x0 + FONT_MID.text_width(route) + 8 + tw <= img.width:
-                FONT_MID.draw(img, img.width - tw, ROW2, fl.actype, _dim(MUTED, f))
+        tw = type_width(fl, route, avail)
+        text_line(img, x0, ROW2, route, _dim(INFO, f), avail - tw)
+        if tw:
+            FONT_MID.draw(img, img.width - FONT_MID.text_width(fl.actype), ROW2, fl.actype, _dim(MUTED, f))
 
         # Zeile 3: wechselnde Info, ohne das Rufzeichen, wenn es oben schon steht
         pages = info_pages(fl, hide_callsign=shown_elsewhere(fl.callsign, name, route))
-        FONT_MID.draw(img, x0, ROW3, FONT_MID.fit(pages[page % len(pages)], avail), _dim(INFO, f))
+        text_line(img, x0, ROW3, pages[page % len(pages)], _dim(INFO, f), avail)
 
     def _layout_a(self, img: Image.Image, fl: Flight, page: int, f: float, dots=()) -> None:
         col = _dim(COLORS[fl.status], f)
@@ -245,17 +262,16 @@ class Renderer:
 
         # Zeile 2: Route, sonst was der Flug ist, sonst ?→BER; Typ rechts
         route = second_line(fl.origin, fl.dest, fl.status, fl.label, self.cfg.local_airport_iata)
-        FONT_MID.draw(img, 0, ROW2, route, _dim(INFO, f))
-        if fl.actype:
-            tw = FONT_MID.text_width(fl.actype)
-            FONT_MID.draw(img, W - tw, ROW2, fl.actype, _dim(MUTED, f))
+        tw = type_width(fl, route, W)
+        text_line(img, 0, ROW2, route, _dim(INFO, f), W - tw)
+        if tw:
+            FONT_MID.draw(img, W - FONT_MID.text_width(fl.actype), ROW2, fl.actype, _dim(MUTED, f))
 
         # Zeile 3: wechselnde Info, rechts die Himmelspunkte, wenn Platz ist; ohne
         # Rufzeichen, wenn es schon oben steht
         pages = info_pages(fl, hide_callsign=bool(cs) or shown_elsewhere(fl.callsign, name, route))
         dw = self._dots_width(dots)
-        info = FONT_MID.fit(pages[page % len(pages)], W - (dw + 6 if dots else 0))
-        FONT_MID.draw(img, 0, ROW3, info, _dim(INFO, f))
+        text_line(img, 0, ROW3, pages[page % len(pages)], _dim(INFO, f), W - (dw + 6 if dots else 0))
         if dots:
             self._draw_dots(img, W - dw, img.height - DOT, dots, f)
 
