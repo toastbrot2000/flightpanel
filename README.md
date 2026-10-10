@@ -3,9 +3,9 @@
 LED-Anzeige fürs Wohnzimmer, die das Flugzeug in der Nähe zeigt, mit Airline-Logo (Vorbild: The Flight Wall). 2 × Waveshare HUB75 P2.5 64 × 32 nebeneinander = 128 × 32 Pixel auf 32 × 8 cm, ESP32, Server im Homelab. Der komplette Bauplan liegt in `docs/flugpanel-bauplan.md`.
 
 ```
-OpenSky ──┐
+adsb.lol ─┐  (Ersatz: OpenSky)
 adsbdb ───┼─> server (Python, Container) ──HTTP /frame──> ESP32 ──HUB75──> 2 Panels
-Logo-CDN ─┘    pollt, cachet, holt Logos,   12 KB alle 2 s     DMA-Refresh
+Logo-CDNs ┘    pollt, cachet, holt Logos,   12 KB alle 2 s     DMA-Refresh
                rendert 128x32
 ```
 
@@ -56,9 +56,11 @@ Pro Abruf ordnet der Server alle Flugzeuge im Radius (unter `MAX_ALT_M`, nicht a
 
 1. **Sichtfeld zuerst.** `VIEW_FROM`/`VIEW_TO` (Richtung im Uhrzeigersinn, 0 = Nord, 90 = Ost), `VIEW_MIN_ELEV` (Grad über dem Horizont) und `VIEW_MAX_KM` beschreiben, was man vom Fenster aus sieht. Zählt auch, wer bis zum nächsten Abruf hineinfliegt (aus Geschwindigkeit, Kurs und Steigrate weitergerechnet), sonst wären Anflüge schon durch, bevor sie auf dem Panel stehen. `VIEW_ONLY=1` zeigt nur das Sichtfeld und sonst die Uhr, `VIEW_ONLY=0` zeigt Sichtbares zuerst und sonst das nächste Flugzeug. Default: rundum.
 2. **Airlines vor dem Rest.** Linien-, Charter- und Frachtflüge zählen als Airline: Betreiber aus `data/airlines.json` oder mit Route bei adsbdb. Privatflüge (Callsign = Kennzeichen), Rettungshubschrauber, Polizei und Luftwaffe (`"airline": false` in `airlines.json`) kommen nur dran, wenn keine Airline zu sehen ist; `SHOW_OTHER=0` blendet sie ganz aus.
-3. **Kürzeste Sichtlinie.**
+3. **Landefolge, dann kürzeste Sichtlinie.** Wer als nächstes landet, kommt zuerst. Die Landefolge schätzt der Server aus der Reststrecke bis zur Piste: im Endanflug die Entfernung, im Gegenanflug weiter bis zum Eindrehen plus Endanflug, im Queranflug quer zur Achse plus Rest. Die Landerichtung (BER 25 oder 07) erkennt er am Verkehr in Platznähe. Fluglotsen können umsortieren, für Flugzeuge im Endanflug stimmt die Folge aber praktisch immer.
 
-Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen `az` und `elev` ablesen.
+Bis zu `MAX_FLIGHTS` Flüge wechseln sich ab. Sind mindestens zwei Flugzeuge im Sichtfeld, steht unter dem (dann kleineren) Logo eine Punktreihe: ein Punkt pro Flugzeug im Sichtfeld, von links nach rechts so angeordnet, wie man sie vom Fenster aus sieht, in der Farbe ihres Status. Der Punkt des gerade gezeigten Flugs leuchtet hell. So lässt sich zuordnen, welcher Flieger am Himmel gemeint ist. Ohne Logo (Layout A) stehen die Punkte rechts unten.
+
+Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen `az` und `elev` ablesen. `seq` ist der Platz in der Landefolge.
 
 Routen von adsbdb sind pro Callsign gespeichert, und Airlines verwenden Callsigns für andere Strecken weiter. Liegt das Flugzeug weit neben der gespeicherten Strecke, verwirft der Server die Route und zeigt das Callsign.
 
@@ -75,13 +77,16 @@ Nur quadratische Bildmarken: Schriftzüge sind bei 30 × 30 Pixeln unlesbar, dan
 
 ## Echte Daten
 
-Läuft auch ohne Account: In `.env` `MOCK=0`, `HOME_LAT`, `HOME_LON` setzen, `docker compose up -d --build`. Anonym gibt OpenSky 400 Credits am Tag (1 Credit pro Abruf), der Server pollt dann nur alle ~2,5 min. Für ein Panel, das Anflüge zeigt, ist das zu langsam:
+In `.env` `MOCK=0`, `HOME_LAT`, `HOME_LON` setzen, `docker compose up -d --build`. Kein Account nötig.
+
+**Quelle `SOURCE=adsblol` (Default):** [adsb.lol](https://adsb.lol), ein Community-Netz aus ADS-B-Empfängern plus MLAT. Ohne Account und ohne Tageslimit, Abruf alle `POLL_INTERVAL` Sekunden (20 s). Liefert auch den Flugzeugtyp und die ADS-B-Kategorie, daran erkennt der Server Hubschrauber (`A7`) und Leichtflugzeuge. adsb.lol kündigt an, die API künftig nur noch mit Key herauszugeben (für Leute, die einen Empfänger beisteuern).
+
+**Ersatz OpenSky:** Fällt adsb.lol aus (Timeout, Fehler, Key-Pflicht), springt OpenSky ein, aber nur so oft, wie dessen Tagesbudget erlaubt. adsb.lol wird bei jedem Abruf weiter probiert, ein Aussetzer kostet also nur einen Abruf. Anonym gibt OpenSky 400 Credits am Tag (rund alle 2,5 min), mit Account 4000:
 
 1. OpenSky-Account anlegen, unter *API Clients* einen Client erzeugen.
-2. In `.env`: `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET`. Dann 4000 Credits am Tag, Abruf alle `POLL_INTERVAL` Sekunden (20 s reichen gut).
-3. `docker compose up -d --build`, dann `/health` ansehen: `opensky.anonymous=false`, `poll_interval_s`, `credits_remaining`.
+2. In `.env`: `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET`. `SOURCE=opensky` nimmt nur OpenSky.
 
-Der Server rechnet das Intervall selbst aus: nie kürzer als `POLL_INTERVAL`, aber so lang, dass das Tagesbudget für die Stunden außerhalb `QUIET_HOURS` reicht (in den Quiet Hours ist das Panel schwarz und es wird nicht gepollt). Bei unter 10 % Rest-Credits verdoppelt er das Intervall, bei HTTP 429 wartet er so lange, wie OpenSky es sagt.
+Das OpenSky-Intervall rechnet der Server selbst aus: nie kürzer als `POLL_INTERVAL`, aber so lang, dass das Tagesbudget für die Stunden außerhalb `QUIET_HOURS` reicht (in den Quiet Hours ist das Panel schwarz, es wird nicht gepollt). Bei unter 10 % Rest-Credits verdoppelt er das Intervall, bei HTTP 429 wartet er so lange, wie OpenSky es sagt. `/health` → `source` zeigt, welche Quelle gerade liefert.
 
 Routen und Flugzeugtypen kommen von adsbdb.com (kostenlos, ohne Account) und werden 24 h bzw. 30 Tage in `data/cache.json` gehalten.
 

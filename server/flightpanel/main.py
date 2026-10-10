@@ -19,6 +19,7 @@ import aiohttp
 from aiohttp import web
 
 from .adsbdb import AdsbDb, Cache
+from .adsblol import AdsbLol
 from .config import CFG, Config
 from .logos import make_logo_store
 from .model import DisplayModel, build_model, load_airlines, mock_model
@@ -49,6 +50,10 @@ class App:
         self.frame_count = 0
         self.session: aiohttp.ClientSession | None = None
         self.opensky: OpenSky | None = None
+        self.adsblol: AdsbLol | None = None
+        self.active_source = cfg.source     # woher der letzte Abruf kam
+        self.adsblol_failing = False
+        self.opensky_last_try = 0.0
         self.cache = Cache(os.path.join(cfg.data_dir, "cache.json"))
         self.adsb: AdsbDb | None = None
         self.names = load_airlines(cfg.data_dir)
@@ -58,12 +63,25 @@ class App:
 
     # ------------------------------------------------------------ Polling --
     def poll_interval(self) -> int:
-        """Abstand zwischen zwei OpenSky-Abrufen. Mindestens POLL_INTERVAL, aber
-        so lang, dass das Tagesbudget für alle Stunden außerhalb der Quiet Hours
-        reicht (anonym: 400 Credits -> rund alle 2,5 min). Wird es trotzdem
-        knapp, doppelt so lang."""
-        if self.cfg.mock:
+        """Abstand zwischen zwei Abrufen. adsb.lol hat kein Tageslimit: POLL_INTERVAL,
+        auch wenn es gerade ausfällt (OpenSky springt dann seltener ein, siehe
+        fetch_states). Nur mit SOURCE=opensky gilt dessen Budget."""
+        if self.cfg.mock or self.cfg.source == "adsblol":
             return self.cfg.poll_interval
+        return self.opensky_interval()
+
+    def refresh_period(self) -> int:
+        """Wie oft das Modell tatsächlich neu wird: bei ausgefallenem adsb.lol so
+        selten wie OpenSky einspringen darf. Für Vorschau und Stale-Schwellen."""
+        if self.cfg.source == "adsblol" and self.adsblol_failing:
+            return self.opensky_interval()
+        return self.poll_interval()
+
+    def opensky_interval(self) -> int:
+        """Mindestabstand zwischen OpenSky-Abrufen: nie kürzer als POLL_INTERVAL,
+        aber so lang, dass das Tagesbudget für alle Stunden außerhalb der Quiet
+        Hours reicht (anonym: 400 Credits -> rund alle 2,5 min). Wird es trotzdem
+        knapp, doppelt so lang."""
         budget = self.opensky.daily_credits
         need = active_seconds_per_day(self.cfg) / (budget * 0.95)
         interval = max(self.cfg.poll_interval, int(need + 0.999))
@@ -71,6 +89,26 @@ class App:
         if rem is not None and rem < budget * 0.1:
             interval *= 2
         return interval
+
+    async def fetch_states(self):
+        """adsb.lol, wenn gewählt. Fällt es aus, springt OpenSky ein, aber nur so
+        oft, wie dessen Tagesbudget erlaubt; adsb.lol wird weiter bei jedem Abruf
+        probiert, ein kurzer Aussetzer kostet also nur einen Abruf."""
+        if self.cfg.source == "adsblol":
+            try:
+                states = await self.adsblol.fetch(self.cfg.home_lat, self.cfg.home_lon, self.cfg.radius_km)
+                self.active_source = "adsblol"
+                self.adsblol_failing = False
+                return states
+            except Exception:
+                self.adsblol_failing = True
+                wait = self.opensky_interval() - (time.time() - self.opensky_last_try)
+                if wait > 0:
+                    raise RuntimeError(f"adsb.lol: {self.adsblol.last_error}, OpenSky erst in {wait:.0f} s")
+                log.warning("adsb.lol: %s, nehme OpenSky", self.adsblol.last_error)
+        self.opensky_last_try = time.time()
+        self.active_source = "opensky"
+        return await self.opensky.fetch(self.cfg.bbox)
 
     async def poll_loop(self) -> None:
         while not self._stop.is_set():
@@ -84,14 +122,17 @@ class App:
                 if self.cfg.mock:
                     self.model = mock_model(self.cfg, seed=int(t0 // 20))
                 else:
-                    states = await self.opensky.fetch(self.cfg.bbox)
-                    self.model = await build_model(self.cfg, states, self.adsb, self.names, horizon_s=interval)
-                    log.info("OpenSky: %d in der Box, %d im Radius, %d im Sichtfeld, angezeigt: %s. "
-                             "Credits %s, nächster Abruf in %d s",
-                             len(states), len(self.model.nearby),
+                    states = await self.fetch_states()
+                    interval = self.poll_interval()
+                    self.model = await build_model(self.cfg, states, self.adsb, self.names,
+                                                   horizon_s=self.refresh_period(),
+                                                   prev_course=self.model.landing_course)
+                    log.info("%s: %d empfangen, %d im Radius, %d im Sichtfeld, angezeigt: %s. "
+                             "Nächster Abruf in %d s",
+                             self.active_source, len(states), len(self.model.nearby),
                              sum(1 for n in self.model.nearby if n["in_view"] != "no"),
-                             ", ".join(f.callsign for f in self.model.flights) or "-",
-                             self.opensky.credits_remaining, interval)
+                             ", ".join(f"{f.callsign}#{f.seq}" if f.seq else f.callsign
+                                       for f in self.model.flights) or "-", interval)
                 for f in self.model.flights:
                     if f.kind == "airline":
                         self.logos.ensure(f.airline_iata, f.airline_icao)   # holt fehlende Logos im Hintergrund
@@ -101,9 +142,10 @@ class App:
                 age = time.time() - self.last_model_ok
                 # Schwellen nie kürzer als ein paar Abrufintervalle, sonst dimmt
                 # das Bild bei langsamem (anonymem) Polling nach jedem Fehlversuch.
-                if age > max(self.cfg.empty_after, 4 * interval):
+                period = self.refresh_period()
+                if age > max(self.cfg.empty_after, 4 * period):
                     self.model = replace(self.model, flights=[], empty=True, stale=True)
-                elif age > max(self.cfg.stale_after, 2 * interval):
+                elif age > max(self.cfg.stale_after, 2 * period):
                     self.model = replace(self.model, stale=True)
             await asyncio.sleep(max(5, interval - (time.time() - t0)))
 
@@ -156,9 +198,16 @@ class App:
             "model_age_s": round(now - self.last_model_ok) if self.last_model_ok else None,
             "model_stale": self.model.stale,
             "flights": len(self.model.flights),
+            "source": None if self.cfg.mock else {
+                "configured": self.cfg.source,
+                "active": self.active_source,
+                "poll_interval_s": self.poll_interval(),
+                "adsblol_last_ok_age_s": round(now - self.adsblol.last_ok) if self.adsblol and self.adsblol.last_ok else None,
+                "adsblol_last_error": self.adsblol.last_error if self.adsblol else None,
+            },
             "opensky": None if self.cfg.mock else {
                 "anonymous": self.opensky.anonymous,
-                "poll_interval_s": self.poll_interval(),
+                "min_interval_s": self.opensky_interval(),
                 "last_ok_age_s": round(now - self.opensky.last_ok) if self.opensky.last_ok else None,
                 "credits_remaining": self.opensky.credits_remaining,
                 "last_error": self.opensky.last_error,
@@ -181,7 +230,8 @@ class App:
         self.logos.session = self.session
         self.opensky = OpenSky(self.session, self.cfg.opensky_client_id, self.cfg.opensky_client_secret)
         self.adsb = AdsbDb(self.session, self.cfg.adsbdb_base, self.cache)
-        if not self.cfg.mock and self.opensky.anonymous:
+        self.adsblol = AdsbLol(self.session)
+        if not self.cfg.mock and self.cfg.source == "opensky" and self.opensky.anonymous:
             log.warning("Keine OpenSky-Zugangsdaten: anonymer Zugriff (400 Credits/Tag), "
                         "Abruf nur alle %d s. Mit OPENSKY_CLIENT_ID/SECRET alle %d s.",
                         self.poll_interval(), self.cfg.poll_interval)

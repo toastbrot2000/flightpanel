@@ -28,6 +28,11 @@ class Config:
     radius_km: float = float(_env("RADIUS_KM", "40"))
     max_alt_m: float = float(_env("MAX_ALT_M", "6000"))
     local_airport_iata: str = _env("LOCAL_AIRPORT_IATA", "BER").upper()
+    # Für die Landefolge: Flughafen und Anflugkurs einer Landerichtung (BER 25: 249°,
+    # die Gegenrichtung ergibt sich). Default BER.
+    airport_lat: float = float(_env("AIRPORT_LAT", "52.3667"))
+    airport_lon: float = float(_env("AIRPORT_LON", "13.5033"))
+    runway_course: float = float(_env("RUNWAY_COURSE", "249"))
 
     # Sichtfeld: was man vom Fenster aus sieht. Richtung im Uhrzeigersinn von
     # VIEW_FROM bis VIEW_TO (0 = Nord, 90 = Ost), Höhenwinkel über dem Horizont,
@@ -41,8 +46,10 @@ class Config:
     view_only: bool = _env("VIEW_ONLY", "0") in ("1", "true", "yes")   # sonst Sichtbares nur zuerst
     show_other: bool = _env("SHOW_OTHER", "1") in ("1", "true", "yes")  # Private, Hubschrauber, Militär
 
-    # Datenquellen
+    # Datenquellen. SOURCE=adsblol: Community-Netz ohne Account und Tageslimit,
+    # bei Fehlern springt OpenSky ein. SOURCE=opensky: nur OpenSky.
     mock: bool = _env("MOCK", "0") in ("1", "true", "yes")
+    source: str = _env("SOURCE", "adsblol").lower()
     opensky_client_id: str = _env("OPENSKY_CLIENT_ID", "")
     opensky_client_secret: str = _env("OPENSKY_CLIENT_SECRET", "")
     poll_interval: int = int(_env("POLL_INTERVAL", "30"))
@@ -57,11 +64,11 @@ class Config:
     logo_size: int = int(_env("LOGO_SIZE", "30"))
 
     # Logos: automatischer Abruf beim ersten Auftauchen einer Airline. LOGO_URLS:
-    # kommagetrennte Vorlagen mit {iata} oder {icao}, werden der Reihe nach probiert.
-    # Leer = eingebaute Liste (logos.DEFAULT_URLS). Nur annähernd quadratische Logos
-    # (Seitenverhältnis bis LOGO_MAX_ASPECT) werden genommen.
+    # kommagetrennte Vorlagen mit {iata} oder {icao}, optional "|2.0" für ein eigenes
+    # Seitenverhältnis, werden der Reihe nach probiert. Leer = logos.DEFAULT_URLS.
+    # Nur annähernd quadratische Logos (bis LOGO_MAX_ASPECT) werden genommen.
     logo_fetch: bool = _env("LOGO_FETCH", "1") in ("1", "true", "yes")
-    logo_urls: tuple[str, ...] = tuple(u.strip() for u in _env("LOGO_URLS", _env("LOGO_URL", "")).split(",") if u.strip())
+    logo_urls: str = _env("LOGO_URLS", _env("LOGO_URL", ""))
     logo_max_aspect: float = float(_env("LOGO_MAX_ASPECT", "1.5"))
 
     # Helligkeit

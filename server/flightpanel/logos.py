@@ -35,11 +35,15 @@ MAX_SOURCE_PX = 512            # größere Bilder vor dem Flood-Fill verkleinern
 # Pillow bricht ab dem Doppelten ab.
 Image.MAX_IMAGE_PIXELS = 4_000_000
 
+# Quellen der Reihe nach: (Vorlage, größtes Seitenverhältnis; None = LOGO_MAX_ASPECT).
 # Kiwi: quadratische App-Icon-Kacheln, per IATA. FlightAware: Bildmarken, per ICAO.
+# Google Flights zuletzt und bis 2:1: viele Bildmarken (Austrian-Pfeil, Eurowings-
+# Streifen) sind etwas breiter als quadratisch, bei 30 px aber gut erkennbar.
 DEFAULT_URLS = (
-    "https://images.kiwi.com/airlines/128x128/{iata}.png",
-    "https://images.kiwi.com/airlines/64/{iata}.png",
-    "https://www.flightaware.com/images/airline_logos/90p/{icao}.png",
+    ("https://images.kiwi.com/airlines/128x128/{iata}.png", None),
+    ("https://images.kiwi.com/airlines/64/{iata}.png", None),
+    ("https://www.flightaware.com/images/airline_logos/90p/{icao}.png", None),
+    ("https://www.gstatic.com/flights/airline_logos/70px/{iata}.png", 2.0),
 )
 
 
@@ -101,7 +105,7 @@ def prepare_logo(data: bytes, size: int, strip_white: bool = True,
 
 class LogoStore:
     def __init__(self, directory: str, size: int, fetch: bool = True,
-                 urls: tuple[str, ...] = DEFAULT_URLS, max_aspect: float = 1.5):
+                 urls: tuple[tuple[str, float | None], ...] = DEFAULT_URLS, max_aspect: float = 1.5):
         self.dir = directory
         self.size = size
         self.fetch_enabled = fetch
@@ -250,7 +254,7 @@ class LogoStore:
         k = self.key(iata, icao)
         net_error = False
         try:
-            for tpl in self.urls:
+            for tpl, aspect in self.urls:
                 if ("{iata}" in tpl or "{code}" in tpl) and len(iata) != 2:
                     continue
                 if "{icao}" in tpl and len(icao) != 3:
@@ -265,7 +269,8 @@ class LogoStore:
                 if data is None or hashlib.md5(data).hexdigest() == await self._placeholder(tpl):
                     continue
                 try:
-                    img = await asyncio.to_thread(prepare_logo, data, self.size, True, self.max_aspect)
+                    img = await asyncio.to_thread(prepare_logo, data, self.size, True,
+                                                  aspect or self.max_aspect)
                 except NotSquare as e:
                     log.info("Logo %s ist ein Schriftzug (%s), übersprungen", url, e)
                     continue
@@ -290,6 +295,16 @@ class LogoStore:
             self._inflight.discard(k)
 
 
+def parse_urls(spec: str) -> tuple[tuple[str, float | None], ...]:
+    """LOGO_URLS: kommagetrennt, je "Vorlage" oder "Vorlage|Seitenverhältnis"."""
+    out = []
+    for part in (p.strip() for p in spec.split(",")):
+        if part:
+            tpl, _, aspect = part.partition("|")
+            out.append((tpl.strip(), float(aspect) if aspect.strip() else None))
+    return tuple(out)
+
+
 def make_logo_store(cfg) -> LogoStore:
     return LogoStore(os.path.join(cfg.data_dir, "logos"), cfg.logo_size, fetch=cfg.logo_fetch,
-                     urls=cfg.logo_urls or DEFAULT_URLS, max_aspect=cfg.logo_max_aspect)
+                     urls=parse_urls(cfg.logo_urls) or DEFAULT_URLS, max_aspect=cfg.logo_max_aspect)

@@ -37,6 +37,12 @@ PROTO_VERSION = 1
 # Zeilenraster für 32 px Höhe
 ROW1, ROW2, ROW3 = 0, 12, 23
 
+# Himmelspunkte: ein Punkt pro Flugzeug im Sichtfeld, von links nach rechts wie vom
+# Fenster aus gesehen; der gezeigte Flug leuchtet. Dann wird das Logo kleiner.
+DOT, DOT_PITCH, MAX_DOTS = 3, 5, 6
+DOT_DIM = 0.3
+LOGO_WITH_DOTS = 26
+
 
 def _dim(c: tuple[int, int, int], f: float) -> tuple[int, int, int]:
     return tuple(max(0, min(255, int(v * f))) for v in c)
@@ -107,13 +113,37 @@ class Renderer:
 
         fl, page = self._pick(model, now)
         logo = self.logos.get(fl.airline_iata, fl.airline_icao)
+        dots = self._sky_dots(model, fl)
         if layout == "AUTO":
             layout = "C" if logo is not None else "A"
         if layout == "C" and logo is not None:
-            self._layout_c(img, fl, page, logo, f)
+            self._layout_c(img, fl, page, logo, f, dots)
         else:
-            self._layout_a(img, fl, page, f)
+            self._layout_a(img, fl, page, f, dots)
         return img
+
+    def _sky_dots(self, model: DisplayModel, fl: Flight) -> list[tuple[tuple[int, int, int], bool]]:
+        """(Farbe, ist der gezeigte Flug) für jedes Flugzeug im Sichtfeld, sortiert
+        im Uhrzeigersinn ab VIEW_FROM, also von links nach rechts, wenn man ins
+        Sichtfeld schaut. Landende amber, der Rest grau. Leer, wenn höchstens eins
+        zu sehen ist oder der gezeigte Flug nicht dabei ist."""
+        seen = [n for n in model.nearby if n.get("in_view") in ("now", "soon")]
+        seen.sort(key=lambda n: (n["az"] - self.cfg.view_from) % 360)
+        idx = next((i for i, n in enumerate(seen) if n.get("icao24") == fl.icao24), None)
+        if len(seen) < 2 or idx is None:
+            return []
+        lo = max(0, min(idx - MAX_DOTS // 2, len(seen) - MAX_DOTS))   # Fenster um den gezeigten
+        return [(COLORS[fl.status] if n.get("icao24") == fl.icao24 else COLORS[ARR] if n.get("seq") else MUTED,
+                 n.get("icao24") == fl.icao24) for n in seen[lo:lo + MAX_DOTS]]
+
+    def _draw_dots(self, img: Image.Image, x: int, y: int, dots, f: float) -> None:
+        for i, (col, lit) in enumerate(dots):
+            c = _dim(col, f if lit else f * DOT_DIM)
+            img.paste(c, (x + i * DOT_PITCH, y, x + i * DOT_PITCH + DOT, y + DOT))
+
+    @staticmethod
+    def _dots_width(dots) -> int:
+        return len(dots) * DOT_PITCH - (DOT_PITCH - DOT) if dots else 0
 
     def frame_bytes(self, img: Image.Image, brightness: int) -> bytes:
         W, H = img.size
@@ -152,11 +182,19 @@ class Renderer:
         w2 = FONT_SMALL.text_width(date)
         FONT_SMALL.draw(img, (img.width - w2) // 2, 22, date, _dim(MUTED, 0.6 * f))
 
-    def _layout_c(self, img: Image.Image, fl: Flight, page: int, logo: Image.Image, f: float) -> None:
+    def _layout_c(self, img: Image.Image, fl: Flight, page: int, logo: Image.Image, f: float,
+                  dots=()) -> None:
         if f < 1.0:
             logo = Image.eval(logo, lambda v: int(v * f))
-        img.paste(logo, (1, (img.height - logo.height) // 2))
-        x0 = logo.width + 4
+        col_w = logo.width                       # Logospalte, Text beginnt immer gleich weit rechts
+        if dots:
+            # Logo kleiner, darunter die Himmelspunkte
+            logo = logo.resize((LOGO_WITH_DOTS, LOGO_WITH_DOTS), Image.LANCZOS)
+            img.paste(logo, (1 + (col_w - logo.width) // 2, 0))
+            self._draw_dots(img, 1 + (col_w - self._dots_width(dots)) // 2, img.height - DOT - 1, dots, f)
+        else:
+            img.paste(logo, (1, (img.height - logo.height) // 2))
+        x0 = col_w + 4
         avail = img.width - x0
         col = _dim(COLORS[fl.status], f)
 
@@ -176,7 +214,7 @@ class Renderer:
         pages = info_pages(fl)
         FONT_MID.draw(img, x0, ROW3, FONT_MID.fit(pages[page % len(pages)], avail), _dim(INFO, f))
 
-    def _layout_a(self, img: Image.Image, fl: Flight, page: int, f: float) -> None:
+    def _layout_a(self, img: Image.Image, fl: Flight, page: int, f: float, dots=()) -> None:
         col = _dim(COLORS[fl.status], f)
         W = img.width
         # Zeile 1: Pfeil + Airline links, Callsign rechts
@@ -194,9 +232,13 @@ class Renderer:
             tw = FONT_MID.text_width(fl.actype)
             FONT_MID.draw(img, W - tw, ROW2, fl.actype, _dim(MUTED, f))
 
-        # Zeile 3: wechselnde Info
+        # Zeile 3: wechselnde Info, rechts die Himmelspunkte, wenn Platz ist
         pages = info_pages(fl)
-        FONT_MID.draw(img, 0, ROW3, FONT_MID.fit(pages[page % len(pages)], W), _dim(INFO, f))
+        dw = self._dots_width(dots)
+        info = FONT_MID.fit(pages[page % len(pages)], W - (dw + 6 if dots else 0))
+        FONT_MID.draw(img, 0, ROW3, info, _dim(INFO, f))
+        if dots:
+            self._draw_dots(img, W - dw, ROW3 + 3, dots, f)
 
     def _layout_b(self, img: Image.Image, model: DisplayModel, now: float, f: float) -> None:
         rows = [3, 19]
