@@ -60,7 +60,10 @@ def route_plausible(route: dict, lat: float, lon: float) -> bool:
     """Routendatenbanken kennen Strecken pro Callsign, und Airlines verwenden
     Callsigns für andere Strecken weiter. Liegt das Flugzeug weit neben der
     Strecke (Umweg über seine Position > 20 % + 100 km), ist die Route veraltet.
-    Ohne Koordinaten (alte Cache-Einträge) gilt sie als plausibel."""
+    Von X nach X sagt nichts darüber, woher es kommt. Ohne Koordinaten (alte
+    Cache-Einträge) gilt sie als plausibel."""
+    if route.get("origin") and route.get("origin") == route.get("dest"):
+        return False
     o, d = route.get("origin_pos"), route.get("dest_pos")
     if not (o and d):
         return True

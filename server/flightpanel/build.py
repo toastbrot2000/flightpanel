@@ -41,8 +41,7 @@ async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, d
     b = _Builder(cfg, adsb, names, issues, origins)
     if adsbim is not None:
         # nur, wer eine Route brauchen kann, nicht der ganze Statistik-Abruf (SCAN_RADIUS_KM)
-        b.im = await adsbim.routes([(s.callsign, s.lat, s.lon) for s in states
-                                    if callsign_airline(s.callsign) and needs_route(cfg, s)])
+        b.im = await adsbim.routes([s for s in states if callsign_airline(s.callsign) and needs_route(cfg, s)])
     cands = candidates(cfg, states, horizon_s)
     ranked = await b.rank(cands)
 
