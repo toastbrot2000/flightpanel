@@ -1,5 +1,7 @@
 # LED-Flugpanel: Bau- und Betriebsplan
 
+> Das ist der ursprüngliche Plan, mit dem das Projekt angefangen hat: Hardware, Mechanik, Strom und Verdrahtung gelten weiter. Die Software ist inzwischen weiter als hier beschrieben; maßgeblich sind die [README](../README.md) und [screens.md](screens.md).
+
 Stand: 10. Oktober 2026, Version 4. Format 128 × 32 Pixel aus zwei HUB75-Panels P2.5 (32 × 8 cm), Airline-Logos, Schutzkleinspannung, klassischer ESP32.
 
 Was sich gegenüber Version 3 geändert hat: Statt vier WS2812-Panels mit 10 mm Pitch kommen zwei Waveshare-HUB75-Panels mit 2,5 mm Pitch. Gleiche Fläche in der Breite, ein Viertel der Höhe, 16-mal so viele Pixel. Damit passen Logo, Airline-Name, Route, Typ und Höhe gleichzeitig aufs Bild, wie beim Vorbild. Die Berrybase-Bestellung (ESP32, Levelshifter) bleibt und passt; die Levelshifter werden voraussichtlich nicht gebraucht.
@@ -184,7 +186,7 @@ server/flightpanel/
   config.py        .env
 data/
   airlines.json    ICAO -> Anzeigename + IATA (Logo-Code), ~120 Airlines
-  logos/           <IATA>.png, 30x30, automatisch gefüllt
+  logos/           <IATA>.png, 32x32, automatisch gefüllt
   cache.json       adsbdb-Cache (Volume)
 ```
 
@@ -265,13 +267,13 @@ Stellschrauben in `config.h`, falls das Testbild nicht stimmt:
 Der Server holt fehlende Logos selbst, beim ersten Auftauchen einer Airline:
 
 1. adsbdb liefert zum Callsign den IATA-Code der Airline (`U2`, `LH`, `FR`). Fehlt er, kommt er aus `data/airlines.json` (ICAO → IATA).
-2. Quellen der Reihe nach: `https://images.kiwi.com/airlines/128x128/{IATA}.png` (quadratische App-Icons), dann FlightAware per ICAO (Bildmarken). Genommen wird nur, was annähernd quadratisch ist (`LOGO_MAX_ASPECT` 1,5): Schriftzüge sind bei 30 × 30 unlesbar, dann lieber Layout A. Platzhalterbilder der Quellen werden erkannt. `LOGO_URLS` in `.env` ersetzt die Liste.
-3. Aufbereitung: weißer Hintergrund per Flood-Fill vom Rand weg (weiße Flächen im Logo bleiben), auf den Inhalt zuschneiden, quadratisch einpassen, auf 30 × 30 skalieren, auf Schwarz legen.
+2. Quellen der Reihe nach: `https://images.kiwi.com/airlines/128x128/{IATA}.png` (quadratische App-Icons), dann FlightAware per ICAO (Bildmarken). Genommen wird nur, was annähernd quadratisch ist (`LOGO_MAX_ASPECT` 1,5): Schriftzüge sind bei 32 × 32 unlesbar, dann lieber Layout A. Platzhalterbilder der Quellen werden erkannt. `LOGO_URLS` in `.env` ersetzt die Liste.
+3. Aufbereitung: weißer Hintergrund per Flood-Fill vom Rand weg (weiße Flächen im Logo bleiben), auf den Inhalt zuschneiden, quadratisch einpassen, auf 32 × 32 skalieren, auf Schwarz legen.
 4. Ablegen als `data/logos/{IATA}.png`. Fehlschläge in `.missing.json`, nächster Versuch nach 7 Tagen.
 
 Vor dem ersten Flug alles auf einmal: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos` holt die rund 110 Airlines aus `airlines.json` (alles, was in Berlin regelmäßig landet, dazu die großen Überflieger und Frachter). Danach fehlen nur Exoten, und die holt der Server im Betrieb nach.
 
-Handgemachte Logos haben Vorrang: eine 30 × 30-PNG als `data/logos/{IATA}.png` oder `{ICAO}.png` ablegen, `tools/make_logo.py` macht aus beliebigen Bildern (auch SVG) das passende Format. Bei 30 × 30 funktionieren Bildmarken gut (Kranich, Harfe, Tulpe), Schriftzüge werden zu Streifen. Für die wichtigsten fünf Airlines lohnt sich ein Blick auf die Vorschau, ob das automatische Logo taugt oder ob man die Bildmarke von Hand ausschneidet.
+Handgemachte Logos haben Vorrang: eine 32 × 32-PNG als `data/logos/{IATA}.png` oder `{ICAO}.png` ablegen, `tools/make_logo.py` macht aus beliebigen Bildern (auch SVG) das passende Format. Bei 32 × 32 funktionieren Bildmarken gut (Kranich, Harfe, Tulpe), Schriftzüge werden zu Streifen. Für die wichtigsten fünf Airlines lohnt sich ein Blick auf die Vorschau, ob das automatische Logo taugt oder ob man die Bildmarke von Hand ausschneidet.
 
 ### 5.6 Display-Layout
 
@@ -282,7 +284,7 @@ Drei Zeilen à 11 px bei 32 px Höhe, Schrift DejaVu Sans (Bold 12 für Zeile 1,
 ```
 ┌──────┐ ↓ easyJet
 │ Logo │ LGW→BER            A320
-│30x30 │ 5700ft↓ 418kt      (wechselt: Entfernung/Kurs, Callsign)
+│32x32 │ 5700ft↓ 418kt      (wechselt: Entfernung/Kurs, Callsign)
 └──────┘
 ```
 
@@ -317,7 +319,7 @@ OpenSky-Client anlegen: im OpenSky-Account unter API Clients. Ohne eigenen Feede
 **Phase 0, jetzt, vor der Lieferung (1 Abend):**
 
 1. Repo auf den Homelab-Host, `cp .env.example .env`, `docker compose up -d --build`, Vorschau unter `:8080` ansehen (Mock-Modus mit Fantasieflügen).
-2. `docker compose exec flightpanel python3 -m flightpanel.fetch_logos` → `data/logos/` füllt sich. In der Vorschau mit `?layout=C` prüfen, welche Logos bei 30 × 30 taugen.
+2. `docker compose exec flightpanel python3 -m flightpanel.fetch_logos` → `data/logos/` füllt sich. In der Vorschau mit `?layout=C` prüfen, welche Logos bei 32 × 32 taugen.
 3. OpenSky-Client anlegen, `.env` füllen, `MOCK=0`, neu starten. `/display.json` ein paar Tage beobachten: Wie viele Flüge, wie hoch, wie oft leer? Kalibriert `RADIUS_KM` und `MAX_ALT_M`.
 4. PlatformIO installieren (VS-Code-Erweiterung oder `pip install platformio`), `firmware/include/secrets.h` anlegen.
 
@@ -408,7 +410,7 @@ Die Stellen, die Sorgfalt verlangen:
 
 1. **Polung der Panelstromkabel.** Aufdruck lesen, Multimeter, dann einstecken.
 2. **14 Dupont-Kabel richtig stecken.** Mit Liste und Foto fünf Minuten; das Testbild zeigt jeden Fehler.
-3. **Logos begutachten.** Automatische Logos sind nicht alle schön bei 30 × 30. Die fünf häufigsten Airlines lohnen einen Blick.
+3. **Logos begutachten.** Automatische Logos sind nicht alle schön bei 32 × 32. Die fünf häufigsten Airlines lohnen einen Blick.
 
 Aufwand: Software läuft (Mock heute, echte Daten nach dem OpenSky-Client), Hardware 1 Abend, Gehäuse 1 Nachmittag.
 
@@ -420,7 +422,7 @@ Aufwand: Software läuft (Mock heute, echte Daten nach dem OpenSky-Client), Hard
 | 2 × 64 × 32 statt 128 × 64 oder 4 Panels | richtig | 128 × 32 trägt genau das Flight-Wall-Layout. 128 × 64 würde den Preis verdoppeln und ein E-Signal brauchen, ohne dass mehr Information aufs Bild müsste. Erweiterung später möglich: zweite Reihe, `PANEL_CHAIN 4` plus virtuelles Panel in der Bibliothek, `HEIGHT=64`. |
 | Server rendert, ESP32 zeigt nur an | richtig | Iteration ohne Flashen, Browser-Preview, minimale Firmware. |
 | HTTP-Polling, 12 KB alle 2 s | richtig | Kein Broker, TCP garantiert vollständige Frames. |
-| Logos automatisch vom CDN | richtig, mit Vorbehalt | Null Handarbeit für 95 % der Airlines. Der CDN ist ein Fremddienst ohne Zusage; fällt er weg, läuft alles weiter (Layout A), und `LOGO_URL` ist austauschbar. Für den Privatgebrauch unkritisch. |
+| Logos automatisch vom CDN | richtig, mit Vorbehalt | Null Handarbeit für 95 % der Airlines. Der CDN ist ein Fremddienst ohne Zusage; fällt er weg, läuft alles weiter (Layout A), und `LOGO_URLS` ist austauschbar. Für den Privatgebrauch unkritisch. |
 | Klassischer ESP32 | richtig | Die HUB75-Bibliothek ist auf dem Classic-ESP32 am reifsten (I2S-Parallel-DMA). Ein C3 könnte das nicht. Die 6,80 € waren gut angelegt. |
 | Kein Levelshifter | richtig, mit Rückfalloption | 3,3 V reicht an HUB75-Eingängen in der Praxis. Die bestellten 74AHCT125 bleiben in der Kiste. |
 | Tischnetzteil 5 V / 10 A | überdimensioniert, unschädlich | Bedarf unter 3 A. Schon bestellt, zertifiziert, läuft im Leerlauf kühl. |

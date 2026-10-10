@@ -10,6 +10,24 @@ Was das Panel zeigt, in festen Stufen: Eine Stufe kommt nur dran, wenn keine hö
 
 `/idle` zeigt alle Karten mit Stufe, ob sie gerade etwas zu sagen haben und welche dran ist; `/frame.png?card=<id>` zeigt eine Karte, mit Beispieldaten, wenn sie gerade nichts zu sagen hat.
 
+## Galerie
+
+Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorschau im Browser. "Demo Air" und ihr Logo sind erfunden.
+
+| | |
+|---|---|
+| ![Flug mit Logo, landet in ~4 min, drei Himmelspunkte](images/flight-logo.png)<br>Flug, Layout C: Landezeit, Himmelspunkte in Landefolge | ![Derselbe Flug, nächste Infoseite](images/flight-alt.png)<br>nächste Infoseite: Höhe, sinkend, Tempo |
+| ![Flug ohne Logo](images/flight-nologo.png)<br>Layout A ohne Logo, ein Start | ![Luftrettung](images/private.png)<br>`private`: Rettungshubschrauber im Sichtfeld |
+| ![Abflüge am BER](images/departures.png)<br>`departures` | ![Landungen am BER](images/arrivals.png)<br>`arrivals` |
+| ![Nächster Flieger](images/next.png)<br>`next`: Zeit bis zum Sichtfeld und Seite des Fensters | ![Radar](images/radar.png)<br>`radar`: Sichtfeld als Band in der Mitte |
+| ![Landerichtung](images/runway.png)<br>`runway` | ![Wetter](images/weather.png)<br>`weather` |
+| ![ISS](images/iss.png)<br>`iss` | ![Tagesstatistik](images/scoreboard.png)<br>`scoreboard` |
+| ![Sammelalbum](images/pokedex.png)<br>`pokedex` | ![Uhr](images/clock.png)<br>`clock` |
+| ![Verspätungsgrund](images/delay.png)<br>`delay` | ![Tegel](images/txl.png)<br>`txl` |
+| ![Weihnachten](images/santa.png)<br>`santa` | |
+
+## Alle Karten
+
 | Stufe | Karte | zeigt | wann |
 |---|---|---|---|
 | **0 Notfall** | `alert` | Squawk und Bedeutung, Callsign, Typ, wo, ob im Blick | Squawk 7700/7600/7500 im Abrufradius, vor allem anderen, auch vor Flügen |

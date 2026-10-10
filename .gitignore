@@ -8,9 +8,8 @@ data/issues.json
 data/stats.json
 data/tle.txt
 data/*.tmp
-# Logos holt der Server selbst; nur handgemachte gehören ins Repo (git add -f)
+# Logos sind Marken der Airlines: Der Server holt sie selbst, auch handgemachte bleiben lokal
 data/logos/*
-!data/logos/SVI.png
 
 # Werkzeuge
 firmware/.pio/
