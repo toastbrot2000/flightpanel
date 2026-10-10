@@ -161,7 +161,7 @@ class Config:
     brightness_day: int = _env("BRIGHTNESS_DAY", 90, _int(0, 255))
     brightness_evening: int = _env("BRIGHTNESS_EVENING", 35, _int(0, 255))
     day_hours: tuple[int, int] = _env("DAY_HOURS", (8 * 60, 19 * 60), _hours)
-    quiet_hours: tuple[int, int] = _env("QUIET_HOURS", (23 * 60, 6 * 60 + 30), _hours)
+    quiet_hours: tuple[int, int] = _env("QUIET_HOURS", (0, 6 * 60 + 30), _hours)
 
     # --- Betrieb
     data_dir: str = _env("DATA_DIR", "./data")
