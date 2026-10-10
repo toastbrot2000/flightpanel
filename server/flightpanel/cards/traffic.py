@@ -194,11 +194,12 @@ def arrivals_draw(img, ctx, arr, t_in, f):
 
 # ------------------------------------------------------------------- Radar --
 def radar_cond(ctx: Ctx):
+    """Wie viele im Umkreis sind und wie viele davon hier landen (in der Landefolge;
+    tief und sinkend allein kann auch ein anderer Flugplatz sein)."""
     near = ctx.model.nearby
     if not near:
         return None
-    arr = sum(1 for n in near if n.get("seq") or n.get("status") == ARR)
-    return Hit({"n": len(near), "arr": arr})
+    return Hit({"n": len(near), "arr": sum(1 for n in near if n.get("seq"))})
 
 
 def radar_demo(ctx: Ctx):

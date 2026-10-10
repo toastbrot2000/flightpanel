@@ -85,3 +85,26 @@ def test_returning_plane_keeps_its_direction_through_level_flight_and_landing():
     # ohne Gedächtnis: wer steigt, fliegt ab, auch mit derselben Route
     assert not returning(cfg, state(cs="EWG9SK", lat=lat, lon=lon, alt=800, vrate=8), OUTBOUND)
     assert returning(cfg, state(cs="EWG9SK", lat=lat, lon=lon, alt=800, vrate=0), OUTBOUND, hint="arr")
+
+
+def test_calibration_aircraft_is_no_arrival_and_unknown_operators_are_noted(tmp_path):
+    # FCK2FT, King Air der Flugvermessung, tief und horizontal westlich von BER
+    from flightpanel.issues import Issues
+    s = state(icao="3cce71", cs="FCK2FT", lat=52.3239, lon=12.8735, alt=690, track=43, vrate=0.3,
+              category="A1", actype="B350")
+    cfg = make_cfg()
+    unknown = Issues(str(tmp_path / "i.json"))
+    m = asyncio.run(build_model(cfg, [s], FakeAdsb(), NAMES, issues=unknown))
+    assert m.arrivals and m.arrivals[0]["callsign"] == "FCK2FT"            # unbekannt: geraten
+    assert "unknown_operator" in unknown.report()["counts"]                # und gemeldet
+    names = {**NAMES, "FCK": {"name": "Flugvermessung", "iata": "", "airline": False,
+                              "label": "prüft Landehilfen", "number": False}}
+    m = asyncio.run(build_model(cfg, [s], FakeAdsb(), names))
+    assert m.arrivals == [] and all(n["seq"] is None for n in m.nearby)
+
+
+def test_operator_names_match():
+    from flightpanel.issues import names_match
+    assert names_match("Norwegian", "Norwegian Air Sweden AOC")
+    assert names_match("SAS", "Scandinavian Airlines System")
+    assert not names_match("Sundair", "City Airline")

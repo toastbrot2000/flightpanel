@@ -138,5 +138,6 @@
   "ADB": {"name": "Antonov", "iata": ""},
   "GAF": {"name": "Luftwaffe", "iata": "", "airline": false, "label": "Militär"},
   "BPO": {"name": "Bundespolizei", "iata": "", "airline": false, "label": "Polizei"},
-  "CHX": {"name": "Christoph", "iata": "", "airline": false, "label": "Luftrettung", "number": true}
+  "CHX": {"name": "Christoph", "iata": "", "airline": false, "label": "Luftrettung", "number": true},
+  "FCK": {"name": "Flugvermessung", "iata": "", "airline": false, "label": "prüft Landehilfen"}
 }

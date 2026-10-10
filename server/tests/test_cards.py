@@ -246,3 +246,10 @@ def test_calm_mode_does_not_blink_except_emergencies():
     assert a == b
     a, b = phases(traffic.alert_draw, traffic.alert_demo(None), calm)
     assert a != b                                               # ein Notfall blinkt immer
+
+
+def test_radar_counts_only_planes_landing_here():
+    m = DisplayModel(source="test", nearby=[{"az": 100, "elev": 3, "status": "ARR", "seq": None},
+                                            {"az": 120, "elev": 2, "status": "ARR", "seq": 1},
+                                            {"az": 140, "elev": 9, "status": "OVF", "seq": None}])
+    assert traffic.radar_cond(ctx(model=m)).data == {"n": 3, "arr": 1}

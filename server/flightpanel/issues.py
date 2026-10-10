@@ -36,12 +36,14 @@ def _norm(s: str) -> str:
 
 
 def names_match(ours: str, theirs: str) -> bool:
-    """Grob: unser Kurzname steckt im adsbdb-Namen oder umgekehrt.
-    "Norwegian" ~ "Norwegian Air Sweden AOC" ja, "Sundair" ~ "City Airline" nein."""
+    """Grob: unser Kurzname steckt im adsbdb-Namen oder umgekehrt, oder er sind dessen
+    Anfangsbuchstaben. "Norwegian" ~ "Norwegian Air Sweden AOC" ja, "SAS" ~
+    "Scandinavian Airlines System" ja, "Sundair" ~ "City Airline" nein."""
     a, b = _norm(ours), _norm(theirs)
     if not a or not b:
         return True
-    return a in b or b in a or a.split()[0] in b.split()
+    initials = "".join(w[0] for w in b.split())
+    return a in b or b in a or a.split()[0] in b.split() or a == initials
 
 
 class Issues:

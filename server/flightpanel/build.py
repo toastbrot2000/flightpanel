@@ -68,6 +68,9 @@ async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, d
               if callsign_airline(s.callsign) and (s.icao24 in b.seq or (needs_route(cfg, s)
                                                    and haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon)
                                                    <= DEP_AIR_KM))}
+    for s in states:
+        if s.icao24 in b.seq and s.callsign in routes:
+            b.note(s, routes[s.callsign])
     in_view_ids = {s.icao24 for s, _, vis in cands if vis > 0}
     model = DisplayModel(flights=flights, source=source, empty=not flights,
                          nearby=_nearby(cfg, cands, b.seq, b.etas, preds),
@@ -189,6 +192,7 @@ class _Builder:
         self.im: dict[str, list] = {}        # Stationen von adsb.im, pro Callsign
         self.seq: dict[str, int] = {}        # icao24 -> Platz in der Landefolge
         self.etas: dict[str, float] = {}     # icao24 -> Sekunden bis zum Aufsetzen
+        self._noted: set[str] = set()        # schon nach /issues gemeldet
 
     async def route_for(self, s: State) -> dict:
         """Route von adsbdb, Teilstrecke von adsb.im, wenn sie zur Position passt. Eine
@@ -210,9 +214,7 @@ class _Builder:
         ranked = []
         for s, v, vis in pool[:SHORTLIST]:
             route = await self.route_for(s)
-            airline = is_airline(s.callsign, route, self.names, s.category)
-            if self.issues is not None:
-                note_operator(self.issues, s, route, self.names, airline)
+            airline = self.note(s, route)
             if airline or self.cfg.show_other:
                 ranked.append((s, v, vis, route, airline))
         # Sichtbar vor unsichtbar, Airline vor Sonstigen, jetzt vor gleich, dann die Sichtlinie
@@ -223,6 +225,15 @@ class _Builder:
         if any(r[4] for r in tier):
             tier = [r for r in tier if r[4]]
         return tier
+
+    def note(self, s: State, route: dict) -> bool:
+        """Airline oder nicht; unbekannte oder anders benannte Betreiber einmal pro
+        Abruf nach /issues (Kandidaten für airlines.json)."""
+        airline = is_airline(s.callsign, route, self.names, s.category)
+        if self.issues is not None and s.icao24 not in self._noted:
+            self._noted.add(s.icao24)
+            note_operator(self.issues, s, route, self.names, airline)
+        return airline
 
     async def upcoming(self, model: DisplayModel, cands: list[Candidate], preds: dict, shown: set[str]) -> None:
         """Der nächste, der ins Sichtfeld kommt (Karte "next"): große Flugzeuge mit
