@@ -147,8 +147,8 @@ class App:
     async def poll_loop(self) -> None:
         while not self._stop.is_set():
             t0 = time.time()
-            if not self.cfg.mock and self.cfg.brightness(t0) == 0:
-                await asyncio.sleep(60)         # Quiet Hours: Panel schwarz, nichts abrufen
+            if self._quiet_hours(t0):
+                await asyncio.sleep(60)
                 continue
             self.counters["polls"] += 1
             try:
@@ -159,6 +159,16 @@ class App:
                 self._note_poll_error(e)
                 self._age_model()
             await asyncio.sleep(max(5, self.poll_interval() - (time.time() - t0)))
+
+    def _quiet_hours(self, now: float) -> bool:
+        """Ruhezeit (QUIET_HOURS): Panel schwarz, nichts abrufen. Das letzte Lagebild
+        gilt dann nicht mehr: Flüge weg, Daten als alt markiert, sonst zeigt die
+        Vorschau bis zum Morgen dieselben Flüge."""
+        if self.cfg.mock or self.cfg.brightness(now) > 0:
+            return False
+        if not self.model.stale:
+            self.model = replace(self.model, flights=[], empty=True, stale=True)
+        return True
 
     async def _poll(self, t0: float) -> None:
         """Ein Abruf: Flugzeuge holen, Modell bauen, Statistik nachführen."""

@@ -3,11 +3,13 @@
 import asyncio
 import json
 import time
+from dataclasses import replace
 
 from aiohttp.test_utils import TestClient, TestServer
 
 from conftest import make_cfg
 from flightpanel.main import App
+from flightpanel.mock import mock_model
 from flightpanel.web import make_web_app
 
 
@@ -31,6 +33,25 @@ def test_every_endpoint_answers(tmp_path):
             assert r.status == 200
         finally:
             await client.close()
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_quiet_hours_drop_the_old_picture(tmp_path):
+    async def run():
+        cfg = make_cfg(data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False,
+                       quiet_hours=(0, 24 * 60))            # rund um die Uhr Ruhezeit
+        app = App(cfg)
+        try:
+            app.model = mock_model(cfg, 3)
+            app.model.flights = app.model.flights or [app.model.upcoming]
+            assert app._quiet_hours(time.time())
+            assert app.model.flights == [] and app.model.empty and app.model.stale
+            day = App(replace(cfg, quiet_hours=(0, 0)))       # keine Ruhezeit
+            assert not day._quiet_hours(time.time())
+            await day.session.close()
+        finally:
             await app.session.close()
 
     asyncio.run(run())

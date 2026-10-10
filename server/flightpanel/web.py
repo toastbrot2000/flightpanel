@@ -37,11 +37,19 @@ a{color:#8ab;margin-right:14px}</style>
 <a href="/?layout=AUTO">auto</a><a href="/?layout=A">A</a><a href="/?layout=B">B</a><a href="/?layout=C">C</a>
 | <a href="/display.json">display.json</a><a href="/health">health</a><a href="/issues">issues</a>
 <a href="/stats">stats</a><a href="/idle">idle</a></div>
+<p id="s" style="color:#d9a33a"></p>
 <p>Leerlauf-Karte erzwingen (passt die Lage nicht, mit Beispieldaten): <a href="/">aus</a> %(cards)s</p>
 <script>
 setInterval(() => {
   document.getElementById('f').src = '/frame.png?layout=%(layout)s&card=%(card)s&t=' + Date.now();
 }, 2000);
+const status = () => fetch('/health').then(r => r.json()).then(h => {
+  document.getElementById('s').textContent =
+    h.brightness_now === 0 ? 'Ruhezeit (QUIET_HOURS): Das Panel ist dunkel, der Server ruft nichts ab.'
+    : h.model_stale ? 'Keine frischen Flugdaten: Das Bild ist gedimmt, siehe /health und /issues.' : '';
+}).catch(() => {});
+status();
+setInterval(status, 10000);
 </script>
 """
 
