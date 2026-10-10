@@ -8,3 +8,5 @@ firmware/.pio/
 __pycache__/
 *.pyc
 .venv/
+data/issues.json
+data/issues.json.tmp
