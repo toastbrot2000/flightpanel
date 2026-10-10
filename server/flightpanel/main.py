@@ -20,6 +20,7 @@ from . import USER_AGENT
 from .adsbdb import AdsbDb
 from .adsbim import AdsbIm
 from .adsblol import AdsbLol, Paused
+from .airport import Recent
 from .astro import Iss
 from .build import build_model
 from .cache import Cache
@@ -83,6 +84,7 @@ class App:
         self.opensky_last_try = 0.0
         self.last_model_ok = 0.0
         self.last_airport_move = 0.0            # letzter Start oder letzte Landung am Platz
+        self.recent = Recent()                  # wer zuletzt hier landete oder startete
         self.last_frame_fetch = 0.0             # setzt web.py bei jedem /frame
         self.frame_count = 0
         self.counters = {"polls": 0, "ok": 0, "adsblol": 0, "opensky": 0}
@@ -168,7 +170,7 @@ class App:
             self.model = await build_model(self.cfg, states, self.adsb, self.names,
                                            horizon_s=self.refresh_period(), prev_course=self.model.landing_course,
                                            issues=self.issues, adsbim=self.adsbim, origins=self.origins,
-                                           source=self.active_source)
+                                           source=self.active_source, recent=self.recent)
             self.counters[self.active_source] += 1
             if self.model.departures or any(a["eta_s"] <= LANDED_S for a in self.model.arrivals):
                 self.last_airport_move = t0

@@ -12,6 +12,7 @@
 
 import logging
 
+from .adsbim import leg_route
 from .aircraft import describe
 from .airlines import AIRLINER_CATEGORIES, callsign_airline, is_airline, note_operator, route_plausible, short_airline
 from .airport import (
@@ -19,6 +20,7 @@ from .airport import (
     DEP_AIR_KM,
     DEP_GROUND_KM,
     TERMINAL_ALT_M,
+    Recent,
     find_departures,
     landing_course_votes,
     landing_sequence,
@@ -41,12 +43,13 @@ Candidate = tuple[State, Sighting, int]          # Flugzeug, Sichtung, Sichtbark
 
 async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, dict],
                       horizon_s: float = 0, prev_course: float | None = None, issues: Issues | None = None,
-                      adsbim=None, origins=None, source: str = "live") -> DisplayModel:
+                      adsbim=None, origins=None, source: str = "live", recent: Recent | None = None) -> DisplayModel:
     """adsb: adsbdb.AdsbDb (Routen, Flugzeugtypen). names: data/airlines.json.
     horizon_s: Zeit bis zum nächsten Abruf, für die Sichtfeld-Vorschau.
     prev_course: Landerichtung vom letzten Abruf, falls gerade niemand landet.
-    issues: sammelt Auffälligkeiten. adsbim, origins: weitere Routenquellen, optional."""
-    b = _Builder(cfg, adsb, names, issues, origins)
+    issues: sammelt Auffälligkeiten. adsbim, origins: weitere Routenquellen, optional.
+    recent: wer zuletzt hier landete oder startete, über Abrufe hinweg (airport.Recent)."""
+    b = _Builder(cfg, adsb, names, issues, origins, recent)
     if adsbim is not None:
         # nur, wer eine Route brauchen kann, nicht der ganze Statistik-Abruf (SCAN_RADIUS_KM)
         b.im = await adsbim.routes([s for s in states if callsign_airline(s.callsign) and needs_route(cfg, s)])
@@ -72,6 +75,8 @@ async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, d
                          arrivals=_arrivals(states, b.seq, b.etas, routes, in_view_ids, names),
                          landing_course=course, course_votes=votes, alert=find_alert(cfg, states, names))
     await b.upcoming(model, cands, preds, {f.icao24 for f in flights})
+    if recent is not None:
+        recent.update(model.arrivals, model.departures, model.generated_at)
     return model
 
 
@@ -173,25 +178,28 @@ def _arrivals(states: list[State], seq: dict[str, int], etas: dict[str, float], 
 class _Builder:
     """Was alle Schritte eines Abrufs brauchen: Quellen, Routen von adsb.im, Landefolge."""
 
-    def __init__(self, cfg: Config, adsb, names: dict[str, dict], issues: Issues | None, origins):
+    def __init__(self, cfg: Config, adsb, names: dict[str, dict], issues: Issues | None, origins,
+                 recent: Recent | None = None):
         self.cfg = cfg
         self.adsb = adsb
         self.names = names
         self.issues = issues
         self.origins = origins
-        self.im: dict[str, dict] = {}        # Routen von adsb.im, pro Callsign
+        self.recent = recent
+        self.im: dict[str, list] = {}        # Stationen von adsb.im, pro Callsign
         self.seq: dict[str, int] = {}        # icao24 -> Platz in der Landefolge
         self.etas: dict[str, float] = {}     # icao24 -> Sekunden bis zum Aufsetzen
 
     async def route_for(self, s: State) -> dict:
-        """Route von adsbdb, Strecke von adsb.im, wenn die zur Position passt. Eine
+        """Route von adsbdb, Teilstrecke von adsb.im, wenn sie zur Position passt. Eine
         Strecke ab hier für ein Flugzeug, das hier landet, ist der Hinflug: weg damit
         (Herkunft dann aus der Flugspur)."""
         route = await self.adsb.route(s.callsign)
-        alt = self.im.get(s.callsign)
-        if alt and route_plausible(alt, s.lat, s.lon):
-            route = {**route, **alt}
-        if returning(self.cfg, s, route):
+        hint = self.recent.hint(s) if self.recent is not None else None
+        leg = leg_route(self.im.get(s.callsign) or [], s, self.cfg.local_airport_iata, hint)
+        if leg and route_plausible(leg, s.lat, s.lon):
+            route = {**route, **leg}
+        if returning(self.cfg, s, route, hint):
             route = {k: v for k, v in route.items() if k not in ("origin", "dest", "origin_pos", "dest_pos")}
         return route
 

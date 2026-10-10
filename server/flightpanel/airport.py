@@ -121,15 +121,46 @@ def is_arrival(cfg: Config, s: State, route: dict) -> bool:
             and haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon) < APPROACH_AREA_KM)
 
 
-def returning(cfg: Config, s: State, route: dict) -> bool:
-    """Die Route beginnt am Heimatflughafen, aber das Flugzeug sinkt tief in Platznähe:
-    Es kommt zurück, die Route ist der Hinflug unter demselben Callsign (adsbdb kennt
-    bei EWG9SK nur BER-NCE). Umgekehrt gilt das nicht: Wer kurz vor der Landung
-    steigt, startet vielleicht nur durch."""
+def returning(cfg: Config, s: State, route: dict, hint: str | None = None) -> bool:
+    """Die Route beginnt am Heimatflughafen, aber das Flugzeug landet hier: Es kommt
+    zurück, die Route ist der Hinflug unter demselben Callsign (adsbdb kennt bei
+    EWG9SK nur BER-NCE). Landet hier: war in den letzten Minuten in der Landefolge
+    (hint "arr", auch nach dem Aufsetzen und im Horizontalflug), oder sinkt gerade
+    tief in Platznähe. Umgekehrt gilt das nicht: Wer kurz vor der Landung steigt,
+    startet vielleicht nur durch."""
+    if route.get("origin") != cfg.local_airport_iata:
+        return False
+    if hint == "arr":
+        return True
     alt = s.alt_m
-    return (route.get("origin") == cfg.local_airport_iata and not s.on_ground
-            and alt is not None and alt < TERMINAL_ALT_M and (s.vrate_ms or 0.0) < -1.0
+    return (not s.on_ground and alt is not None and alt < TERMINAL_ALT_M and (s.vrate_ms or 0.0) < -1.0
             and haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon) < APPROACH_AREA_KM)
+
+
+class Recent:
+    """Wer in den letzten Minuten hier landete oder startete (icao24 und Callsign).
+
+    Ein einzelner Abruf verrät die Richtung nicht immer: am Boden, im
+    Horizontalflug. Bei Callsigns, die hin und zurück fliegen (EWG9SK BER-NCE-BER),
+    entscheidet sie aber, welche Strecke stimmt. build_model fragt hint() und
+    trägt am Ende Landefolge und Abflüge nach (update)."""
+
+    KEEP_S = 15 * 60        # so lange nach dem letzten Mal in Landefolge oder Abflügen
+
+    def __init__(self) -> None:
+        self._dirs: dict[tuple[str, str], tuple[str, float]] = {}
+
+    def hint(self, s: State) -> str | None:
+        """"arr": landet hier oder ist gerade gelandet, "dep": ist gerade gestartet, sonst None."""
+        e = self._dirs.get((s.icao24, s.callsign))
+        return e[0] if e else None
+
+    def update(self, arrivals: list[dict], departures: list[dict], now: float) -> None:
+        for a in arrivals:
+            self._dirs[(a["icao24"], a["callsign"])] = ("arr", now)
+        for d in departures:
+            self._dirs[(d["icao24"], d["callsign"])] = ("dep", now)
+        self._dirs = {k: v for k, v in self._dirs.items() if now - v[1] < self.KEEP_S}
 
 
 async def landing_sequence(cfg: Config, states: list[State], names: dict[str, dict], course: float,
