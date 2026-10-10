@@ -13,15 +13,14 @@
 
 Liegt in data/stats.json (Muster wie issues.py), GET /stats zeigt alles."""
 
-import json
 import logging
-import os
 import time
 
 from .airlines import AIRLINER_CATEGORIES, callsign_airline
 from .config import Config
 from .geo import angle_diff
 from .model import DisplayModel, State
+from .storage import read_json, write_json
 from .view import sighting
 
 log = logging.getLogger("stats")
@@ -66,13 +65,8 @@ class Stats:
 
     # --------------------------------------------------------- Laden/Speichern --
     def _load(self) -> None:
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                raw = json.load(f)
-        except FileNotFoundError:
-            return
-        except Exception as e:  # defekte Datei soll den Start nicht verhindern
-            log.warning("stats.json nicht lesbar (%s), starte leer", e)
+        raw = read_json(self.path)
+        if raw is None:
             return
         try:
             self.since = raw.get("since", self.since)
@@ -101,14 +95,9 @@ class Stats:
                            "seen": self.course_seen}}
 
     def save(self) -> None:
-        if not self.dirty:
-            return
-        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, ensure_ascii=False)
-        os.replace(tmp, self.path)
-        self.dirty = False
+        if self.dirty:
+            write_json(self.path, self.to_dict())
+            self.dirty = False
 
     # ---------------------------------------------------------------- Abruf --
     def brand(self, code: str) -> tuple[str, str, bool] | None:

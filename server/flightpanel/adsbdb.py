@@ -1,13 +1,18 @@
-"""adsbdb.com: Route aus Callsign, Flugzeugdaten aus icao24. Mit TTL-Cache,
-der stündlich als JSON auf die Platte geschrieben wird."""
+"""adsbdb.com, kostenlos und ohne Account: Route und Airline zum Callsign,
+Flugzeugtyp zur icao24. Antworten im Cache (cache.py), Routen 24 h, Flugzeuge 30
+Tage.
 
-import json
+Die Routen sind pro Callsign gespeichert und oft alt: Airlines verwenden Callsigns
+für andere Strecken weiter. build.py prüft sie gegen die Position und fragt
+adsb.im zuerst."""
+
 import logging
-import os
 import re
-import time
 
 import aiohttp
+
+from .cache import Cache
+from .issues import Issues
 
 log = logging.getLogger("adsbdb")
 
@@ -15,7 +20,7 @@ ROUTE_TTL = 24 * 3600
 AIRCRAFT_TTL = 30 * 24 * 3600
 NEGATIVE_TTL = 6 * 3600
 
-# Werte kommen ungeprüft aus OpenSky und landen im URL-Pfad: nur gültige Formen durchlassen.
+# Werte kommen ungeprüft aus dem Netz und landen im URL-Pfad: nur gültige Formen durchlassen.
 CALLSIGN_RE = re.compile(r"^[A-Z0-9]{2,8}$")
 ICAO24_RE = re.compile(r"^[0-9a-f]{6}$")
 
@@ -28,60 +33,13 @@ def _pos(airport: dict) -> list[float] | None:
         return None
 
 
-class Cache:
-    def __init__(self, path: str):
-        self.path = path
-        self.data: dict[str, tuple[float, object]] = {}
-        self.dirty = False
-        self.load()
-
-    def load(self) -> None:
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                raw = json.load(f)
-            now = time.time()
-            self.data = {k: (exp, v) for k, (exp, v) in raw.items() if exp > now}
-            log.info("Cache geladen: %d Einträge", len(self.data))
-        except FileNotFoundError:
-            pass
-        except Exception as e:  # defekte Datei soll den Start nicht verhindern
-            log.warning("Cache nicht lesbar (%s), starte leer", e)
-
-    def save(self) -> None:
-        if not self.dirty:
-            return
-        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.data, f)
-        os.replace(tmp, self.path)
-        self.dirty = False
-
-    def get(self, key: str):
-        item = self.data.get(key)
-        if item is None:
-            return None
-        exp, v = item
-        if exp < time.time():
-            del self.data[key]
-            return None
-        return v
-
-    def set(self, key: str, value, ttl: int) -> None:
-        self.data[key] = (time.time() + ttl, value)
-        self.dirty = True
-
-    def __len__(self) -> int:
-        return len(self.data)
-
-
 class AdsbDb:
-    def __init__(self, session: aiohttp.ClientSession, base: str, cache: Cache):
+    def __init__(self, session: aiohttp.ClientSession, base: str, cache: Cache, issues: Issues | None = None):
         self.session = session
         self.base = base.rstrip("/")
         self.cache = cache
+        self.issues = issues
         self.last_error: str | None = None
-        self.issues = None      # Issues, setzt main
 
     async def _get(self, path: str) -> dict | None:
         try:
@@ -97,12 +55,12 @@ class AdsbDb:
             self.last_error = str(e) or type(e).__name__
             log.warning("adsbdb %s: %s", path, self.last_error)
             if self.issues is not None:
-                self.issues.note("rate_limit" if "429" in self.last_error else "source_error", "adsbdb",
-                                 error=self.last_error, path=path)
+                self.issues.source_error("adsbdb", self.last_error, path=path)
             raise
 
     async def route(self, callsign: str) -> dict:
-        """{'origin': 'LGW', 'dest': 'BER', 'airline': 'easyJet', 'airline_icao': 'EZY', 'airline_iata': 'U2'} oder {}."""
+        """{"origin": "LGW", "dest": "BER", "origin_pos": [lat, lon], "dest_pos": [lat, lon],
+        "airline": "easyJet", "airline_icao": "EZY", "airline_iata": "U2"} oder {}."""
         if not CALLSIGN_RE.match(callsign or ""):
             return {}
         key = f"route:{callsign}"
@@ -130,7 +88,8 @@ class AdsbDb:
         return out
 
     async def aircraft(self, icao24: str) -> dict:
-        """{'type': 'A320', 'type_long': 'Airbus A320-214', 'operator': 'easyJet Europe'} oder {}."""
+        """{"type": "A320", "type_long": "Airbus A320-214", "operator": ..., "reg": ...} oder {}.
+        operator ist der Halter: bei Privatflugzeugen eine Person, nie anzeigen."""
         if not ICAO24_RE.match(icao24 or ""):
             return {}
         key = f"ac:{icao24}"

@@ -144,7 +144,7 @@ class MetarSource:
         self.last_error = "; ".join(errors)
         log.warning("METAR %s: %s", self.station, self.last_error)
         if self.issues is not None:
-            self.issues.note("source_error", "metar", error=self.last_error[:300])
+            self.issues.source_error("metar", self.last_error[:300])
         return None
 
     def fresh(self, now: float) -> Metar | None:

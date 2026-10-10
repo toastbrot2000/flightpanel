@@ -10,7 +10,7 @@ Abruf nicht kennt (siehe /health -> logos_missing).
 
 Der Code ist der IATA-Code (2 Zeichen, wie im Abruf) oder der ICAO-Code (3);
 der Server probiert beide. Ergebnis: data/logos/<CODE>.png in LOGO_SIZE
-(Default 30) plus <CODE>_preview.png (8x vergrößert) zum Begutachten.
+(Default 32) plus <CODE>_preview.png (8x vergrößert) zum Begutachten.
 Dieselbe Aufbereitung wie beim automatischen Abruf: weißer Hintergrund weg,
 auf den Inhalt zuschneiden, quadratisch einpassen."""
 
@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
 from PIL import Image, ImageColor  # noqa: E402
 
-from flightpanel.logos import prepare_logo, remove_background  # noqa: E402
+from flightpanel.logo_image import prepare_logo, remove_background  # noqa: E402
 
 
 def load(path: str, px: int = 512) -> Image.Image:
@@ -40,7 +40,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("src")
     ap.add_argument("code", help="IATA (LH, U2) oder ICAO (DLH, EZY)")
-    ap.add_argument("--size", type=int, default=int(os.environ.get("LOGO_SIZE", "30")))
+    ap.add_argument("--size", type=int, default=int(os.environ.get("LOGO_SIZE", "32")))
     ap.add_argument("--bg", default="#000000", help="Hintergrundfarbe hinter transparenten Teilen")
     ap.add_argument("--crop", type=float, default=0, help="Prozent Rand abschneiden (0-40)")
     ap.add_argument("--keep-white", action="store_true", help="weißen Hintergrund nicht entfernen")

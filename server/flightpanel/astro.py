@@ -10,14 +10,17 @@ mindestens 10° hoch, von der Sonne beschienen, beim Beobachter schon dunkel.
 Ohne gültige Bahnelemente gibt es keine ISS-Karten, sonst ändert sich nichts."""
 
 import asyncio
+import json
 import logging
 import math
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import aiohttp
+
+from .storage import write_atomic
 
 log = logging.getLogger("astro")
 
@@ -162,7 +165,7 @@ def sunlit(r_teme: tuple[float, float, float], t: float) -> bool:
     """Ist der Satellit von der Sonne beschienen (zylindrischer Erdschatten)?"""
     ra, dec = sun_radec(t)
     s = (math.cos(dec) * math.cos(ra), math.cos(dec) * math.sin(ra), math.sin(dec))
-    proj = sum(a * b for a, b in zip(r_teme, s))
+    proj = sum(a * b for a, b in zip(r_teme, s, strict=True))
     if proj > 0:
         return True
     perp = math.sqrt(max(0.0, sum(a * a for a in r_teme) - proj * proj))
@@ -180,7 +183,6 @@ def parse_tle(text: str) -> tuple[str, str] | None:
     """Zwei TLE-Zeilen aus Text oder aus JSON {"line1", "line2"}."""
     text = text.strip()
     if text.startswith("{"):
-        import json
         try:
             j = json.loads(text)
             l1, l2 = j.get("line1", ""), j.get("line2", "")
@@ -255,18 +257,14 @@ class Iss:
                 self._set(tle)
                 self.tle_fetched = time.time()
                 self.last_error = None
-                os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-                tmp = self.path + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write("ISS (ZARYA)\n" + "\n".join(tle) + "\n")
-                os.replace(tmp, self.path)
+                write_atomic(self.path, "ISS (ZARYA)\n" + "\n".join(tle) + "\n")
                 return True
             except Exception as e:
                 errors.append(f"{url.split('/')[2]}: {e or type(e).__name__}")
         self.last_error = "; ".join(errors)
         log.warning("ISS-Bahnelemente: %s", self.last_error)
         if self.issues is not None:
-            self.issues.note("source_error", "tle", error=self.last_error[:300])
+            self.issues.source_error("tle", self.last_error[:300])
         return False
 
     def needs_tle(self, now: float) -> bool:
@@ -343,8 +341,3 @@ class Iss:
 
 def hhmm(t: float) -> str:
     return datetime.fromtimestamp(t).strftime("%H:%M")
-
-
-def local_midnight(now: float) -> float:
-    d = datetime.fromtimestamp(now).date()
-    return datetime.combine(d + timedelta(days=0), datetime.min.time()).timestamp()

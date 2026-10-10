@@ -14,12 +14,14 @@ Nur für gezeigte Flüge ohne Route abfragen, das Ergebnis bleibt pro Flug im
 Cache: ein paar Abrufe am Tag."""
 
 import logging
+from collections.abc import Awaitable, Callable
 
 import aiohttp
 
-from .adsbdb import Cache
+from .cache import Cache
 from .data import Airport
 from .geo import haversine_km
+from .issues import Issues
 
 log = logging.getLogger("origins")
 
@@ -55,13 +57,15 @@ def track_start(track: dict, callsign: str) -> tuple[float, float] | None:
 
 
 class Origins:
-    def __init__(self, session: aiohttp.ClientSession, cache: Cache, airports: list[Airport]):
+    def __init__(self, session: aiohttp.ClientSession, cache: Cache, airports: list[Airport],
+                 issues: Issues | None = None, auth: Callable[[], Awaitable[dict]] | None = None):
+        """auth: liefert die Header für OpenSky (mit Zugangsdaten mehr Abrufe), sonst anonym."""
         self.session = session
         self.cache = cache
         self.airports = airports
+        self.issues = issues
+        self.auth = auth
         self.last_error: str | None = None
-        self.issues = None      # Issues, setzt main
-        self.auth = None        # async () -> Header mit OpenSky-Token, setzt main, wenn Zugangsdaten da sind
 
     async def origin(self, icao24: str, callsign: str) -> dict:
         """{"origin": "ORY", "origin_pos": [lat, lon]} oder {}."""
@@ -86,8 +90,7 @@ class Origins:
             self.last_error = str(e) or type(e).__name__
             log.warning("OpenSky-Spur %s: %s", callsign, self.last_error)
             if self.issues is not None:
-                self.issues.note("rate_limit" if "429" in self.last_error else "source_error", "opensky_track",
-                                 error=self.last_error)
+                self.issues.source_error("opensky_track", self.last_error)
             return {}
         start = track_start(track, callsign)
         ap = nearest_airport(self.airports, *start) if start else None

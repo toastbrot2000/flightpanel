@@ -19,16 +19,16 @@ import aiohttp
 from .config import Config
 from .data import load_airlines
 from .logos import make_logo_store
+from . import USER_AGENT
 
 
 async def run(cfg: Config, codes: list[tuple[str, str]], force: bool) -> int:
     """codes: (IATA, ICAO)-Paare, eins von beiden darf leer sein."""
-    store = make_logo_store(cfg)
-    store.fetch_enabled = True
     ok = skipped = 0
     failed: list[str] = []
-    async with aiohttp.ClientSession(headers={"User-Agent": "flightpanel/1.0"}) as session:
-        store.session = session
+    async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
+        store = make_logo_store(cfg, session)
+        store.fetch_enabled = True
         for iata, icao in codes:
             code = store.key(iata, icao)
             if not force and (store.path_for(iata) or store.path_for(icao)):

@@ -23,8 +23,9 @@ from typing import NamedTuple
 
 import aiohttp
 
-from .adsbdb import Cache
+from .cache import Cache
 from .geo import angle_diff, bearing_deg, haversine_km
+from .issues import Issues
 from .model import State
 
 log = logging.getLogger("adsbim")
@@ -93,11 +94,11 @@ def current_leg(stops: list[Stop], s: State) -> tuple[Stop, Stop] | None:
 
 
 class AdsbIm:
-    def __init__(self, session: aiohttp.ClientSession, cache: Cache):
+    def __init__(self, session: aiohttp.ClientSession, cache: Cache, issues: Issues | None = None):
         self.session = session
         self.cache = cache
+        self.issues = issues
         self.last_error: str | None = None
-        self.issues = None      # Issues, setzt main
 
     async def routes(self, states: list[State]) -> dict[str, dict]:
         """{callsign: Route oder {}} für die Flugzeuge. Fehler: Flug fehlt im Ergebnis
@@ -125,8 +126,7 @@ class AdsbIm:
                 self.last_error = str(e) or type(e).__name__
                 log.warning("adsb.im: %s", self.last_error)
                 if self.issues is not None:
-                    self.issues.note("rate_limit" if "429" in self.last_error else "source_error", "adsbim",
-                                     error=self.last_error)
+                    self.issues.source_error("adsbim", self.last_error)
                 continue
             for item in resp if isinstance(resp, list) else []:
                 cs = str(item.get("callsign") or "").strip().upper()

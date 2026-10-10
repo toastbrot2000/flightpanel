@@ -1,12 +1,9 @@
 """Airline-Logos: aus data/logos/<CODE>.png laden, und wenn keins da ist,
-einmalig von Logo-CDNs holen, aufbereiten und ablegen.
+einmalig von Logo-CDNs holen, aufbereiten (logo_image.py) und ablegen.
 
 Quellen (LOGO_URLS) werden der Reihe nach probiert. Genommen werden nur
 annähernd quadratische Bildmarken (Seitenverhältnis bis LOGO_MAX_ASPECT):
-Schriftzüge werden bei 30 x 30 Pixeln unlesbar, dann lieber Layout A ohne Logo.
-
-Aufbereitung: weißen Hintergrund entfernen (Flood-Fill vom Rand), auf den
-Inhalt zuschneiden, proportional in LOGO_SIZE einpassen, auf Schwarz legen.
+Schriftzüge werden bei 32 x 32 Pixeln unlesbar, dann lieber Layout A ohne Logo.
 
 Negative Treffer werden in data/logos/.missing.json gemerkt (Retry nach 7 Tagen).
 Neue Dateien werden im Betrieb erkannt, man kann also jederzeit handgemachte
@@ -15,7 +12,6 @@ Logos ablegen; die haben Vorrang vor dem Abruf."""
 import asyncio
 import hashlib
 import io
-import json
 import logging
 import os
 import time
@@ -23,22 +19,20 @@ import time
 import aiohttp
 from PIL import Image
 
+from .logo_image import NotSquare, prepare_logo
+from .storage import read_json, write_json
+
 log = logging.getLogger("logos")
 
 EXTS = ("png", "PNG", "gif", "bmp", "jpg", "jpeg")
 MISSING_TTL = 7 * 24 * 3600
 ERROR_RETRY = 10 * 60          # nach Netzfehler erst nach 10 min wieder versuchen
-MAX_DOWNLOAD = 2 * 1024 * 1024 # Bytes; Logos sind wenige KB
-MAX_SOURCE_PX = 512            # größere Bilder vor dem Flood-Fill verkleinern
-
-# Schutz vor Dekompressionsbomben aus dem Netz: Logos haben selten mehr als 1000 x 1000,
-# Pillow bricht ab dem Doppelten ab.
-Image.MAX_IMAGE_PIXELS = 4_000_000
+MAX_DOWNLOAD = 2 * 1024 * 1024  # Bytes; Logos sind wenige KB
 
 # Quellen der Reihe nach: (Vorlage, größtes Seitenverhältnis; None = LOGO_MAX_ASPECT).
 # Kiwi: quadratische App-Icon-Kacheln, per IATA. FlightAware: Bildmarken, per ICAO.
 # Google Flights zuletzt und bis 2:1: viele Bildmarken (Austrian-Pfeil, Eurowings-
-# Streifen) sind etwas breiter als quadratisch, bei 30 px aber gut erkennbar.
+# Streifen) sind etwas breiter als quadratisch, bei 32 px aber gut erkennbar.
 DEFAULT_URLS = (
     ("https://images.kiwi.com/airlines/128x128/{iata}.png", None),
     ("https://images.kiwi.com/airlines/64/{iata}.png", None),
@@ -47,104 +41,17 @@ DEFAULT_URLS = (
 )
 
 
-class NotSquare(ValueError):
-    pass
-
-
-def remove_background(img: Image.Image, threshold: int = 235) -> Image.Image:
-    """Macht alle hellen Pixel transparent, die vom Rand aus mit hellen Pixeln
-    verbunden sind (Hintergrund), lässt helle Flächen im Logo selbst stehen."""
-    img = img.convert("RGBA")
-    w, h = img.size
-    px = img.load()
-    border = [(x, y) for x in range(w) for y in (0, h - 1)] + [(x, y) for y in range(h) for x in (0, w - 1)]
-    # Kachel (Rand größtenteils deckend, App-Icons von Kiwi): halbtransparente Pixel sind
-    # die geglätteten runden Ecken und fliegen mit raus, sonst bleiben graue Ecken stehen.
-    # Logo auf transparentem Grund: halbtransparente Pixel sind seine eigene Kante (etwa
-    # weiße Schrift) und bleiben, sonst frisst die Füllung die Schrift auf.
-    tile = sum(1 for x, y in border if px[x, y][3] >= 10) > len(border) // 2
-
-    def bright(x, y):
-        r, g, b, a = px[x, y]
-        return a < 10 or (tile and a < 255) or (r >= threshold and g >= threshold and b >= threshold)
-
-    seen = bytearray(w * h)
-    stack = [(x, y) for x in range(w) for y in (0, h - 1)] + [(x, y) for y in range(h) for x in (0, w - 1)]
-    while stack:
-        x, y = stack.pop()
-        i = y * w + x
-        if seen[i] or not bright(x, y):
-            continue
-        seen[i] = 1
-        r, g, b, a = px[x, y]
-        px[x, y] = (r, g, b, 0)
-        if x > 0: stack.append((x - 1, y))
-        if x < w - 1: stack.append((x + 1, y))
-        if y > 0: stack.append((x, y - 1))
-        if y < h - 1: stack.append((x, y + 1))
-    return img
-
-
-def drop_specks(img: Image.Image, min_px: int) -> Image.Image:
-    """Entfernt winzige sichtbare Inseln, die nach dem Freistellen übrig bleiben,
-    etwa geglättete Pixel an den runden Ecken eines Icons (sonst drei graue
-    Pixel in jeder Ecke). Bei 30 x 30 wäre so eine Insel kleiner als eine LED."""
-    w, h = img.size
-    px = img.load()
-    seen = bytearray(w * h)
-    for y0 in range(h):
-        for x0 in range(w):
-            if seen[y0 * w + x0] or px[x0, y0][3] < 10:
-                continue
-            seen[y0 * w + x0] = 1
-            comp, stack = [], [(x0, y0)]
-            while stack:
-                x, y = stack.pop()
-                comp.append((x, y))
-                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
-                    if 0 <= nx < w and 0 <= ny < h and not seen[ny * w + nx] and px[nx, ny][3] >= 10:
-                        seen[ny * w + nx] = 1
-                        stack.append((nx, ny))
-            if len(comp) < min_px:
-                for x, y in comp:
-                    r, g, b, _ = px[x, y]
-                    px[x, y] = (r, g, b, 0)
-    return img
-
-
-def prepare_logo(data: bytes, size: int, strip_white: bool = True,
-                 max_aspect: float | None = None) -> Image.Image:
-    """max_aspect: Seitenverhältnis des Inhalts nach dem Zuschnitt, ab dem das
-    Bild als Schriftzug gilt und mit NotSquare abgelehnt wird."""
-    img = Image.open(io.BytesIO(data)).convert("RGBA")
-    if max(img.size) > MAX_SOURCE_PX:
-        img.thumbnail((MAX_SOURCE_PX, MAX_SOURCE_PX), Image.LANCZOS)
-    if strip_white:
-        img = drop_specks(remove_background(img), max(4, img.width * img.height // 1000))
-    bbox = img.getchannel("A").getbbox()
-    if bbox:
-        img = img.crop(bbox)
-    w, h = img.size
-    if max_aspect is not None and max(w, h) > max_aspect * max(1, min(w, h)):
-        raise NotSquare(f"{w}x{h}")
-    s = max(w, h, 1)
-    sq = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    sq.paste(img, ((s - w) // 2, (s - h) // 2))
-    small = sq.resize((size, size), Image.LANCZOS)
-    bg = Image.new("RGBA", (size, size), (0, 0, 0, 255))
-    bg.alpha_composite(small)
-    return bg.convert("RGB")
-
-
 class LogoStore:
     def __init__(self, directory: str, size: int, fetch: bool = True,
-                 urls: tuple[tuple[str, float | None], ...] = DEFAULT_URLS, max_aspect: float = 1.5):
+                 urls: tuple[tuple[str, float | None], ...] = DEFAULT_URLS, max_aspect: float = 1.5,
+                 session: aiohttp.ClientSession | None = None):
+        """session: ohne gibt es keinen Abruf, nur die vorhandenen Dateien."""
         self.dir = directory
         self.size = size
         self.fetch_enabled = fetch
         self.urls = urls
         self.max_aspect = max_aspect
-        self.session: aiohttp.ClientSession | None = None
+        self.session = session
         self._cache: dict[str, tuple[float, Image.Image | None]] = {}
         self._inflight: set[str] = set()
         self._errors: dict[str, float] = {}
@@ -208,16 +115,12 @@ class LogoStore:
 
     # ------------------------------------------------------------- Abruf --
     def _load_missing(self) -> dict[str, float]:
-        try:
-            with open(self._missing_path, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+        raw = read_json(self._missing_path)
+        return raw if isinstance(raw, dict) else {}
 
     def _save_missing(self) -> None:
         try:
-            with open(self._missing_path, "w", encoding="utf-8") as f:
-                json.dump(self._missing, f)
+            write_json(self._missing_path, self._missing)
         except OSError as e:
             log.warning("missing.json: %s", e)
 
@@ -338,6 +241,6 @@ def parse_urls(spec: str) -> tuple[tuple[str, float | None], ...]:
     return tuple(out)
 
 
-def make_logo_store(cfg) -> LogoStore:
+def make_logo_store(cfg, session: aiohttp.ClientSession | None = None) -> LogoStore:
     return LogoStore(os.path.join(cfg.data_dir, "logos"), cfg.logo_size, fetch=cfg.logo_fetch,
-                     urls=parse_urls(cfg.logo_urls) or DEFAULT_URLS, max_aspect=cfg.logo_max_aspect)
+                     urls=parse_urls(cfg.logo_urls) or DEFAULT_URLS, max_aspect=cfg.logo_max_aspect, session=session)

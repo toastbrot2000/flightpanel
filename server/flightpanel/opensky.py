@@ -38,6 +38,11 @@ class OpenSky:
     def daily_credits(self) -> int:
         return DAILY_CREDITS_ANON if self.anonymous else DAILY_CREDITS_USER
 
+    async def auth_headers(self) -> dict[str, str]:
+        """Authorization-Header mit gültigem Token; anonym leer."""
+        await self._ensure_token()
+        return {"Authorization": f"Bearer {self._token}"} if self._token else {}
+
     async def _ensure_token(self) -> None:
         if self.anonymous:
             return
@@ -60,10 +65,9 @@ class OpenSky:
         den letzten Stand behalten kann."""
         if time.time() < self.backoff_until:
             raise RuntimeError("OpenSky im Backoff")
-        await self._ensure_token()
+        headers = await self.auth_headers()
         lamin, lomin, lamax, lomax = bbox
         params = {"lamin": f"{lamin:.4f}", "lomin": f"{lomin:.4f}", "lamax": f"{lamax:.4f}", "lomax": f"{lomax:.4f}"}
-        headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
         async with self.session.get(STATES_URL, params=params, headers=headers,
                                     timeout=aiohttp.ClientTimeout(total=20)) as r:
             rem = r.headers.get("X-Rate-Limit-Remaining")
