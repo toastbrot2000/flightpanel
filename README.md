@@ -11,13 +11,13 @@
 
 ![Sechs Beispiele vom Panel: Landung mit Logo und Himmelspunkten, Abflüge am BER, nächster Flieger, Radar, Abflug ohne Logo, Verspätungsgrund](docs/images/overview.png)
 
-Zwei Waveshare-HUB75-Panels P2.5 (64 × 32) nebeneinander ergeben 128 × 32 Pixel auf 32 × 8 cm. Ein ESP32 steuert sie an, ein kleiner Server im Homelab macht den Rest. Hardware, Mechanik und Stromversorgung: [docs/flugpanel-bauplan.md](docs/flugpanel-bauplan.md). Alle Bildschirme mit Bildern und Rangfolge: [docs/screens.md](docs/screens.md).
+Zwei HUB75-Panels P2.5 (64 × 32) nebeneinander ergeben 128 × 32 Pixel auf 32 × 8 cm. Ein ESP32 steuert sie an, ein kleiner Server (Docker, etwa im Homelab) macht den Rest. Teile, Verdrahtung und Zusammenbau: [docs/bauanleitung.md](docs/bauanleitung.md). Alle Bildschirme mit Bildern und Rangfolge: [docs/screens.md](docs/screens.md).
 
 ## Stand
 
-- **Läuft:** der Server mit echten Daten, im Docker-Container auf einem Laptop; am Fenster gegen den Himmel und Flightradar24 geprüft. Landefolge, Minuten bis zur Landung und Sichtfeld stimmen dort gut.
-- **Ungetestet:** die Firmware auf echter Hardware (sie kompiliert, die Panels sind bestellt) und der Dauerbetrieb im Homelab.
-- **Ortsgebunden:** entwickelt für Berlin, BER und einen Balkon nach Süden. Alles Ortsabhängige ist einstellbar; die Spaß-Inhalte (`data/jokes.json`) und zwei Karten gibt es nur für den BER.
+- **Läuft:** der Server mit echten Daten im Docker-Container, am Fenster gegen den Himmel und Flightradar24 geprüft. Landefolge, Minuten bis zur Landung und Sichtfeld stimmen dort gut.
+- **Ungetestet:** die Firmware auf echter Hardware (sie kompiliert) und ein Dauerbetrieb über Wochen.
+- **Ortsgebunden:** entwickelt in Berlin für den Flughafen BER. Alles Ortsabhängige ist einstellbar; die Spaß-Inhalte (`data/jokes.json`) und zwei Karten gibt es nur für den BER.
 
 ## So funktioniert es
 
@@ -149,31 +149,17 @@ Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Updates: `git pul
 
 Liegt in `data/issues.json`. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`.
 
-## Firmware
+## Hardware und Firmware
 
-PlatformIO, Board `esp32dev` (NodeMCU ESP32, WROOM-32), Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14.
+PlatformIO, Board `esp32dev` (klassischer ESP32, WROOM-32), Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14. Der ESP32 holt alle 2 s `/frame` und zeigt es an; ohne Server bleibt das letzte Bild stehen, nach 60 s mit einem roten Punkt unten rechts, nach 10 min startet er neu.
 
 ```bash
 cd firmware
 cp include/secrets.h.example include/secrets.h   # WLAN (2,4 GHz!), Server-URL, OTA-Passwort
-pio run -t upload                                # erstes Mal per USB, VIN dabei abstecken
-pio device monitor
-pio run -e esp32dev_ota -t upload                # danach per WLAN
+pio run -t upload                                # erstes Mal per USB, danach: pio run -e esp32dev_ota -t upload
 ```
 
-Verdrahtung ESP32 → HUB75 (Standard der Bibliothek, Tabelle auch im Bauplan 4.3):
-
-| HUB75 | GPIO | HUB75 | GPIO |
-|---|---|---|---|
-| R1 | 25 | A | 23 |
-| G1 | 26 | B | 19 |
-| B1 | 27 | C | 5 |
-| R2 | 14 | D | 17 |
-| G2 | 12 | E | – |
-| B2 | 13 | LAT | 4 |
-| CLK | 16 | OE | 15 |
-
-Beim Boot zeigt die Firmware ein Testbild: linkes Panel rot, rechtes grün (Kettenreihenfolge), dann Rahmen und Diagonale (Geometrie), dann Schrift (Orientierung). Danach holt sie alle 2 s `/frame`. Schalter in `include/config.h`: `SWAP_HALVES`, `HUB75_CLKPHASE`, `HUB75_LATCH_BLANKING`, `MAX_BRIGHTNESS`. Ohne Server bleibt das letzte Bild stehen, nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu. Kompilieren ohne lokales PlatformIO: `sh tools/check_firmware.sh` (Docker).
+Teile, Strom, Verdrahtung (Pinbelegung), Testbild und Stellschrauben stehen in der [Bauanleitung](docs/bauanleitung.md). Kompilieren ohne lokales PlatformIO: `sh tools/check_firmware.sh` (Docker).
 
 ## Entwicklung
 
@@ -217,7 +203,7 @@ firmware/        ESP32: platformio.ini, src/main.cpp, include/config.h, secrets.
 tools/           make_logo.py, make_airports.py, screenshots.py, check_firmware.sh
 data/            airlines.json, airports.json, rare.json, jokes.json;
                  im Betrieb logos/, cache.json, issues.json, stats.json, tle.txt
-docs/            Bauplan (Hardware), screens.md (alle Bildschirme), images/
+docs/            bauanleitung.md (Hardware), screens.md (alle Bildschirme), images/
 ```
 
 ### Eine Leerlauf-Karte hinzufügen
