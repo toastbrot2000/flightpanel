@@ -218,11 +218,10 @@ class Renderer:
         if logo.size != (LOGO_COL, LOGO_COL):
             logo = logo.resize((LOGO_COL, LOGO_COL), Image.LANCZOS)
         if dots:
-            # Logo kleiner, bündig links (der Rand bleibt genutzt), darunter mittig die
-            # Himmelspunkte auf der letzten Zeile; der Text beginnt trotzdem an derselben Stelle
+            # Logo kleiner, darunter die Himmelspunkte auf der letzten Zeile
             logo = logo.resize((LOGO_WITH_DOTS, LOGO_WITH_DOTS), Image.LANCZOS)
-            img.paste(logo, (0, 0))
-            self._draw_dots(img, (LOGO_WITH_DOTS - self._dots_width(dots)) // 2, img.height - DOT, dots, f)
+            img.paste(logo, ((LOGO_COL - logo.width) // 2, 0))
+            self._draw_dots(img, (LOGO_COL - self._dots_width(dots)) // 2, img.height - DOT, dots, f)
         else:
             img.paste(logo, (0, 0))
         x0 = LOGO_COL + 2               # Text beginnt immer gleich weit rechts
