@@ -81,7 +81,7 @@ class Config:
     layout: str = _env("LAYOUT", "auto").upper()  # auto | A | B | C
     page_seconds: int = int(_env("PAGE_SECONDS", "4"))
     max_flights: int = int(_env("MAX_FLIGHTS", "2"))
-    logo_size: int = int(_env("LOGO_SIZE", "30"))
+    logo_size: int = int(_env("LOGO_SIZE", "32"))
 
     # Leerlauf: Wenn kein Flug zu zeigen ist, wechseln Karten (Uhr, nächster Flieger,
     # Radar, Statistik, Wetter, ISS, Witze ...) alle IDLE_SECONDS. IDLE_OFF: Karten-IDs,

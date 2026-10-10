@@ -34,13 +34,14 @@ STALE_FACTOR = 0.4
 PROTO_VERSION = 1
 
 # Zeilenraster für 32 px Höhe
-ROW1, ROW2, ROW3 = 0, 12, 23
+ROW1, ROW2, ROW3 = 0, 12, 24       # gleicher Abstand; die untere Zeile sitzt auf der Kante
 
 # Himmelspunkte: ein Punkt pro Flug im Wechsel, der im Sichtfeld ist, von links nach
 # rechts wie vom Fenster aus gesehen; der gezeigte leuchtet. Dann wird das Logo kleiner.
 DOT, DOT_PITCH, MAX_DOTS = 3, 5, 6
 DOT_DIM = 0.3
-LOGO_WITH_DOTS = 26
+LOGO_COL = 32           # Logospalte, Logo bündig in der Ecke
+LOGO_WITH_DOTS = 28     # mit Himmelspunkten darunter (3 px Punkte, 1 px Abstand)
 
 
 _dim = dim
@@ -66,6 +67,8 @@ def info_pages(f: Flight, hide_callsign: bool = False) -> list[str]:
     Fehlende Daten lassen die Seite weg; das Rufzeichen auch, wenn es schon
     oben steht (nichts doppelt)."""
     pages: list[str] = []
+    if f.land_eta_s is not None:
+        pages.append("landet gleich" if f.land_eta_s < 60 else f"landet in ~{max(1, round(f.land_eta_s / 60))} min")
     if f.alt_ft is not None:
         vr = "↑" if (f.vrate_fpm or 0) > 300 else "↓" if (f.vrate_fpm or 0) < -300 else ""
         spd = f" {f.speed_kt}kt" if f.speed_kt is not None else ""
@@ -92,7 +95,7 @@ class Renderer:
     def _pick(self, model: DisplayModel, now: float) -> tuple[Flight, int]:
         """Welcher Flug und welche Infoseite gerade dran ist."""
         tick = int(now // self.cfg.page_seconds)
-        n_pages = 3
+        n_pages = 4 if any(fl.land_eta_s is not None for fl in model.flights) else 3   # Landende: + Landezeit
         idx = (tick // n_pages) % len(model.flights)
         return model.flights[idx], tick % n_pages
 
@@ -190,15 +193,16 @@ class Renderer:
                   dots=()) -> None:
         if f < 1.0:
             logo = Image.eval(logo, lambda v: int(v * f))
-        col_w = logo.width                       # Logospalte, Text beginnt immer gleich weit rechts
+        if logo.size != (LOGO_COL, LOGO_COL):
+            logo = logo.resize((LOGO_COL, LOGO_COL), Image.LANCZOS)
         if dots:
-            # Logo kleiner, darunter die Himmelspunkte
+            # Logo kleiner, darunter die Himmelspunkte auf der letzten Zeile
             logo = logo.resize((LOGO_WITH_DOTS, LOGO_WITH_DOTS), Image.LANCZOS)
-            img.paste(logo, (1 + (col_w - logo.width) // 2, 0))
-            self._draw_dots(img, 1 + (col_w - self._dots_width(dots)) // 2, img.height - DOT - 1, dots, f)
+            img.paste(logo, ((LOGO_COL - logo.width) // 2, 0))
+            self._draw_dots(img, (LOGO_COL - self._dots_width(dots)) // 2, img.height - DOT, dots, f)
         else:
-            img.paste(logo, (1, (img.height - logo.height) // 2))
-        x0 = col_w + 4
+            img.paste(logo, (0, 0))
+        x0 = LOGO_COL + 2               # Text beginnt immer gleich weit rechts
         avail = img.width - x0
         col = _dim(COLORS[fl.status], f)
 
@@ -249,7 +253,7 @@ class Renderer:
         info = FONT_MID.fit(pages[page % len(pages)], W - (dw + 6 if dots else 0))
         FONT_MID.draw(img, 0, ROW3, info, _dim(INFO, f))
         if dots:
-            self._draw_dots(img, W - dw, ROW3 + 3, dots, f)
+            self._draw_dots(img, W - dw, img.height - DOT, dots, f)
 
     def _layout_b(self, img: Image.Image, model: DisplayModel, now: float, f: float) -> None:
         rows = [3, 19]

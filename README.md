@@ -67,7 +67,9 @@ Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` desse
 
 **Routen**, der Reihe nach: adsb.im (der Routendienst hinter den tar1090-Karten, aktuell, eine Abfrage für alle Flüge), dann adsbdb. Beide speichern Routen pro Callsign, und Airlines verwenden Callsigns für andere Strecken weiter; liegt das Flugzeug weit neben der Strecke, verwirft der Server sie. Kennt keine Quelle den Flug, sucht der Server für gezeigte Flüge den Abflughafen aus der OpenSky-Flugspur: Beginnt sie tief, ist der nächste Linienflughafen (`data/airports.json`, aus OurAirports) der Start. Landende enden am eigenen Platz. `ADSBIM=0`, `TRACK_ORIGIN=0` schalten ab.
 
-**Zeile 2** zeigt die Route, sonst was der Flug ist (Luftrettung, Polizei, Kleinflugzeug, Hubschrauber, aus `airlines.json` mit `"label"`, ADS-B-Kategorie oder deutschem Kennzeichen), sonst bei Landung `?→BER`, bei Start `BER→?`, sonst nichts. Nichts steht doppelt: Das Rufzeichen fällt aus den wechselnden Infoseiten, wenn es oben schon steht. Privatflieger heißen nach ihrem Kennzeichen (D-EHGB), Rettungshubschrauber nach ihrer Nummer (Christoph 31); Halternamen kommen nie aufs Panel.
+**Zeile 2** zeigt die Route, sonst was der Flug ist (Luftrettung, Polizei, Kleinflugzeug, Hubschrauber, aus `airlines.json` mit `"label"`, ADS-B-Kategorie oder deutschem Kennzeichen), sonst bei Landung `?→BER`, bei Start `BER→?`, sonst nichts. Nichts steht doppelt: Das Rufzeichen fällt aus den wechselnden Infoseiten, wenn es oben schon steht. Landende haben eine Infoseite mehr, "landet in ~N min": Reststrecke bis zur Piste nach Flugphase, mit Tempo zwischen jetzt und Endanflug (Landende werden langsamer).
+
+**Alle Pixel:** Logos 32 x 32 bündig in der Ecke (mit Himmelspunkten 28 x 28, Punkte auf der letzten Zeile), Zeilen bei 0, 12 und 24. Die untere Zeile sitzt auf der Kante; Text mit Unterlängen (g, p, y) rückt dort so weit hoch, dass nichts abgeschnitten wird. Text am Rand beginnt bzw. endet auf der ersten bzw. letzten Spalte (`Font.draw`, `Font.text_width`). Privatflieger heißen nach ihrem Kennzeichen (D-EHGB), Rettungshubschrauber nach ihrer Nummer (Christoph 31); Halternamen kommen nie aufs Panel.
 
 ## Leerlauf: wenn keine Airline im Sichtfeld ist
 
@@ -76,7 +78,7 @@ Statt nur Uhr und Datum wechseln Karten, alle `IDLE_SECONDS` (12 s). Eine Karte 
 | Karte | Wann | Was |
 |---|---|---|
 | `alert` | Squawk 7700/7600/7500 im Abrufradius | Vollbild, vor allem anderen, auch vor Flügen |
-| `next` | ein Flugzeug kommt in 15 s bis 10 min ins Sichtfeld, unter 3 min dringend | wer, in wie vielen Minuten, auf welcher Seite des Fensters (← →) |
+| `next` | ein Flugzeug kommt in 15 s bis 10 min ins Sichtfeld, unter 3 min dringend | wer, "Sichtbar in ~N min" (Zeit bis zum Sichtfeld, nicht bis zur Landung), auf welcher Seite des Fensters (← →) |
 | `private` | Privatflieger, Hubschrauber, Militär im Sichtfeld | wie ein Flug in Layout A/C |
 | `radar` | Flugzeuge im Radius | Rundumblick, Sichtfeld als Band in der Mitte, Punkte nach Richtung und Höhenwinkel in Statusfarbe; der nächste blinkt |
 | `runway` | Landerichtung seit 30 min stabil, in den letzten 2 h vom Verkehr bestätigt, laut METAR kein Rückenwind | "BER landet auf 25", Wind, ob Landungen oder Starts durchs Sichtfeld kommen |

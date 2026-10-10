@@ -28,7 +28,7 @@ from .idle import Card, Ctx, Hit
 from .metar import describe_wx
 from .model import ARR, DEP, path_in_view, runway_name
 
-ROW1, ROW2, ROW3 = 0, 12, 23
+ROW1, ROW2, ROW3 = 0, 12, 24       # die untere Zeile sitzt auf der Kante (siehe Font.draw)
 STATUS_C = {ARR: ARR_C, DEP: DEP_C, "OVF": OVF_C}
 WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 NEXT_MAX_S = 600
@@ -133,7 +133,8 @@ def private_cond(ctx: Ctx):
 def private_demo(ctx: Ctx):
     from .model import Flight
     return [Flight(icao24="demo", callsign="DEFGH", status="OVF", dist_km=6.2, bearing=160, alt_ft=2500,
-                   speed_kt=95, track=250, vrate_fpm=0, actype="C172", kind="other")]
+                   speed_kt=95, track=250, vrate_fpm=0, actype="C172", kind="other",
+                   airline="D-EFGH", label="Kleinflugzeug")]
 
 
 def private_draw(img, ctx, data, t_in, f):
@@ -176,13 +177,15 @@ def next_draw(img, ctx, d, t_in, f):
     FONT_BIG.draw(img, 0, ROW1, FONT_BIG.fit(head, W - (lw if show_lab else 0)), dim(col, f))
     if show_lab:
         FONT_SMALL.draw(img, W - FONT_SMALL.text_width(lab), ROW1 + 1, lab, dim(MUTED, 0.7 * f))
-    when = "gleich" if eta < 45 else f"in ~{minutes(eta)}"
-    FONT_MID.draw(img, 0, ROW2, when, dim(INFO, f))
+    # Die Zeit bis zum Sichtfeld, nicht bis zur Landung: deshalb "Sichtbar in"
+    when = "Gleich sichtbar" if eta < 45 else f"Sichtbar in ~{minutes(eta)}"
+    where = ""
     if az is not None:
         arrow = side_arrow(ctx, az)
         where = f"{arrow} {kompass(az)}".strip() if arrow else f"aus {kompass(az)}"
-        if not (eta < NEXT_URGENT_S / 3 and not blink(ctx.now)):
-            FONT_MID.draw(img, W - FONT_MID.text_width(where), ROW2, where, dim(GOLD, f))
+    line(img, 0, ROW2, when, INFO, f, W - (FONT_MID.text_width(where) + 4 if where else 0))
+    if where and not (eta < NEXT_URGENT_S / 3 and not blink(ctx.now)):
+        FONT_MID.draw(img, W - FONT_MID.text_width(where), ROW2, where, dim(GOLD, f))
     # Route, sonst was der Flug ist, sonst ?→BER; das Rufzeichen nur, wenn es oben nicht steht
     bottom = (second_line(fl.origin, fl.dest, fl.status, fl.label, ctx.cfg.local_airport_iata)
               or ("" if shown_elsewhere(fl.callsign, head) else fl.callsign))
@@ -482,8 +485,8 @@ def new_draw(img, ctx, d, t_in, f):
     if logo is not None:
         if f < 1.0:
             logo = Image.eval(logo, lambda v: int(v * f))
-        img.paste(logo, (1, (img.height - logo.height) // 2))
-        x0 = logo.width + 4
+        img.paste(logo, (0, (img.height - logo.height) // 2))
+        x0 = logo.width + 2
     if blink(ctx.now):
         FONT_BIG.draw(img, x0, ROW1, "NEU!", dim(GOLD, f))
     FONT_SMALL.draw(img, W - FONT_SMALL.text_width(d.get("callsign", "")), ROW1 + 1, d.get("callsign", ""),

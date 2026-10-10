@@ -25,6 +25,7 @@ log = logging.getLogger("model")
 ARR, DEP, OVF = "ARR", "DEP", "OVF"
 SHORTLIST = 8          # so viele Kandidaten werden per adsbdb als Airline oder nicht eingeordnet
 FINAL_KM = 18          # Länge des Endanflugs: Gegenanflüge drehen ungefähr hier ein
+APPROACH_MS = 70.0     # ~135 kt im Endanflug, so langsam werden Landende zum Schluss
 NEXT_HORIZON_S = 600   # so weit voraus sucht der Leerlauf den nächsten Flieger
 NEXT_STEP_S = 15
 GLIDE_DEG = 3.0        # Gleitpfad im Endanflug
@@ -55,6 +56,7 @@ class Flight:
     elev_deg: float | None = None  # Höhenwinkel über dem Horizont
     seq: int | None = None      # Platz in der Landefolge (1 = landet als nächstes)
     label: str = ""             # ohne Airline: was es ist (Luftrettung, Kleinflugzeug ...)
+    land_eta_s: int | None = None  # Landende: geschätzte Sekunden bis zum Aufsetzen
 
     @property
     def other_airport(self) -> str:
@@ -332,6 +334,14 @@ def remaining_km(cfg: Config, s: State, course: float) -> float:
     return cross + along
 
 
+def landing_eta_s(cfg: Config, s: State, course: float) -> float:
+    """Sekunden bis zum Aufsetzen: Reststrecke nach Flugphase (remaining_km) bei
+    mittlerem Tempo zwischen jetzt und Endanflug, denn Landende werden langsamer."""
+    v = max(s.velocity_ms or 0.0, APPROACH_MS * 0.8)
+    v_mean = (v + APPROACH_MS) / 2 if v > APPROACH_MS else v
+    return remaining_km(cfg, s, course) * 1000 / v_mean
+
+
 def is_arrival(cfg: Config, s: State, route: dict) -> bool:
     """Landet am eigenen Flughafen: laut Route, sonst tief, nicht steigend, in Platznähe."""
     if route.get("dest") == cfg.local_airport_iata:
@@ -348,7 +358,7 @@ NOT_RUNWAY_CATEGORIES = {"A7", "B1", "B2", "B3", "B4", "B6", "B7"}
 
 
 async def landing_sequence(cfg: Config, states: list[State], adsb: AdsbDb, names: dict[str, dict],
-                           course: float, route_for=None) -> dict[str, int]:
+                           course: float, route_for=None) -> tuple[dict[str, int], dict[str, float]]:
     """icao24 -> Platz in der Landefolge, nach geschätzter Zeit bis zum Aufsetzen.
     Zählt alles, was die Piste braucht, auch Businessjets (BFX1073), damit #2 der
     zweite Flieger am Himmel ist. Nicht: Kennzeichen-Callsigns (Privatflieger landen
@@ -368,8 +378,9 @@ async def landing_sequence(cfg: Config, states: list[State], adsb: AdsbDb, names
             route = {}
         if not is_arrival(cfg, s, route):
             continue
-        eta.append((remaining_km(cfg, s, course) * 1000 / max(s.velocity_ms or 0.0, 60.0), s.icao24))
-    return {icao: i + 1 for i, (_, icao) in enumerate(sorted(eta))}
+        eta.append((landing_eta_s(cfg, s, course), s.icao24))
+    # Platz in der Landefolge und Sekunden bis zum Aufsetzen
+    return {icao: i + 1 for i, (_, icao) in enumerate(sorted(eta))}, {icao: t for t, icao in eta}
 
 
 def predict_entry(cfg: Config, s: State, course: float, in_seq: bool) -> tuple[float, float, str] | None:
@@ -483,11 +494,11 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
         tier = [r for r in tier if r[4]]
 
     course, votes = landing_course_votes(cfg, states, cfg.runway_course if prev_course is None else prev_course)
-    seq = await landing_sequence(cfg, states, adsb, names, course, route_for)
+    seq, etas = await landing_sequence(cfg, states, adsb, names, course, route_for)
 
     flights: list[Flight] = []
     for s, v, vis, route, airline in tier[: cfg.max_flights]:
-        flights.append(await _make_flight(cfg, s, v, vis, route, airline, adsb, names, seq, issues, origins))
+        flights.append(await _make_flight(cfg, s, v, vis, route, airline, adsb, names, seq, issues, origins, etas))
     # Landende in Landefolge zeigen, damit #1 zuerst kommt
     flights.sort(key=lambda f: (f.seq is None, f.seq or 0))
 
@@ -497,6 +508,7 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
                "elev": round(v.elev, 1), "dist_km": round(v.dist_km, 1),
                "alt_ft": int(s.baro_alt_m * 3.28084) if s.baro_alt_m is not None else None,
                "in_view": ("no", "soon", "now")[vis], "seq": seq.get(s.icao24),
+               "land_eta_s": round(etas[s.icao24]) if s.icao24 in etas else None,
                "eta_s": round(preds[s.icao24][0]) if preds[s.icao24] else None,
                "status": ARR if s.icao24 in seq else classify(s, "", "", cfg.local_airport_iata)}
               for s, v, vis in cands]
@@ -516,14 +528,14 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
         route = await route_for(s)
         airline = is_airline(s.callsign, route, names, s.category)
         if airline or cfg.show_other:
-            model.upcoming = await _make_flight(cfg, s, v, 0, route, airline, adsb, names, seq, None, origins)
+            model.upcoming = await _make_flight(cfg, s, v, 0, route, airline, adsb, names, seq, None, origins, etas)
             model.upcoming_eta_s, model.upcoming_az, model.upcoming_via = round(p[0]), round(p[1]), p[2]
     return model
 
 
 async def _make_flight(cfg: Config, s: State, v: Sighting, vis: int, route: dict, airline: bool,
                        adsb: AdsbDb, names: dict[str, dict], seq: dict[str, int],
-                       issues: Issues | None, origins=None) -> Flight:
+                       issues: Issues | None, origins=None, etas: dict[str, float] | None = None) -> Flight:
     ac = await adsb.aircraft(s.icao24)
     origin, dest = route.get("origin", ""), route.get("dest", "")
     if not route_plausible(route, s.lat, s.lon):
@@ -580,6 +592,7 @@ async def _make_flight(cfg: Config, s: State, v: Sighting, vis: int, route: dict
         elev_deg=round(v.elev, 1),
         seq=seq.get(s.icao24),
         label=label,
+        land_eta_s=round(etas[s.icao24]) if etas and s.icao24 in etas else None,
     )
     if f.seq is not None and f.status != ARR:
         f.status = ARR          # in der Landefolge, auch wenn die Route nichts sagt
