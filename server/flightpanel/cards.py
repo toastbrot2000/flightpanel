@@ -960,7 +960,7 @@ def alert_draw(img, ctx, d, t_in, f):
     text(img, FONT_MID, 3, ROW3 - 1, where, INFO, f, W - 6)
 
 
-ALERT = Card("alert", alert_cond, alert_draw, demo=alert_demo, group="notfall", live=True)
+ALERT = Card("alert", alert_cond, alert_draw, demo=alert_demo, tier=0, group="notfall", live=True)
 
 CARDS = [
     ALERT,
