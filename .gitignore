@@ -10,3 +10,8 @@ __pycache__/
 .venv/
 data/issues.json
 data/issues.json.tmp
+data/stats.json
+data/stats.json.tmp
+data/tle.txt
+data/tle.txt.tmp
+.pytest_cache/

@@ -31,6 +31,7 @@ class State:
     geo_alt_m: float | None = None
     actype: str = ""        # ICAO-Typ, nur von adsb.lol
     category: str = ""      # ADS-B-Kategorie, nur von adsb.lol (A7 = Hubschrauber)
+    squawk: str = ""        # Transpondercode, 7700/7600/7500 = Notfall
 
 
 class OpenSky:
@@ -121,6 +122,7 @@ class OpenSky:
                     track_deg=float(s[10]) if s[10] is not None else None,
                     vrate_ms=float(s[11]) if s[11] is not None else None,
                     geo_alt_m=float(s[13]) if len(s) > 13 and s[13] is not None else None,
+                    squawk=str(s[14] or "") if len(s) > 14 else "",
                 ))
             except (IndexError, TypeError, ValueError):
                 continue

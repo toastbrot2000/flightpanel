@@ -39,6 +39,8 @@ Die Vorschauseite hat Links für die Layouts. `/frame.png?layout=C&scale=8&gap=0
 | `/display.json` | Display-Modell (Flüge, Status, Route, Höhe, Airline-Codes …), dazu `nearby`: alle Flugzeuge im Radius mit Richtung (`az`), Höhenwinkel (`elev`) und `in_view` |
 | `/health` | Quelle, OpenSky-Credits, Cache, vorhandene/fehlende Logos, letzter ESP32-Abruf, Anzahl Auffälligkeiten. `esp32.alive=false` heißt: Panel hängt. |
 | `/issues` | gesammelte Auffälligkeiten (siehe unten), `POST /issues/clear` leert |
+| `/stats` | Tagesstatistik, Sammelalbum, seltene Sichtungen, Landerichtung |
+| `/idle` | Leerlauf-Karten: welche gerade etwas zu sagen haben, welche dran ist |
 
 ## Layouts
 
@@ -49,7 +51,7 @@ Drei Zeilen à 11 px, DejaVu Sans als harte Pixelschrift, Pfeile als Pixelmuster
 - **B** zwei Flüge, je eine Zeile
 - **auto** C, wenn für die Airline ein Logo liegt, sonst A
 
-Bei zwei Flügen im Modell wechseln A und C alle 12 s zum nächsten Flug. Leer: Uhr und Datum. Farben: Ankunft amber, Abflug grün, Überflug blau, kein Weiß als Textfarbe.
+Bei zwei Flügen im Modell wechseln A und C alle 12 s zum nächsten Flug. Ohne Airline im Sichtfeld: Leerlauf-Karten (siehe unten). Farben: Ankunft amber, Abflug grün, Überflug blau, kein Weiß als Textfarbe.
 
 ## Was angezeigt wird
 
@@ -64,6 +66,38 @@ Bis zu `MAX_FLIGHTS` Flüge wechseln sich ab. Sind mindestens zwei Flugzeuge im 
 Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen `az` und `elev` ablesen. `seq` ist der Platz in der Landefolge.
 
 Routen von adsbdb sind pro Callsign gespeichert, und Airlines verwenden Callsigns für andere Strecken weiter. Liegt das Flugzeug weit neben der gespeicherten Strecke, verwirft der Server die Route und zeigt das Callsign.
+
+## Leerlauf: wenn keine Airline im Sichtfeld ist
+
+Statt nur Uhr und Datum wechseln Karten, alle `IDLE_SECONDS` (12 s). Eine Karte kommt nur, wenn sie gerade etwas zu sagen hat; die Uhr ist immer dabei, etwa in einem Drittel der Fälle (`IDLE_CLOCK_SHARE`). Dringendes bricht durch, sonst entscheidet gewichteter Zufall, ohne dieselbe Karte kurz hintereinander. Privatflieger, Hubschrauber, Polizei und Militär im Sichtfeld sind eine Karte wie jede andere, ohne Vorrang.
+
+| Karte | Wann | Was |
+|---|---|---|
+| `alert` | Squawk 7700/7600/7500 im Abrufradius | Vollbild, vor allem anderen, auch vor Flügen |
+| `next` | ein Flugzeug kommt in 15 s bis 10 min ins Sichtfeld, unter 3 min dringend | wer, in wie vielen Minuten, auf welcher Seite des Fensters (← →) |
+| `private` | Privatflieger, Hubschrauber, Militär im Sichtfeld | wie ein Flug in Layout A/C |
+| `radar` | Flugzeuge im Radius | Rundumblick, Sichtfeld als Band in der Mitte, Punkte nach Richtung und Höhenwinkel in Statusfarbe; der nächste blinkt |
+| `runway` | Landerichtung seit 30 min stabil, in den letzten 2 h vom Verkehr bestätigt, laut METAR kein Rückenwind | "BER landet auf 25", Wind, ob Landungen oder Starts durchs Sichtfeld kommen |
+| `runway_change` | bis 1 h nach einem Pistenwechsel | neue Richtung, was das fürs Fenster heißt |
+| `weather` | METAR erklärt den leeren Himmel: Gewitter, Nebel/Sicht unter 2 km, Wolken unter 1500 m, Schnee | z. B. "Wolken auf 600 m, Flieger versteckt, 3 Flieger darüber" |
+| `curfew` | `CURFEW_HOURS` (BER 0-5 Uhr) | nur zu sehen, wenn `QUIET_HOURS` das Panel dann nicht abschaltet |
+| `scoreboard` | ab 10 Flugzeugen am Tag | Flugzeuge, Airlines, wie viele im Sichtfeld, das höchste |
+| `pokedex` | ab der ersten Airline | Sammelalbum: gesehene Marken aus `airlines.json`, dazu Exoten |
+| `new` | Airline zum ersten Mal gesehen, 2 min dringend | "NEU!" mit Logo. Nicht in den ersten 6 h nach dem ersten Start, da füllt sich das Album still |
+| `rare` | Typ oder Betreiber aus `data/rare.json` im Abrufradius | "Weit weg, aber selten: A380 Emirates, 70 km SO"; Typen 2 min dringend |
+| `quiet` | ab 10 min ohne Flug im Sichtfeld | Flaute und Tagesrekord; nach einer Abruflücke (Quiet Hours) beginnt die Uhr neu |
+| `iss` | sichtbarer ISS-Überflug in den nächsten 30 min, oder er läuft gerade (dringend) | Richtung, Höhe, ob er durchs Fenster kommt |
+| `sunset`, `sunrise` | 2 h vor Sonnenuntergang, 90 min vor Sonnenaufgang | Uhrzeit; "Gegenlicht", wenn die Sonne im Sichtfeld steht |
+| `joke`, `delay`, `txl`, `ber_opening`, `plane`, `pigeon` | immer, mit kleinem Gewicht | aus `data/jokes.json`; Jahrestage (BER 31.10., letzter Tegel-Flug 8.11., Luftbrücke) kommen an ihrem Tag öfter |
+| `santa`, `fireworks` | 24.12. ab 15 Uhr, 31.12. ab 18 Uhr bis 2 Uhr | Schlitten 1 im Anflug, Feuerwerk |
+
+**Nächster Flieger:** Der Server rechnet jedes Flugzeug im Radius 10 min weiter (Tempo, Kurs, Steigrate). Landende fliegen aber nicht geradeaus, sie drehen in den Endanflug. Liegt der Endanflug der aktuellen Landerichtung im Sichtfeld, zählt für sie die Reststrecke bis dorthin. Welche Teile von An- und Abflug im Sichtfeld liegen, rechnet der Server aus dem Sichtfeld (3°-Gleitpfad, Steigen mit 10 %).
+
+**Quellen und Ausfälle:** Wetter ist das METAR von aviationweather.gov, ersatzweise vom NOAA-Server, alle 20 min (`METAR=0` schaltet ab). Die ISS-Bahndaten kommen einmal am Tag von Celestrak, ersatzweise von einer zweiten Quelle, liegen in `data/tle.txt` und gelten 14 Tage (`ISS=0`). Sonne und Überflüge rechnet der Server selbst. Fällt eine Quelle aus, fehlen nur ihre Karten; Fehler stehen in `/issues` (`source_error: metar` oder `tle`) und in `/health` → `metar`, `iss`. Karten, die frische Flugdaten brauchen (`next`, `radar`, `quiet`, `private`), pausieren, solange das Bild gedimmt ist. Stürzt eine Karte ab, kommt die Uhr und das Log bekommt einen Traceback.
+
+**Vorschau:** Die Vorschauseite hat Links für jede Karte, oder direkt `/frame.png?card=radar`. Passt die Lage gerade nicht, zeigt die Karte Beispieldaten. `/idle` listet alle Karten: aktiv, dringend, abgeschaltet, mit ihren Daten. `IDLE_OFF=joke,pigeon` schaltet Karten ab.
+
+**Statistik:** `data/stats.json` (übersteht Neustarts, `GET /stats`): heute, die letzten 60 Tage, Sammelalbum mit fehlenden Airlines, seltene Sichtungen, Landerichtung. `SCAN_RADIUS_KM` (Default wie `RADIUS_KM`) vergrößert den Abruf für Statistik, seltene Flugzeuge und Notfälle, ohne mehr anzuzeigen. Seltene Typen und Betreiber stehen in `data/rare.json`, Witze und Verspätungsgründe in `data/jokes.json`.
 
 ## Airline-Logos
 
@@ -150,9 +184,21 @@ Die Firmware ist gegen die Bibliotheksquelle 3.0.14 geschrieben. Kompilieren lä
 ## Struktur
 
 ```
-server/flightpanel/   config, geo, fonts, opensky, adsbdb, model, logos, fetch_logos, render, main
+server/flightpanel/   config, geo, fonts, opensky, adsblol, adsbdb, model, logos, fetch_logos, render, main
+                      Leerlauf: idle (Auswahl), cards (Karten), sprites, stats, metar, astro (Sonne, ISS)
+server/tests/         pytest
 firmware/             platformio.ini, src/main.cpp, include/config.h, include/secrets.h.example
 tools/make_logo.py    Bild -> data/logos/<CODE>.png
-data/                 airlines.json, logos/, cache.json (Volume)
+data/                 airlines.json, rare.json, jokes.json, logos/; im Betrieb cache.json, issues.json,
+                      stats.json, tle.txt (Volume)
 docs/                 Bauplan
 ```
+
+## Tests
+
+```bash
+pip install -r server/requirements-dev.txt
+python -m pytest server/tests
+```
+
+Ohne Netz: Scheduler, Vorhersage, Pistengeometrie, Statistik, METAR-Parser, Sonne (gegen veröffentlichte Auf- und Untergangszeiten), ISS (gegen eine unabhängige Positionsangabe) und jede Karte mit Beispieldaten.

@@ -24,6 +24,12 @@ log = logging.getLogger("model")
 ARR, DEP, OVF = "ARR", "DEP", "OVF"
 SHORTLIST = 8          # so viele Kandidaten werden per adsbdb als Airline oder nicht eingeordnet
 FINAL_KM = 18          # Länge des Endanflugs: Gegenanflüge drehen ungefähr hier ein
+NEXT_HORIZON_S = 600   # so weit voraus sucht der Leerlauf den nächsten Flieger
+NEXT_STEP_S = 15
+GLIDE_DEG = 3.0        # Gleitpfad im Endanflug
+CLIMB = 0.10           # Steiggradient nach dem Start (m pro m)
+DEPARTURE_KM = 12      # so weit fliegen Abflüge ungefähr geradeaus
+EMERGENCY = {"7700": "NOTFALL", "7600": "FUNKAUSFALL", "7500": "ENTFÜHRUNG"}
 
 
 @dataclass
@@ -67,6 +73,12 @@ class DisplayModel:
     empty: bool = False
     nearby: list[dict] = field(default_factory=list)   # alle im Radius, zum Eichen des Sichtfelds
     landing_course: float | None = None                # erkannte Landerichtung (Kurs im Endanflug)
+    course_votes: int = 0                              # so viele Flugzeuge bestätigen sie gerade
+    upcoming: Flight | None = None                     # kommt als nächstes ins Sichtfeld
+    upcoming_eta_s: float | None = None                # in so vielen Sekunden (ab generated_at)
+    upcoming_az: float | None = None                   # Richtung, in der es auftaucht
+    upcoming_via: str = ""                             # "approach" (Endanflug) | "track" (geradeaus)
+    alert: dict | None = None                          # Notfall-Squawk in der Nähe
 
     def to_json(self) -> str:
         d = asdict(self)
@@ -204,20 +216,34 @@ def in_view(cfg: Config, v: Sighting) -> bool:
             and v.slant_km <= cfg.view_max_km)
 
 
+def entry_eta(cfg: Config, s: State, horizon_s: float, step_s: float) -> tuple[float, float] | None:
+    """(Sekunden, Richtung), wann und wo das Flugzeug ins Sichtfeld kommt, wenn es
+    mit Geschwindigkeit, Kurs und Steigrate weiterfliegt; (0, jetzt) wenn es schon
+    drin ist, None wenn nicht innerhalb von horizon_s."""
+    alt = s.geo_alt_m if s.geo_alt_m is not None else s.baro_alt_m
+    v = sighting(cfg, s.lat, s.lon, alt)
+    if in_view(cfg, v):
+        return 0.0, v.az
+    if not (s.velocity_ms and s.track_deg is not None and alt is not None and horizon_s > 0 and step_s > 0):
+        return None
+    n = max(1, math.ceil(horizon_s / step_s - 1e-9))
+    for i in range(1, n + 1):
+        dt = min(horizon_s, step_s * i)
+        lat, lon = destination(s.lat, s.lon, s.track_deg, s.velocity_ms * dt / 1000)
+        w = sighting(cfg, lat, lon, max(0.0, alt + (s.vrate_ms or 0.0) * dt))
+        if in_view(cfg, w):
+            return dt, w.az
+    return None
+
+
 def visibility(cfg: Config, s: State, horizon_s: float) -> int:
     """2 = jetzt im Sichtfeld, 1 = kommt bis zum nächsten Abruf hinein, 0 = nicht.
     Die Vorschau rechnet Geschwindigkeit, Kurs und Steigrate weiter: Anflüge
     queren das Sichtfeld in wenigen Minuten, so lang wie ein anonymer Abruf."""
-    alt = s.geo_alt_m if s.geo_alt_m is not None else s.baro_alt_m
-    if in_view(cfg, sighting(cfg, s.lat, s.lon, alt)):
-        return 2
-    if s.velocity_ms and s.track_deg is not None and alt is not None and horizon_s > 0:
-        for i in (1, 2, 3):
-            dt = horizon_s * i / 3
-            lat, lon = destination(s.lat, s.lon, s.track_deg, s.velocity_ms * dt / 1000)
-            if in_view(cfg, sighting(cfg, lat, lon, max(0.0, alt + (s.vrate_ms or 0.0) * dt))):
-                return 1
-    return 0
+    e = entry_eta(cfg, s, horizon_s, horizon_s / 3)
+    if e is None:
+        return 0
+    return 2 if e[0] == 0 else 1
 
 
 def _angle(a: float, b: float) -> float:
@@ -229,9 +255,13 @@ def _alt(s: State) -> float | None:
 
 
 def landing_course(cfg: Config, states: list[State], prev: float) -> float:
+    return landing_course_votes(cfg, states, prev)[0]
+
+
+def landing_course_votes(cfg: Config, states: list[State], prev: float) -> tuple[float, int]:
     """Landerichtung aus dem Verkehr: Was tief in Platznähe fliegt, landet oder
     startet gegen den Wind, also parallel zur Piste. Mehrheit entscheidet, ohne
-    Verkehr bleibt die letzte."""
+    Verkehr bleibt die letzte. Dazu die Stimmen für die gewählte Richtung."""
     votes = {cfg.runway_course % 360: 0, (cfg.runway_course + 180) % 360: 0}
     for s in states:
         alt = _alt(s)
@@ -243,7 +273,40 @@ def landing_course(cfg: Config, states: list[State], prev: float) -> float:
             if _angle(s.track_deg, c) < 30:
                 votes[c] += 1
     best = max(votes, key=votes.get)
-    return best if votes[best] else prev
+    return (best, votes[best]) if votes[best] else (prev, 0)
+
+
+def runway_name(course: float) -> str:
+    """249° -> "25", 69° -> "07"."""
+    n = round((course % 360) / 10) % 36 or 36
+    return f"{n:02d}"
+
+
+_PATH_CACHE: dict[tuple, list[tuple[float, float, float]]] = {}
+
+
+def path_in_view(cfg: Config, course: float, kind: str) -> list[tuple[float, float, float]]:
+    """Punkte der verlängerten Pistenachse, die im Sichtfeld liegen, als
+    (km ab Flughafen, Richtung, Höhenwinkel). kind "approach": Endanflug auf dem
+    3°-Gleitpfad gegen den Kurs, "departure": geradeaus steigend mit dem Kurs."""
+    key = (kind, round(course), cfg.view_from, cfg.view_to, cfg.view_min_elev, cfg.view_max_elev,
+           cfg.view_max_km, cfg.home_lat, cfg.home_lon, cfg.home_alt_m, cfg.airport_lat, cfg.airport_lon)
+    hit = _PATH_CACHE.get(key)
+    if hit is not None:
+        return hit
+    out = []
+    far = FINAL_KM + 4 if kind == "approach" else DEPARTURE_KM
+    brg = course + 180 if kind == "approach" else course
+    grad = math.tan(math.radians(GLIDE_DEG)) if kind == "approach" else CLIMB
+    d = 0.5
+    while d <= far:
+        lat, lon = destination(cfg.airport_lat, cfg.airport_lon, brg, d)
+        v = sighting(cfg, lat, lon, cfg.airport_alt_m + d * 1000 * grad)
+        if in_view(cfg, v):
+            out.append((d, v.az, v.elev))
+        d += 0.5
+    _PATH_CACHE[key] = out
+    return out
 
 
 def remaining_km(cfg: Config, s: State, course: float) -> float:
@@ -306,6 +369,46 @@ async def landing_sequence(cfg: Config, states: list[State], adsb: AdsbDb, names
     return {icao: i + 1 for i, (_, icao) in enumerate(sorted(eta))}
 
 
+def predict_entry(cfg: Config, s: State, course: float, in_seq: bool) -> tuple[float, float, str] | None:
+    """(Sekunden, Richtung, Art) bis das Flugzeug ins Sichtfeld kommt, über die
+    nächsten NEXT_HORIZON_S. Landende fliegen nicht geradeaus, sondern drehen in
+    den Endanflug: Liegt der im Sichtfeld, zählt die Reststrecke bis dorthin."""
+    e = entry_eta(cfg, s, NEXT_HORIZON_S, NEXT_STEP_S)
+    best = (e[0], e[1], "track") if e is not None else None
+    if best is not None and best[0] == 0:
+        return best
+    if in_seq:
+        path = path_in_view(cfg, course, "approach")
+        if path:
+            far_km, az, _ = max(path)
+            rem = remaining_km(cfg, s, course)
+            if rem > far_km:
+                t = (rem - far_km) * 1000 / max(s.velocity_ms or 0.0, 60.0)
+                if t <= NEXT_HORIZON_S and (best is None or t < best[0]):
+                    best = (t, az, "approach")
+    return best
+
+
+def find_alert(cfg: Config, states: list[State], names: dict[str, dict]) -> dict | None:
+    """Das nächste Flugzeug in der Luft mit Notfall-Squawk (7700, 7600, 7500)."""
+    hits = []
+    for s in states:
+        if s.on_ground or s.squawk not in EMERGENCY:
+            continue
+        v = sighting(cfg, s.lat, s.lon, _alt(s))
+        if v.dist_km > cfg.fetch_radius_km:
+            continue
+        code = callsign_airline(s.callsign)
+        hits.append((v.dist_km, {
+            "callsign": s.callsign or s.icao24.upper(), "icao24": s.icao24, "squawk": s.squawk,
+            "meaning": EMERGENCY[s.squawk], "type": s.actype,
+            "airline": names[code]["name"] if code in names else "",
+            "dist_km": round(v.dist_km, 1), "az": round(v.az), "elev": round(v.elev, 1),
+            "alt_ft": int(s.baro_alt_m * 3.28084) if s.baro_alt_m is not None else None,
+            "in_view": in_view(cfg, v)}))
+    return min(hits, key=lambda h: h[0])[1] if hits else None
+
+
 def note_operator(issues: Issues, s: State, route: dict, names: dict[str, dict], airline: bool) -> None:
     """Unbekannte Betreiber und Namen, die nicht zu adsbdb passen: Kandidaten fürs
     Nachpflegen von airlines.json."""
@@ -356,63 +459,92 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
     if any(r[4] for r in tier):
         tier = [r for r in tier if r[4]]
 
-    course = landing_course(cfg, states, cfg.runway_course if prev_course is None else prev_course)
+    course, votes = landing_course_votes(cfg, states, cfg.runway_course if prev_course is None else prev_course)
     seq = await landing_sequence(cfg, states, adsb, names, course)
 
     flights: list[Flight] = []
     for s, v, vis, route, airline in tier[: cfg.max_flights]:
-        ac = await adsb.aircraft(s.icao24)
-        origin, dest = route.get("origin", ""), route.get("dest", "")
-        if not route_plausible(route, s.lat, s.lon):
-            log.info("Route %s %s-%s passt nicht zur Position, verworfen", s.callsign, origin, dest)
-            if issues is not None:
-                issues.note("route_implausible", s.callsign, s.callsign, route=f"{origin}-{dest}",
-                            pos=[round(s.lat, 2), round(s.lon, 2)])
-            origin = dest = ""
-        elif airline and not (origin or dest) and issues is not None:
-            issues.note("route_unknown", callsign_airline(s.callsign) or s.callsign, s.callsign)
-        # Betreiber auch ohne Ziffer im Callsign (BPOBER -> Bundespolizei), nur für den Namen
-        airline_icao = (route.get("airline_icao") or callsign_airline(s.callsign)
-                        or (s.callsign[:3] if s.callsign[:3] in names else ""))
-        # Logo-Code: airlines.json zuerst (Marke statt Tochter-AOC, z. B. Malta Air -> FR;
-        # leer = Logo per ICAO, wenn der IATA-Code doppelt vergeben ist), sonst adsbdb.
-        if not airline:
-            airline_iata = ""
-        elif airline_icao in names:
-            airline_iata = names[airline_icao]["iata"]
-        else:
-            airline_iata = route.get("airline_iata", "")
-        flights.append(Flight(
-            icao24=s.icao24,
-            callsign=s.callsign or s.icao24.upper(),
-            status=classify(s, origin, dest, cfg.local_airport_iata, guess=airline),
-            dist_km=round(v.dist_km, 1),
-            bearing=round(v.az),
-            alt_ft=int(s.baro_alt_m * 3.28084) if s.baro_alt_m is not None else None,
-            speed_kt=int(s.velocity_ms * 1.94384) if s.velocity_ms is not None else None,
-            track=int(s.track_deg) if s.track_deg is not None else None,
-            vrate_fpm=int(s.vrate_ms * 196.85) if s.vrate_ms is not None else None,
-            origin=origin, dest=dest,
-            airline=short_airline(route.get("airline", "") or ac.get("operator", ""), airline_icao, names),
-            airline_icao=airline_icao,
-            airline_iata=airline_iata,
-            actype=s.actype or ac.get("type", ""),
-            kind="airline" if airline else "other",
-            visible=vis > 0,
-            elev_deg=round(v.elev, 1),
-            seq=seq.get(s.icao24),
-        ))
-    for f in flights:
-        if f.seq is not None and f.status != ARR:
-            f.status = ARR          # in der Landefolge, auch wenn die Route nichts sagt
+        flights.append(await _make_flight(cfg, s, v, vis, route, airline, adsb, names, seq, issues))
     # Landende in Landefolge zeigen, damit #1 zuerst kommt
     flights.sort(key=lambda f: (f.seq is None, f.seq or 0))
+
+    # Für den Leerlauf: wann kommt wer ins Sichtfeld, auch über den nächsten Abruf hinaus
+    preds = {s.icao24: predict_entry(cfg, s, course, s.icao24 in seq) for s, v, vis in cands}
     nearby = [{"callsign": s.callsign or s.icao24.upper(), "icao24": s.icao24, "type": s.actype, "az": round(v.az),
                "elev": round(v.elev, 1), "dist_km": round(v.dist_km, 1),
                "alt_ft": int(s.baro_alt_m * 3.28084) if s.baro_alt_m is not None else None,
-               "in_view": ("no", "soon", "now")[vis], "seq": seq.get(s.icao24)} for s, v, vis in cands]
-    return DisplayModel(flights=flights, source="opensky", empty=not flights, nearby=nearby,
-                        landing_course=course)
+               "in_view": ("no", "soon", "now")[vis], "seq": seq.get(s.icao24),
+               "eta_s": round(preds[s.icao24][0]) if preds[s.icao24] else None,
+               "status": ARR if s.icao24 in seq else classify(s, "", "", cfg.local_airport_iata)}
+              for s, v, vis in cands]
+    model = DisplayModel(flights=flights, source="opensky", empty=not flights, nearby=nearby,
+                         landing_course=course, course_votes=votes, alert=find_alert(cfg, states, names))
+
+    # Der nächste, der ins Sichtfeld kommt: große Flugzeuge mit Airline-Callsign zuerst
+    shown = {f.icao24 for f in flights}
+    coming = [(s, v, preds[s.icao24]) for s, v, vis in cands
+              if vis == 0 and s.icao24 not in shown and preds[s.icao24] and preds[s.icao24][0] > 0]
+    if coming:
+        def rank(c):
+            s, _, p = c
+            big = bool(callsign_airline(s.callsign)) or s.category in AIRLINER_CATEGORIES
+            return (not big, p[0])
+        s, v, p = min(coming, key=rank)
+        route = await adsb.route(s.callsign)
+        airline = is_airline(s.callsign, route, names, s.category)
+        if airline or cfg.show_other:
+            model.upcoming = await _make_flight(cfg, s, v, 0, route, airline, adsb, names, seq, None)
+            model.upcoming_eta_s, model.upcoming_az, model.upcoming_via = round(p[0]), round(p[1]), p[2]
+    return model
+
+
+async def _make_flight(cfg: Config, s: State, v: Sighting, vis: int, route: dict, airline: bool,
+                       adsb: AdsbDb, names: dict[str, dict], seq: dict[str, int],
+                       issues: Issues | None) -> Flight:
+    ac = await adsb.aircraft(s.icao24)
+    origin, dest = route.get("origin", ""), route.get("dest", "")
+    if not route_plausible(route, s.lat, s.lon):
+        log.info("Route %s %s-%s passt nicht zur Position, verworfen", s.callsign, origin, dest)
+        if issues is not None:
+            issues.note("route_implausible", s.callsign, s.callsign, route=f"{origin}-{dest}",
+                        pos=[round(s.lat, 2), round(s.lon, 2)])
+        origin = dest = ""
+    elif airline and not (origin or dest) and issues is not None:
+        issues.note("route_unknown", callsign_airline(s.callsign) or s.callsign, s.callsign)
+    # Betreiber auch ohne Ziffer im Callsign (BPOBER -> Bundespolizei), nur für den Namen
+    airline_icao = (route.get("airline_icao") or callsign_airline(s.callsign)
+                    or (s.callsign[:3] if s.callsign[:3] in names else ""))
+    # Logo-Code: airlines.json zuerst (Marke statt Tochter-AOC, z. B. Malta Air -> FR;
+    # leer = Logo per ICAO, wenn der IATA-Code doppelt vergeben ist), sonst adsbdb.
+    if not airline:
+        airline_iata = ""
+    elif airline_icao in names:
+        airline_iata = names[airline_icao]["iata"]
+    else:
+        airline_iata = route.get("airline_iata", "")
+    f = Flight(
+        icao24=s.icao24,
+        callsign=s.callsign or s.icao24.upper(),
+        status=classify(s, origin, dest, cfg.local_airport_iata, guess=airline),
+        dist_km=round(v.dist_km, 1),
+        bearing=round(v.az),
+        alt_ft=int(s.baro_alt_m * 3.28084) if s.baro_alt_m is not None else None,
+        speed_kt=int(s.velocity_ms * 1.94384) if s.velocity_ms is not None else None,
+        track=int(s.track_deg) if s.track_deg is not None else None,
+        vrate_fpm=int(s.vrate_ms * 196.85) if s.vrate_ms is not None else None,
+        origin=origin, dest=dest,
+        airline=short_airline(route.get("airline", "") or ac.get("operator", ""), airline_icao, names),
+        airline_icao=airline_icao,
+        airline_iata=airline_iata,
+        actype=s.actype or ac.get("type", ""),
+        kind="airline" if airline else "other",
+        visible=vis > 0,
+        elev_deg=round(v.elev, 1),
+        seq=seq.get(s.icao24),
+    )
+    if f.seq is not None and f.status != ARR:
+        f.status = ARR          # in der Landefolge, auch wenn die Route nichts sagt
+    return f
 
 
 # ---------------------------------------------------------------- Mock -----
@@ -444,8 +576,34 @@ def mock_model(cfg: Config, seed: int) -> DisplayModel:
             vrate_fpm=(-rnd.randint(500, 1500) if st == ARR else rnd.randint(500, 2500) if st == DEP else 0),
             origin=o, dest=d, airline=al, airline_icao=al_icao, airline_iata=al_iata, actype=typ,
         ))
+    if flights and rnd.random() < 0.25:
+        # ab und zu nur ein Privatflieger: kommt als Leerlauf-Karte, ohne Vorrang
+        p = flights[0]
+        p.callsign, p.kind, p.status, p.actype, p.alt_ft = "DEFGH", "other", OVF, "C172", 2500
+        p.airline = p.airline_icao = p.airline_iata = p.origin = p.dest = ""
+        flights = [p]
     for n, f in enumerate(sorted((f for f in flights if f.status == ARR), key=lambda f: f.dist_km)):
         f.seq = n + 1
-    nearby = [{"callsign": f.callsign, "icao24": f.icao24, "az": f.bearing, "in_view": "now", "seq": f.seq}
+    nearby = [{"callsign": f.callsign, "icao24": f.icao24, "az": f.bearing, "elev": 8.0, "dist_km": f.dist_km,
+               "alt_ft": f.alt_ft, "in_view": "now", "seq": f.seq, "eta_s": 0, "status": f.status}
               for f in flights]
-    return DisplayModel(flights=flights, source="mock", empty=not flights, nearby=nearby)
+    # Weitere Flugzeuge im Radius, außerhalb des Sichtfelds: für Radar und "Nächster"
+    for i in range(rnd.randint(2, 7)):
+        cs, *_ , st = rnd.choice(_MOCK_POOL)
+        nearby.append({"callsign": f"{cs[:3]}{rnd.randint(10, 9999)}", "icao24": f"3d{i:04x}",
+                       "az": rnd.randint(0, 359), "elev": round(rnd.uniform(0.5, 25), 1),
+                       "dist_km": round(rnd.uniform(5, 40), 1), "alt_ft": rnd.randint(2000, 20000),
+                       "in_view": "no", "seq": None, "eta_s": rnd.choice([None, rnd.randint(40, 580)]),
+                       "status": st})
+    model = DisplayModel(flights=flights, source="mock", empty=not flights, nearby=nearby,
+                         landing_course=cfg.runway_course, course_votes=2)
+    if not flights:
+        cs, al_icao, al_iata, al, o, d, typ, st = rnd.choice(_MOCK_POOL)
+        model.upcoming = Flight(icao24="3cffff", callsign=cs, status=st, dist_km=22.0, bearing=250,
+                                alt_ft=4200, speed_kt=210, track=70, vrate_fpm=-800, origin=o, dest=d,
+                                airline=al, airline_icao=al_icao, airline_iata=al_iata, actype=typ,
+                                visible=False)
+        model.upcoming_eta_s = rnd.randint(60, 480)
+        model.upcoming_az = (cfg.view_from + rnd.choice([-5, 5])) % 360
+        model.upcoming_via = "approach" if st == ARR else "track"
+    return model

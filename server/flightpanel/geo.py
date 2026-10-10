@@ -23,6 +23,15 @@ def compass(deg: float) -> str:
     return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][int((deg + 22.5) // 45) % 8]
 
 
+def kompass(deg: float) -> str:
+    """Himmelsrichtung auf Deutsch (O statt E) für die Leerlauf-Karten."""
+    return ["N", "NO", "O", "SO", "S", "SW", "W", "NW"][int((deg + 22.5) // 45) % 8]
+
+
+RICHTUNG = {"N": "Norden", "NO": "Nordosten", "O": "Osten", "SO": "Südosten",
+            "S": "Süden", "SW": "Südwesten", "W": "Westen", "NW": "Nordwesten"}
+
+
 def destination(lat: float, lon: float, bearing: float, dist_km: float) -> tuple[float, float]:
     """Punkt in dist_km Entfernung in Richtung bearing (Koppelnavigation)."""
     p1, l1, b = math.radians(lat), math.radians(lon), math.radians(bearing)

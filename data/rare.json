@@ -1,0 +1,40 @@
+{
+  "_comment": "Seltene Vögel für die Leerlauf-Karte: ICAO-Typcodes (adsb.lol 't') und Callsign-Anfänge. Überall im Abrufradius (SCAN_RADIUS_KM), auch außerhalb des Sichtfelds. Typen sind die ersten 2 min dringend, Regierung/Militär nur normal (die Flugbereitschaft ist am BER zu Hause).",
+  "types": {
+    "A388": "A380",
+    "A124": "An-124",
+    "A225": "An-225",
+    "AN22": "An-22",
+    "A3ST": "Beluga",
+    "A337": "BelugaXL",
+    "BLCF": "Dreamlifter",
+    "B748": "Jumbo 747-8",
+    "C5M": "C-5 Galaxy",
+    "IL76": "Il-76",
+    "E3TF": "AWACS",
+    "E3CF": "AWACS",
+    "B52": "B-52",
+    "DC3": "DC-3",
+    "C47": "Rosinenbomber",
+    "JU52": "Ju 52",
+    "CONC": "Concorde"
+  },
+  "callsigns": {
+    "GAF": "Luftwaffe",
+    "GAM": "Heer",
+    "GNY": "Marine",
+    "AF1": "Air Force One",
+    "SAM": "US-Regierung",
+    "RCH": "US Air Force",
+    "RRR": "Royal Air Force",
+    "CTM": "Franz. Luftwaffe",
+    "FAF": "Franz. Luftwaffe",
+    "IAM": "Ital. Luftwaffe",
+    "PLF": "Poln. Luftwaffe",
+    "BAF": "Belg. Luftwaffe",
+    "NAF": "Niederl. Luftwaffe",
+    "SVF": "Schwed. Luftwaffe",
+    "CFC": "Kanad. Streitkräfte",
+    "NATO": "NATO"
+  }
+}

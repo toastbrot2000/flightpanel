@@ -209,7 +209,7 @@ data/
 
 **Helligkeitsplan:** `BRIGHTNESS_DAY` (90), `BRIGHTNESS_EVENING` (35), `QUIET_HOURS` → 0. Der ESP32 übernimmt den Wert aus dem Frame-Header und deckelt bei `MAX_BRIGHTNESS`.
 
-**Ausfälle:** OpenSky weg → letztes Modell behalten, nach 2 Minuten gedimmt (`stale`), nach 10 Minuten leer (Uhr). adsbdb weg → Flüge ohne Route. Logo-CDN weg → Layout A ohne Logo, nächster Versuch nach 10 Minuten.
+**Ausfälle:** OpenSky weg → letztes Modell behalten, nach 2 Minuten gedimmt (`stale`), nach 10 Minuten leer (Leerlauf-Karten, die keine frischen Flugdaten brauchen). METAR oder ISS-Bahndaten weg → deren Karten fallen weg, die anderen bleiben. adsbdb weg → Flüge ohne Route. Logo-CDN weg → Layout A ohne Logo, nächster Versuch nach 10 Minuten.
 
 ### 5.3 Schnittstelle Server → ESP32
 
@@ -288,7 +288,7 @@ Drei Zeilen à 11 px bei 32 px Höhe, Schrift DejaVu Sans (Bold 12 für Zeile 1,
 
 **Layout B (zwei Flüge):** je eine Zeile pro Flug: Pfeil, Airline, Flughafen, Höhe, Typ.
 
-Farben: Ankunft amber, Abflug grün, Überflug blau, Infozeilen hellblau, Typ grau. Kein Weiß als Textfarbe. Sind zwei oder mehr Flugzeuge im Sichtfeld, schrumpft das Logo auf 26 × 26 und darunter steht eine Punktreihe: ein Punkt pro Flugzeug, von links nach rechts wie vom Fenster aus gesehen; der gezeigte Flug leuchtet hell. Bei zwei Flügen im Modell wechseln A und C nach jedem Durchlauf der drei Infoseiten (12 s) zum nächsten Flug. Leer: Uhr und Datum.
+Farben: Ankunft amber, Abflug grün, Überflug blau, Infozeilen hellblau, Typ grau. Kein Weiß als Textfarbe. Sind zwei oder mehr Flugzeuge im Sichtfeld, schrumpft das Logo auf 26 × 26 und darunter steht eine Punktreihe: ein Punkt pro Flugzeug, von links nach rechts wie vom Fenster aus gesehen; der gezeigte Flug leuchtet hell. Bei zwei Flügen im Modell wechseln A und C nach jedem Durchlauf der drei Infoseiten (12 s) zum nächsten Flug. Ist keine Airline im Sichtfeld, wechseln Leerlauf-Karten (Uhr, nächster Flieger, Radar, Landerichtung, Wetter, Statistik, ISS, Witze; Privatflieger sind eine Karte davon), siehe README.
 
 Alle drei Layouts sind in `render.py` je 20 Zeilen. Anpassen, Container neu starten, Browser-Vorschau, fertig.
 

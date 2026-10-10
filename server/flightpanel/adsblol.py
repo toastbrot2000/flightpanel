@@ -54,6 +54,7 @@ def parse(ac: dict) -> State | None:
         geo_alt_m=geom * FT if geom is not None else None,
         actype=str(ac.get("t") or "").upper(),
         category=str(ac.get("category") or "").upper(),
+        squawk=str(ac.get("squawk") or ""),
     )
 
 

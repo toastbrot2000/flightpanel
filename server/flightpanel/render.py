@@ -7,29 +7,27 @@ Layouts (LAYOUT in .env):
   auto C wenn für den Flug ein Logo da ist, sonst A
 
 Bei mehreren Flügen wechseln A und C nach jedem Durchlauf der Infozeilen
-zum nächsten Flug (nächster zuerst). Leer: Uhr.
+zum nächsten Flug (nächster zuerst). Sonst Leerlauf-Karten (idle.py, cards.py):
+Uhr, nächster Flieger, Radar, Statistik, Wetter, ISS, Privatflieger, Witze ...
 """
 
 import io
+from dataclasses import replace
 from datetime import datetime
 
 from PIL import Image
 
-from .config import Config
-from .fonts import FONT_BIG, FONT_CLOCK, FONT_MID, FONT_SMALL
+from .cards import CARDS
+from .colors import ARR_C, CLOCK, DEP_C, INFO, MUTED, OVF_C, dim
+from .config import Config, in_hours
+from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from .geo import compass
+from .idle import IdleScreen
 from .logos import LogoStore
 from .model import ARR, DEP, DisplayModel, Flight
 
-# Satte Farben, kein Weiß als Textfarbe (Strom, Blendung).
-COLORS = {
-    ARR: (255, 120, 0),
-    DEP: (0, 210, 70),
-    "OVF": (70, 120, 230),
-}
-INFO = (120, 150, 230)
-MUTED = (150, 150, 150)
-CLOCK = (140, 70, 0)
+# Satte Farben, kein Weiß als Textfarbe (Strom, Blendung), siehe colors.py.
+COLORS = {ARR: ARR_C, DEP: DEP_C, "OVF": OVF_C}
 STALE_FACTOR = 0.4
 
 PROTO_VERSION = 1
@@ -44,8 +42,7 @@ DOT_DIM = 0.3
 LOGO_WITH_DOTS = 26
 
 
-def _dim(c: tuple[int, int, int], f: float) -> tuple[int, int, int]:
-    return tuple(max(0, min(255, int(v * f))) for v in c)
+_dim = dim
 
 
 def status_glyph(f: Flight) -> str:
@@ -84,10 +81,15 @@ def info_pages(f: Flight) -> list[str]:
 
 
 class Renderer:
-    def __init__(self, cfg: Config, logos: LogoStore):
+    def __init__(self, cfg: Config, logos: LogoStore, idle: IdleScreen | None = None):
         self.cfg = cfg
         self.logos = logos
         self._grid_cache: dict[int, Image.Image] = {}
+        if idle is None:
+            idle = IdleScreen(cfg, CARDS, logos=logos)
+        if idle.providers.get("draw_flight") is None:
+            idle.providers["draw_flight"] = self.draw_flight
+        self.idle = idle
 
     # ---------------------------------------------------------------- API --
     def _pick(self, model: DisplayModel, now: float) -> tuple[Flight, int]:
@@ -97,30 +99,45 @@ class Renderer:
         idx = (tick // n_pages) % len(model.flights)
         return model.flights[idx], tick % n_pages
 
-    def render(self, model: DisplayModel, now: float) -> Image.Image:
+    def render(self, model: DisplayModel, now: float, card: str | None = None) -> Image.Image:
+        """Notfall-Squawk vor allem; dann Airline-Flüge; sonst Leerlauf-Karten, zu denen
+        auch Privatflieger, Hubschrauber und Militär im Sichtfeld gehören (ohne Vorrang).
+        card erzwingt eine Leerlauf-Karte (Vorschau)."""
         W, H = self.cfg.width, self.cfg.height
         img = Image.new("RGB", (W, H), (0, 0, 0))
         f = STALE_FACTOR if model.stale else 1.0
 
-        if model.empty or not model.flights:
-            self._clock(img, now, f)
+        if card:
+            self.idle.draw(img, model, now, f, force=card, preview=True)
             return img
+        if model.alert and not model.stale and "alert" not in self.cfg.idle_disabled:
+            self.idle.draw(img, model, now, f, force="alert")
+            return img
+        airline = [fl for fl in model.flights if fl.kind == "airline"]
+        if model.empty or not airline:
+            self.idle.draw(img, model, now, f)
+            return img
+        if len(airline) != len(model.flights):
+            model = replace(model, flights=airline)
 
-        layout = self.cfg.layout
-        if layout == "B":
+        if self.cfg.layout == "B":
             self._layout_b(img, model, now, f)
             return img
-
         fl, page = self._pick(model, now)
+        self.draw_flight(img, model, fl, page, f)
+        return img
+
+    def draw_flight(self, img: Image.Image, model: DisplayModel, fl: Flight, page: int, f: float) -> None:
+        """Ein Flug in Layout C (mit Logo) oder A; B zeigt einzelne Flüge wie auto."""
         logo = self.logos.get(fl.airline_iata, fl.airline_icao)
         dots = self._sky_dots(model, fl)
-        if layout == "AUTO":
+        layout = self.cfg.layout
+        if layout in ("AUTO", "B"):
             layout = "C" if logo is not None else "A"
         if layout == "C" and logo is not None:
             self._layout_c(img, fl, page, logo, f, dots)
         else:
             self._layout_a(img, fl, page, f, dots)
-        return img
 
     def _sky_dots(self, model: DisplayModel, fl: Flight) -> list[tuple[tuple[int, int, int], bool]]:
         """(Statusfarbe, ist der gezeigte Flug) für jeden Flug im Wechsel, der im
@@ -172,15 +189,6 @@ class Renderer:
         return buf.getvalue()
 
     # ------------------------------------------------------------ Layouts --
-    def _clock(self, img: Image.Image, now: float, f: float) -> None:
-        t = datetime.fromtimestamp(now)
-        txt = t.strftime("%H:%M")
-        w = FONT_CLOCK.text_width(txt)
-        FONT_CLOCK.draw(img, (img.width - w) // 2, 3, txt, _dim(CLOCK, f))
-        date = f"{WEEKDAYS[t.weekday()]} {t.strftime('%d.%m.')}"
-        w2 = FONT_SMALL.text_width(date)
-        FONT_SMALL.draw(img, (img.width - w2) // 2, 22, date, _dim(MUTED, 0.6 * f))
-
     def _layout_c(self, img: Image.Image, fl: Flight, page: int, logo: Image.Image, f: float,
                   dots=()) -> None:
         if f < 1.0:
@@ -265,14 +273,9 @@ def brightness_for(cfg: Config, now: float) -> int:
     """Helligkeit nach Uhrzeit. Quiet Hours -> 0 (Panel schwarz)."""
     t = datetime.fromtimestamp(now)
     minute = t.hour * 60 + t.minute
-
-    def inside(rng: tuple[int, int]) -> bool:
-        a, b = rng
-        return a <= minute < b if a <= b else (minute >= a or minute < b)
-
-    if inside(cfg.quiet_hours):
+    if in_hours(cfg.quiet_hours, minute):
         return 0
-    if inside(cfg.day_hours):
+    if in_hours(cfg.day_hours, minute):
         return cfg.brightness_day
     return cfg.brightness_evening
 

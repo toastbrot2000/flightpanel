@@ -3,7 +3,7 @@ Antialiasing gerendert und dann hart geschwellt (THRESHOLD), das ergibt
 saubere 1-Bit-Glyphen wie bei einem Pixelfont, aber mit proportionalen
 Breiten. Fallback ist Pillows eingebaute Schrift.
 
-Die Pfeile ↑ ↓ → werden nicht aus der Schrift genommen, sondern als feste
+Die Pfeile ↑ ↓ → ← werden nicht aus der Schrift genommen, sondern als feste
 Pixelmuster gezeichnet, damit sie bei 10 px nicht zu Matsch werden."""
 
 import logging
@@ -39,6 +39,7 @@ _ARROWS = {
     "↑": ["..#..", ".###.", "#.#.#", "..#..", "..#..", "..#..", "..#.."],
     "↓": ["..#..", "..#..", "..#..", "..#..", "#.#.#", ".###.", "..#.."],
     "→": [".......", "...#...", "....#..", "#######", "....#..", "...#...", "......."],
+    "←": [".......", "...#...", "..#....", "#######", "..#....", "...#...", "......."],
 }
 _ARROW_GAP = 1
 
