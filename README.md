@@ -65,7 +65,9 @@ Bis zu `MAX_FLIGHTS` Flüge wechseln sich ab. Sind mindestens zwei Flugzeuge im 
 
 Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen `az` und `elev` ablesen. `seq` ist der Platz in der Landefolge.
 
-Routen von adsbdb sind pro Callsign gespeichert, und Airlines verwenden Callsigns für andere Strecken weiter. Liegt das Flugzeug weit neben der gespeicherten Strecke, verwirft der Server die Route und zeigt das Callsign.
+**Routen**, der Reihe nach: adsb.im (der Routendienst hinter den tar1090-Karten, aktuell, eine Abfrage für alle Flüge), dann adsbdb. Beide speichern Routen pro Callsign, und Airlines verwenden Callsigns für andere Strecken weiter; liegt das Flugzeug weit neben der Strecke, verwirft der Server sie. Kennt keine Quelle den Flug, sucht der Server für gezeigte Flüge den Abflughafen aus der OpenSky-Flugspur: Beginnt sie tief, ist der nächste Linienflughafen (`data/airports.json`, aus OurAirports) der Start. Landende enden am eigenen Platz. `ADSBIM=0`, `TRACK_ORIGIN=0` schalten ab.
+
+**Zeile 2** zeigt die Route, sonst was der Flug ist (Luftrettung, Polizei, Kleinflugzeug, Hubschrauber, aus `airlines.json` mit `"label"`, ADS-B-Kategorie oder deutschem Kennzeichen), sonst bei Landung `?→BER`, bei Start `BER→?`, sonst nichts. Nichts steht doppelt: Das Rufzeichen fällt aus den wechselnden Infoseiten, wenn es oben schon steht. Privatflieger heißen nach ihrem Kennzeichen (D-EHGB), Rettungshubschrauber nach ihrer Nummer (Christoph 31); Halternamen kommen nie aufs Panel.
 
 ## Leerlauf: wenn keine Airline im Sichtfeld ist
 
@@ -145,7 +147,7 @@ Der Server sammelt im Betrieb, was nachgepflegt oder angesehen werden sollte, mi
 | `unknown_operator` | Betreibercode nicht in `airlines.json` | eintragen (Name, Logo-Code), `"airline": false` für Rettung/Polizei/Militär |
 | `name_mismatch` | unser Name passt nicht zu adsbdb | meist alte Daten bei adsbdb (SDR = Sundair), sonst Fehler bei uns |
 | `route_implausible` | adsbdb-Route passt nicht zur Position, verworfen | nichts, zur Kontrolle |
-| `route_unknown` | gezeigter Airline-Flug ohne Route | nichts, adsbdb kennt den Callsign nicht |
+| `route_unknown` | gezeigter Airline-Flug ohne Route | nichts, weder adsb.im noch adsbdb noch die Flugspur kennen ihn |
 | `source_error`, `rate_limit`, `fallback` | Fehler, HTTP 429, OpenSky eingesprungen | bei Häufung `POLL_INTERVAL` erhöhen |
 | `stale` | Bild gedimmt oder leer mangels Daten | Quellen prüfen |
 | `esp32_gap` | ESP32 hat länger keinen Frame geholt | WLAN, Stromversorgung |

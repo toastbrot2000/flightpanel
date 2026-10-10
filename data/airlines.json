@@ -136,7 +136,7 @@
   "PAC": {"name": "Polar Air", "iata": ""},
   "NCA": {"name": "Nippon Cargo", "iata": "KZ"},
   "ADB": {"name": "Antonov", "iata": ""},
-  "GAF": {"name": "Luftwaffe", "iata": "", "airline": false},
-  "BPO": {"name": "Bundespolizei", "iata": "", "airline": false},
-  "CHX": {"name": "Rettungsheli", "iata": "", "airline": false}
+  "GAF": {"name": "Luftwaffe", "iata": "", "airline": false, "label": "Militär"},
+  "BPO": {"name": "Bundespolizei", "iata": "", "airline": false, "label": "Polizei"},
+  "CHX": {"name": "Christoph", "iata": "", "airline": false, "label": "Luftrettung", "number": true}
 }

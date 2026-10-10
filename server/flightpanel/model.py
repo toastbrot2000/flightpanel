@@ -14,6 +14,7 @@ import time
 from dataclasses import asdict, dataclass, field
 
 from .adsbdb import AdsbDb
+from .aircraft import describe
 from .config import Config
 from .geo import bearing_deg, destination, elevation_deg, haversine_km
 from .issues import Issues, names_match
@@ -53,6 +54,7 @@ class Flight:
     visible: bool = True        # im Sichtfeld, jetzt oder bis zum nächsten Abruf
     elev_deg: float | None = None  # Höhenwinkel über dem Horizont
     seq: int | None = None      # Platz in der Landefolge (1 = landet als nächstes)
+    label: str = ""             # ohne Airline: was es ist (Luftrettung, Kleinflugzeug ...)
 
     @property
     def other_airport(self) -> str:
@@ -132,7 +134,8 @@ def load_airlines(data_dir: str) -> dict[str, dict]:
         if isinstance(v, str):
             v = {"name": v, "iata": ""}
         out[k.upper()] = {"name": v.get("name", ""), "iata": (v.get("iata") or "").upper(),
-                          "airline": bool(v.get("airline", True))}
+                          "airline": bool(v.get("airline", True)), "label": v.get("label", ""),
+                          "number": bool(v.get("number", False))}
     return out
 
 
@@ -345,7 +348,7 @@ NOT_RUNWAY_CATEGORIES = {"A7", "B1", "B2", "B3", "B4", "B6", "B7"}
 
 
 async def landing_sequence(cfg: Config, states: list[State], adsb: AdsbDb, names: dict[str, dict],
-                           course: float) -> dict[str, int]:
+                           course: float, route_for=None) -> dict[str, int]:
     """icao24 -> Platz in der Landefolge, nach geschätzter Zeit bis zum Aufsetzen.
     Zählt alles, was die Piste braucht, auch Businessjets (BFX1073), damit #2 der
     zweite Flieger am Himmel ist. Nicht: Kennzeichen-Callsigns (Privatflieger landen
@@ -360,7 +363,7 @@ async def landing_sequence(cfg: Config, states: list[State], adsb: AdsbDb, names
             continue
         if haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon) > 45:
             continue
-        route = await adsb.route(s.callsign)
+        route = await (route_for(s) if route_for else adsb.route(s.callsign))
         if not route_plausible(route, s.lat, s.lon):
             route = {}
         if not is_arrival(cfg, s, route):
@@ -425,10 +428,30 @@ def note_operator(issues: Issues, s: State, route: dict, names: dict[str, dict],
 
 async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dict[str, dict],
                       horizon_s: float = 0, prev_course: float | None = None,
-                      issues: Issues | None = None) -> DisplayModel:
+                      issues: Issues | None = None, adsbim=None, origins=None) -> DisplayModel:
     """horizon_s: Zeit bis zum nächsten Abruf, für die Sichtfeld-Vorschau.
     prev_course: Landerichtung vom letzten Abruf, falls gerade niemand landet.
-    issues: sammelt Auffälligkeiten (unbekannte Betreiber, verworfene Routen)."""
+    issues: sammelt Auffälligkeiten (unbekannte Betreiber, verworfene Routen).
+    adsbim, origins: weitere Routenquellen (adsbim.py, origins.py), optional."""
+    # Routen: adsb.im zuerst, eine Abfrage für alle Airline-Callsigns (aktueller als
+    # adsbdb, das Callsigns für alte Strecken behält). adsbdb liefert Airline-Namen
+    # und -Codes und die Route, wenn adsb.im den Flug nicht kennt.
+    im: dict[str, dict] = {}
+    if adsbim is not None:
+        # nur, wer eine Route brauchen kann: im Anzeigeradius oder in der Landefolge
+        # (45 km um den Platz), nicht der ganze Statistik-Abruf (SCAN_RADIUS_KM)
+        im = await adsbim.routes([(s.callsign, s.lat, s.lon) for s in states
+                                  if not s.on_ground and callsign_airline(s.callsign)
+                                  and (haversine_km(cfg.home_lat, cfg.home_lon, s.lat, s.lon) <= cfg.radius_km
+                                       or haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon) <= 45)])
+
+    async def route_for(s: State) -> dict:
+        route = await adsb.route(s.callsign)
+        alt = im.get(s.callsign)
+        if alt and route_plausible(alt, s.lat, s.lon):
+            return {**route, **alt}
+        return route
+
     cands: list[tuple[State, Sighting, int]] = []
     for s in states:
         if s.on_ground:
@@ -445,7 +468,7 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
     # Airline oder nicht braucht die Route (adsbdb, gecacht), deshalb nur für die vordersten.
     ranked = []
     for s, v, vis in pool[:SHORTLIST]:
-        route = await adsb.route(s.callsign)
+        route = await route_for(s)
         airline = is_airline(s.callsign, route, names, s.category)
         if issues is not None:
             note_operator(issues, s, route, names, airline)
@@ -460,11 +483,11 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
         tier = [r for r in tier if r[4]]
 
     course, votes = landing_course_votes(cfg, states, cfg.runway_course if prev_course is None else prev_course)
-    seq = await landing_sequence(cfg, states, adsb, names, course)
+    seq = await landing_sequence(cfg, states, adsb, names, course, route_for)
 
     flights: list[Flight] = []
     for s, v, vis, route, airline in tier[: cfg.max_flights]:
-        flights.append(await _make_flight(cfg, s, v, vis, route, airline, adsb, names, seq, issues))
+        flights.append(await _make_flight(cfg, s, v, vis, route, airline, adsb, names, seq, issues, origins))
     # Landende in Landefolge zeigen, damit #1 zuerst kommt
     flights.sort(key=lambda f: (f.seq is None, f.seq or 0))
 
@@ -490,17 +513,17 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
             big = bool(callsign_airline(s.callsign)) or s.category in AIRLINER_CATEGORIES
             return (not big, p[0])
         s, v, p = min(coming, key=rank)
-        route = await adsb.route(s.callsign)
+        route = await route_for(s)
         airline = is_airline(s.callsign, route, names, s.category)
         if airline or cfg.show_other:
-            model.upcoming = await _make_flight(cfg, s, v, 0, route, airline, adsb, names, seq, None)
+            model.upcoming = await _make_flight(cfg, s, v, 0, route, airline, adsb, names, seq, None, origins)
             model.upcoming_eta_s, model.upcoming_az, model.upcoming_via = round(p[0]), round(p[1]), p[2]
     return model
 
 
 async def _make_flight(cfg: Config, s: State, v: Sighting, vis: int, route: dict, airline: bool,
                        adsb: AdsbDb, names: dict[str, dict], seq: dict[str, int],
-                       issues: Issues | None) -> Flight:
+                       issues: Issues | None, origins=None) -> Flight:
     ac = await adsb.aircraft(s.icao24)
     origin, dest = route.get("origin", ""), route.get("dest", "")
     if not route_plausible(route, s.lat, s.lon):
@@ -509,7 +532,15 @@ async def _make_flight(cfg: Config, s: State, v: Sighting, vis: int, route: dict
             issues.note("route_implausible", s.callsign, s.callsign, route=f"{origin}-{dest}",
                         pos=[round(s.lat, 2), round(s.lon, 2)])
         origin = dest = ""
-    elif airline and not (origin or dest) and issues is not None:
+    # Herkunft aus der Flugspur, wenn keine Datenbank sie kennt (EJU9047: Spur beginnt
+    # in Orly). Nur für gezeigte Flüge mit Betreiber-Callsign; Landende enden hier.
+    if not origin and origins is not None and callsign_airline(s.callsign):
+        o = await origins.origin(s.icao24, s.callsign)
+        if o:
+            origin = o["origin"]
+            if not dest and s.icao24 in seq:
+                dest = cfg.local_airport_iata
+    if airline and not (origin or dest) and issues is not None:
         issues.note("route_unknown", callsign_airline(s.callsign) or s.callsign, s.callsign)
     # Betreiber auch ohne Ziffer im Callsign (BPOBER -> Bundespolizei), nur für den Namen
     airline_icao = (route.get("airline_icao") or callsign_airline(s.callsign)
@@ -522,6 +553,13 @@ async def _make_flight(cfg: Config, s: State, v: Sighting, vis: int, route: dict
         airline_iata = names[airline_icao]["iata"]
     else:
         airline_iata = route.get("airline_iata", "")
+    # Name und Bezeichnung: Airlines aus airlines.json oder adsbdb; sonst Betreiber
+    # (Christoph 31, Bundespolizei) oder Kennzeichen, dazu was es ist. Nie der Halter
+    # aus adsbdb: bei Privatflugzeugen eine Privatperson.
+    if airline:
+        name, label = short_airline(route.get("airline", "") or ac.get("operator", ""), airline_icao, names), ""
+    else:
+        name, label = describe(s.callsign, s.category, s.registration, names)
     f = Flight(
         icao24=s.icao24,
         callsign=s.callsign or s.icao24.upper(),
@@ -533,7 +571,7 @@ async def _make_flight(cfg: Config, s: State, v: Sighting, vis: int, route: dict
         track=int(s.track_deg) if s.track_deg is not None else None,
         vrate_fpm=int(s.vrate_ms * 196.85) if s.vrate_ms is not None else None,
         origin=origin, dest=dest,
-        airline=short_airline(route.get("airline", "") or ac.get("operator", ""), airline_icao, names),
+        airline=name,
         airline_icao=airline_icao,
         airline_iata=airline_iata,
         actype=s.actype or ac.get("type", ""),
@@ -541,6 +579,7 @@ async def _make_flight(cfg: Config, s: State, v: Sighting, vis: int, route: dict
         visible=vis > 0,
         elev_deg=round(v.elev, 1),
         seq=seq.get(s.icao24),
+        label=label,
     )
     if f.seq is not None and f.status != ARR:
         f.status = ARR          # in der Landefolge, auch wenn die Route nichts sagt

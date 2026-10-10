@@ -24,12 +24,14 @@ import aiohttp
 from aiohttp import web
 
 from .adsbdb import AdsbDb, Cache
+from .adsbim import AdsbIm
 from .adsblol import AdsbLol, Paused
 from .astro import Iss
 from .cards import CARDS
 from .config import CFG, Config
 from .idle import IdleScreen
 from .issues import Issues
+from .origins import Origins, load_airports
 from .logos import make_logo_store
 from .metar import MetarSource
 from .model import DisplayModel, build_model, load_airlines, mock_model
@@ -167,7 +169,7 @@ class App:
                     self.model = await build_model(self.cfg, states, self.adsb, self.names,
                                                    horizon_s=self.refresh_period(),
                                                    prev_course=self.model.landing_course,
-                                                   issues=self.issues)
+                                                   issues=self.issues, adsbim=self.adsbim, origins=self.origins)
                     self.counters[self.active_source] += 1
                     await self._observe(states, t0)
                     log.info("%s: %d empfangen, %d im Radius, %d im Sichtfeld, angezeigt: %s. "
@@ -347,6 +349,8 @@ class App:
                 "last_error": self.opensky.last_error,
             },
             "adsbdb_last_error": self.adsb.last_error if self.adsb else None,
+            "adsbim_last_error": self.adsbim.last_error if getattr(self, "adsbim", None) else None,
+            "track_last_error": self.origins.last_error if getattr(self, "origins", None) else None,
             "cache_entries": len(self.cache),
             "issues": self.issues.report()["counts"],
             "metar": None if not self.metar else {
@@ -379,6 +383,17 @@ class App:
         self.adsb = AdsbDb(self.session, self.cfg.adsbdb_base, self.cache)
         self.adsblol = AdsbLol(self.session)
         self.adsb.issues = self.issues
+        self.adsbim = AdsbIm(self.session, self.cache) if self.cfg.route_adsbim else None
+        self.origins = (Origins(self.session, self.cache, load_airports(self.cfg.data_dir))
+                        if self.cfg.track_origin else None)
+        for src in (self.adsbim, self.origins):
+            if src is not None:
+                src.issues = self.issues
+        if self.origins is not None and not self.opensky.anonymous:
+            async def opensky_auth() -> dict:
+                await self.opensky._ensure_token()
+                return {"Authorization": f"Bearer {self.opensky._token}"} if self.opensky._token else {}
+            self.origins.auth = opensky_auth
         if self.metar:
             self.metar.session = self.session
         if self.iss:

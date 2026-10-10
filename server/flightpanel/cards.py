@@ -16,6 +16,7 @@ from datetime import datetime
 
 from PIL import Image
 
+from .aircraft import second_line, shown_elsewhere
 from . import sprites
 from .astro import hhmm, sun_day
 from .colors import (ARR_C, BAND, CLOCK, CYAN, DEP_C, GOLD, HORIZON, INFO, MUTED, OVF_C, PINK, RED,
@@ -168,9 +169,13 @@ def next_draw(img, ctx, d, t_in, f):
     glyph = "↓" if fl.status == ARR else "↑" if fl.status == DEP else "→"
     W = img.width
     head = f"{glyph} {fl.airline or fl.callsign}"
-    FONT_BIG.draw(img, 0, ROW1, FONT_BIG.fit(head, W - 30), dim(col, f))
+    # Der Name geht vor: "Nächster" nur, wenn beides passt ("in ~3 min" sagt es auch)
     lab = "Nächster"
-    FONT_SMALL.draw(img, W - FONT_SMALL.text_width(lab), ROW1 + 1, lab, dim(MUTED, 0.7 * f))
+    lw = FONT_SMALL.text_width(lab) + 4
+    show_lab = FONT_BIG.text_width(head) + lw <= W
+    FONT_BIG.draw(img, 0, ROW1, FONT_BIG.fit(head, W - (lw if show_lab else 0)), dim(col, f))
+    if show_lab:
+        FONT_SMALL.draw(img, W - FONT_SMALL.text_width(lab), ROW1 + 1, lab, dim(MUTED, 0.7 * f))
     when = "gleich" if eta < 45 else f"in ~{minutes(eta)}"
     FONT_MID.draw(img, 0, ROW2, when, dim(INFO, f))
     if az is not None:
@@ -178,8 +183,9 @@ def next_draw(img, ctx, d, t_in, f):
         where = f"{arrow} {kompass(az)}".strip() if arrow else f"aus {kompass(az)}"
         if not (eta < NEXT_URGENT_S / 3 and not blink(ctx.now)):
             FONT_MID.draw(img, W - FONT_MID.text_width(where), ROW2, where, dim(GOLD, f))
-    route = f"{fl.origin or '---'}→{fl.dest or '---'}" if (fl.origin or fl.dest) else ""
-    bottom = route or fl.callsign
+    # Route, sonst was der Flug ist, sonst ?→BER; das Rufzeichen nur, wenn es oben nicht steht
+    bottom = (second_line(fl.origin, fl.dest, fl.status, fl.label, ctx.cfg.local_airport_iata)
+              or ("" if shown_elsewhere(fl.callsign, head) else fl.callsign))
     line(img, 0, ROW3, bottom, MUTED, f, W - (FONT_MID.text_width(fl.actype) + 6 if fl.actype else 0))
     if fl.actype:
         right(img, FONT_MID, ROW3, fl.actype, MUTED, 0.7 * f)

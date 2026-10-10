@@ -32,6 +32,7 @@ class State:
     actype: str = ""        # ICAO-Typ, nur von adsb.lol
     category: str = ""      # ADS-B-Kategorie, nur von adsb.lol (A7 = Hubschrauber)
     squawk: str = ""        # Transpondercode, 7700/7600/7500 = Notfall
+    registration: str = ""  # Kennzeichen, nur von adsb.lol
 
 
 class OpenSky:

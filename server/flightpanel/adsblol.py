@@ -55,6 +55,7 @@ def parse(ac: dict) -> State | None:
         actype=str(ac.get("t") or "").upper(),
         category=str(ac.get("category") or "").upper(),
         squawk=str(ac.get("squawk") or ""),
+        registration=str(ac.get("r") or "").strip().upper(),
     )
 
 

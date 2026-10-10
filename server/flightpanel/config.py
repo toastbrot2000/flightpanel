@@ -66,6 +66,10 @@ class Config:
     # bei Fehlern springt OpenSky ein. SOURCE=opensky: nur OpenSky.
     mock: bool = _on("MOCK", "0")
     source: str = _env("SOURCE", "adsblol").lower()
+    # Routen: adsb.im zuerst (ADSBIM=0 schaltet ab), dann adsbdb; ohne Route der
+    # Abflughafen aus der OpenSky-Flugspur (TRACK_ORIGIN=0 schaltet ab).
+    route_adsbim: bool = _env("ADSBIM", "1") in ("1", "true", "yes")
+    track_origin: bool = _env("TRACK_ORIGIN", "1") in ("1", "true", "yes")
     opensky_client_id: str = _env("OPENSKY_CLIENT_ID", "")
     opensky_client_secret: str = _env("OPENSKY_CLIENT_SECRET", "")
     poll_interval: int = int(_env("POLL_INTERVAL", "30"))

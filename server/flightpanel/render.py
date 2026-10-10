@@ -17,6 +17,7 @@ from datetime import datetime
 
 from PIL import Image
 
+from .aircraft import second_line, shown_elsewhere
 from .cards import CARDS
 from .colors import ARR_C, CLOCK, DEP_C, INFO, MUTED, OVF_C, dim
 from .config import Config, in_hours
@@ -57,18 +58,13 @@ def alt_text(f: Flight) -> str:
     return f"{(f.alt_ft // 100) * 100}ft"
 
 
-def route_text(f: Flight) -> str:
-    if not (f.origin or f.dest):
-        return ""
-    return f"{f.origin or '---'}→{f.dest or '---'}"
-
-
 WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 
 
-def info_pages(f: Flight) -> list[str]:
+def info_pages(f: Flight, hide_callsign: bool = False) -> list[str]:
     """Die Zeilen, die unten durchwechseln (max. ~15 Zeichen bei 94 px).
-    Fehlende Daten lassen die Seite weg."""
+    Fehlende Daten lassen die Seite weg; das Rufzeichen auch, wenn es schon
+    oben steht (nichts doppelt)."""
     pages: list[str] = []
     if f.alt_ft is not None:
         vr = "↑" if (f.vrate_fpm or 0) > 300 else "↓" if (f.vrate_fpm or 0) < -300 else ""
@@ -76,7 +72,8 @@ def info_pages(f: Flight) -> list[str]:
         pages.append(f"{alt_text(f)}{vr}{spd}")
     trk = f" Kurs {compass(f.track)}" if f.track is not None else ""
     pages.append(f"{int(f.dist_km)}km {compass(f.bearing)}{trk}")
-    pages.append(f.callsign)
+    if not hide_callsign:
+        pages.append(f.callsign)
     return pages
 
 
@@ -209,38 +206,45 @@ class Renderer:
         name = fl.airline or fl.callsign
         FONT_BIG.draw(img, x0, ROW1, FONT_BIG.fit(f"{status_glyph(fl)} {name}", avail), col)
 
-        # Zeile 2: Route, rechtsbündig der Typ
-        route = route_text(fl) or fl.callsign
+        # Zeile 2: Route, sonst was der Flug ist, sonst ?→BER; rechtsbündig der Typ
+        route = second_line(fl.origin, fl.dest, fl.status, fl.label, self.cfg.local_airport_iata)
         FONT_MID.draw(img, x0, ROW2, route, _dim(INFO, f))
         if fl.actype:
             tw = FONT_MID.text_width(fl.actype)
             if x0 + FONT_MID.text_width(route) + 8 + tw <= img.width:
                 FONT_MID.draw(img, img.width - tw, ROW2, fl.actype, _dim(MUTED, f))
 
-        # Zeile 3: wechselnde Info
-        pages = info_pages(fl)
+        # Zeile 3: wechselnde Info, ohne das Rufzeichen, wenn es oben schon steht
+        pages = info_pages(fl, hide_callsign=shown_elsewhere(fl.callsign, name, route))
         FONT_MID.draw(img, x0, ROW3, FONT_MID.fit(pages[page % len(pages)], avail), _dim(INFO, f))
 
     def _layout_a(self, img: Image.Image, fl: Flight, page: int, f: float, dots=()) -> None:
         col = _dim(COLORS[fl.status], f)
         W = img.width
-        # Zeile 1: Pfeil + Airline links, Callsign rechts
+        # Zeile 1: Pfeil + Name links, Rufzeichen rechts, wenn beides passt und der Name
+        # es nicht schon ist. Sonst geht der Name vor (Christoph 31 statt "Christop CHX31"),
+        # und das Rufzeichen kommt unten in den Wechsel.
         name = fl.airline or ""
-        cs = fl.callsign
-        csw = FONT_BIG.text_width(cs)
-        left = FONT_BIG.fit(f"{status_glyph(fl)} {name}".rstrip(), W - csw - 6) if name else status_glyph(fl)
+        head = f"{status_glyph(fl)} {name}".rstrip() if name else status_glyph(fl)
+        cs = "" if shown_elsewhere(fl.callsign, name) else fl.callsign
+        if cs and name and FONT_BIG.text_width(head) + 6 + FONT_BIG.text_width(cs) > W:
+            cs = ""
+        csw = FONT_BIG.text_width(cs) if cs else 0
+        left = FONT_BIG.fit(head, W - (csw + 6 if cs else 0))
         FONT_BIG.draw(img, 0, ROW1, left, col)
-        FONT_BIG.draw(img, W - csw, ROW1, cs, col)
+        if cs:
+            FONT_BIG.draw(img, W - csw, ROW1, cs, col)
 
-        # Zeile 2: Route links, Typ rechts
-        route = route_text(fl) or "Route unbekannt"
+        # Zeile 2: Route, sonst was der Flug ist, sonst ?→BER; Typ rechts
+        route = second_line(fl.origin, fl.dest, fl.status, fl.label, self.cfg.local_airport_iata)
         FONT_MID.draw(img, 0, ROW2, route, _dim(INFO, f))
         if fl.actype:
             tw = FONT_MID.text_width(fl.actype)
             FONT_MID.draw(img, W - tw, ROW2, fl.actype, _dim(MUTED, f))
 
-        # Zeile 3: wechselnde Info, rechts die Himmelspunkte, wenn Platz ist
-        pages = info_pages(fl)
+        # Zeile 3: wechselnde Info, rechts die Himmelspunkte, wenn Platz ist; ohne
+        # Rufzeichen, wenn es schon oben steht
+        pages = info_pages(fl, hide_callsign=bool(cs) or shown_elsewhere(fl.callsign, name, route))
         dw = self._dots_width(dots)
         info = FONT_MID.fit(pages[page % len(pages)], W - (dw + 6 if dots else 0))
         FONT_MID.draw(img, 0, ROW3, info, _dim(INFO, f))
