@@ -161,20 +161,23 @@ def callsign_airline(callsign: str) -> str:
 # ADS-B-Kategorien, die nie eine Airline sind: leicht (A1), Hubschrauber (A7),
 # Segler, Ballon, Fallschirm, Ultraleicht, Drohne, Raumfahrt (B1-B7)
 NON_AIRLINE_CATEGORIES = {"A1", "A7", "B1", "B2", "B3", "B4", "B6", "B7"}
+# Groß und schwer (A320/737 aufwärts): Businessjets sind A1/A2
+AIRLINER_CATEGORIES = {"A3", "A4", "A5", "A6"}
 
 
 def is_airline(callsign: str, route: dict, names: dict[str, dict], category: str = "") -> bool:
     """Linien-, Charter- und Frachtflüge. Private Flüge haben kein Airline-Callsign
     (DEABC), Rettung, Polizei und Militär stehen in airlines.json mit
     "airline": false (CHX31 = Christoph 31), Hubschrauber und Leichtflugzeuge
-    erkennt adsb.lol an der Kategorie. Unbekannte Betreiber zählen nur, wenn
-    adsbdb eine Route mit Airline kennt (BFX1073, ein Businessjet, nicht)."""
+    erkennt adsb.lol an der Kategorie. Unbekannte Betreiber zählen, wenn adsbdb
+    eine Route mit Airline kennt oder das Flugzeug groß ist (SVI8222, ein
+    ägyptischer Charter, A3); BFX1073, ein Businessjet ohne Route, zählt nicht."""
     code = callsign_airline(callsign)
     if not code or category in NON_AIRLINE_CATEGORIES:
         return False
     if code in names:
         return names[code]["airline"]
-    return bool(route.get("airline_icao"))
+    return bool(route.get("airline_icao")) or category in AIRLINER_CATEGORIES
 
 
 @dataclass

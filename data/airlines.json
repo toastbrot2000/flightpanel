@@ -99,6 +99,7 @@
   "ROT": {"name": "TAROM", "iata": "RO"},
   "TVS": {"name": "Smartwings", "iata": "QS"},
   "SDR": {"name": "Sundair", "iata": "SR"},
+  "SVI": {"name": "Sky Vision", "iata": ""},
   "EIN": {"name": "Aer Lingus", "iata": "EI"},
   "LGL": {"name": "Luxair", "iata": "LG"},
   "DLA": {"name": "Air Dolomiti", "iata": "EN"},

@@ -37,8 +37,8 @@ PROTO_VERSION = 1
 # Zeilenraster für 32 px Höhe
 ROW1, ROW2, ROW3 = 0, 12, 23
 
-# Himmelspunkte: ein Punkt pro Flugzeug im Sichtfeld, von links nach rechts wie vom
-# Fenster aus gesehen; der gezeigte Flug leuchtet. Dann wird das Logo kleiner.
+# Himmelspunkte: ein Punkt pro Flug im Wechsel, der im Sichtfeld ist, von links nach
+# rechts wie vom Fenster aus gesehen; der gezeigte leuchtet. Dann wird das Logo kleiner.
 DOT, DOT_PITCH, MAX_DOTS = 3, 5, 6
 DOT_DIM = 0.3
 LOGO_WITH_DOTS = 26
@@ -123,18 +123,17 @@ class Renderer:
         return img
 
     def _sky_dots(self, model: DisplayModel, fl: Flight) -> list[tuple[tuple[int, int, int], bool]]:
-        """(Farbe, ist der gezeigte Flug) für jedes Flugzeug im Sichtfeld, sortiert
-        im Uhrzeigersinn ab VIEW_FROM, also von links nach rechts, wenn man ins
-        Sichtfeld schaut. Landende amber, der Rest grau. Leer, wenn höchstens eins
-        zu sehen ist oder der gezeigte Flug nicht dabei ist."""
-        seen = [n for n in model.nearby if n.get("in_view") in ("now", "soon")]
-        seen.sort(key=lambda n: (n["az"] - self.cfg.view_from) % 360)
-        idx = next((i for i, n in enumerate(seen) if n.get("icao24") == fl.icao24), None)
+        """(Statusfarbe, ist der gezeigte Flug) für jeden Flug im Wechsel, der im
+        Sichtfeld ist, im Uhrzeigersinn ab VIEW_FROM sortiert, also von links nach
+        rechts, wenn man ins Sichtfeld schaut. Nur Flüge, die das Panel auch zeigt:
+        Jeder Punkt leuchtet irgendwann. Leer bei weniger als zwei oder wenn der
+        gezeigte Flug nicht im Sichtfeld ist."""
+        seen = sorted((f for f in model.flights if f.visible), key=lambda f: (f.bearing - self.cfg.view_from) % 360)
+        idx = next((i for i, f in enumerate(seen) if f is fl), None)
         if len(seen) < 2 or idx is None:
             return []
         lo = max(0, min(idx - MAX_DOTS // 2, len(seen) - MAX_DOTS))   # Fenster um den gezeigten
-        return [(COLORS[fl.status] if n.get("icao24") == fl.icao24 else COLORS[ARR] if n.get("seq") else MUTED,
-                 n.get("icao24") == fl.icao24) for n in seen[lo:lo + MAX_DOTS]]
+        return [(COLORS[f.status], f is fl) for f in seen[lo:lo + MAX_DOTS]]
 
     def _draw_dots(self, img: Image.Image, x: int, y: int, dots, f: float) -> None:
         for i, (col, lit) in enumerate(dots):
