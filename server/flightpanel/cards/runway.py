@@ -8,7 +8,7 @@ from .. import sprites
 from ..airport import path_in_view, runway_name
 from ..colors import ARR_C, CYAN, DEP_C, GOLD, INFO, MUTED, OVF_C, dim
 from ..config import in_hours
-from ..draw import ROW1, ROW2, ROW3, blink, km, line, right, text
+from ..draw import ROW1, ROW2, ROW3, km, line, right, text
 from ..fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from ..geo import M_PER_FT, kompass
 from ..idle import Ctx, Hit
@@ -125,7 +125,7 @@ def weather_draw(img, ctx, d, t_in, f):
         FONT_BIG.draw(img, 0, ROW1, f"Gewitter am {iata}", dim(GOLD, f))
         text(img, FONT_MID, 0, ROW2, "Vorfeld gesperrt,", INFO, f, W)
         text(img, FONT_MID, 0, ROW3, "Flieger warten", INFO, f, W)
-        if blink(ctx.now):
+        if ctx.blink_on:
             for x, y in ((120, 2), (119, 3), (121, 3), (118, 4), (120, 5), (119, 6)):
                 sprites.put(img, x, y, dim(GOLD, f))
         return

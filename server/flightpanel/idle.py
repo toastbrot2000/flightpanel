@@ -33,6 +33,7 @@ from typing import Any
 from PIL import Image
 
 from .config import Config
+from .draw import blink
 
 log = logging.getLogger("idle")
 
@@ -72,6 +73,12 @@ class Ctx:
         if any((a.get("eta_s") or 9e9) <= QUIET_AHEAD_S for a in m.arrivals):
             return False
         return self.now - m.last_airport_move > QUIET_SINCE_S
+
+    @property
+    def blink_on(self) -> bool:
+        """Blinktakt: an und aus im Takt der ESP32-Abrufe; mit BLINK=0 immer an.
+        Der Notfall-Squawk blinkt trotzdem (traffic.alert_draw)."""
+        return blink(self.now) if self.cfg.blink else True
 
     @property
     def live(self) -> bool:

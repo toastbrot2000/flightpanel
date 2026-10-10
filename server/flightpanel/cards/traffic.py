@@ -104,7 +104,7 @@ def next_draw(img, ctx, d, t_in, f):
         arrow = side_arrow(ctx, az)
         where = f"{arrow} {kompass(az)}".strip() if arrow else f"aus {kompass(az)}"
     line(img, 0, ROW2, when, INFO, f, W - (FONT_MID.text_width(where) + 4 if where else 0))
-    if where and not (eta < NEXT_URGENT_S / 3 and not blink(ctx.now)):
+    if where and not (eta < NEXT_URGENT_S / 3 and not ctx.blink_on):
         FONT_MID.draw(img, W - FONT_MID.text_width(where), ROW2, where, dim(GOLD, f))
     # Route, sonst was der Flug ist, sonst ?→BER; das Rufzeichen nur, wenn es oben nicht steht
     bottom = (second_line(fl.origin, fl.dest, fl.status, fl.label, ctx.cfg.local_airport_iata)
@@ -241,7 +241,7 @@ def radar_draw(img, ctx, d, t_in, f):
         x = xof(p["az"])
         col = STATUS_COLORS.get(p.get("status"), OVF_C)
         lit = p.get("in_view") == "now"
-        if p.get("icao24") == up and not blink(ctx.now):
+        if p.get("icao24") == up and not ctx.blink_on:
             continue
         c = dim(col, f if lit or p.get("icao24") == up else f * 0.55)
         img.paste(c, (max(0, x - 1), y, min(W, x + 1), y + 2))

@@ -23,7 +23,7 @@ from PIL import Image
 from .aircraft import second_line, shown_elsewhere
 from .cards import CARDS
 from .colors import CLOCK, INFO, MUTED, dim
-from .config import Config
+from .config import INFO_PAGES, Config
 from .draw import ROW1, ROW2, ROW3, STATUS_COLORS, line, right, status_glyph, text
 from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from .geo import kompass
@@ -51,22 +51,26 @@ def alt_text(f: Flight) -> str:
     return f"{(f.alt_ft // 100) * 100}ft"
 
 
-def info_pages(f: Flight, hide_callsign: bool = False) -> list[str]:
-    """Die Zeilen, die unten durchwechseln (max. ~15 Zeichen bei 94 px).
-    Fehlende Daten lassen die Seite weg; das Rufzeichen auch, wenn es schon
-    oben steht (nichts doppelt)."""
+def info_pages(f: Flight, hide_callsign: bool = False, which: tuple[str, ...] = INFO_PAGES) -> list[str]:
+    """Die Zeilen, die unten durchwechseln (max. ~15 Zeichen bei 94 px), in der
+    Reihenfolge von which (INFO_PAGES in .env): eta "landet in ~7 min", alt Höhe und
+    Tempo, dist Entfernung, Richtung und Kurs, callsign. Fehlende Daten lassen die
+    Seite weg; das Rufzeichen auch, wenn es schon oben steht (nichts doppelt)."""
     pages: list[str] = []
-    if f.land_eta_s is not None:
-        pages.append("landet gleich" if f.land_eta_s < 60 else f"landet in ~{max(1, round(f.land_eta_s / 60))} min")
-    if f.alt_ft is not None:
-        vr = "↑" if (f.vrate_fpm or 0) > 300 else "↓" if (f.vrate_fpm or 0) < -300 else ""
-        spd = f" {f.speed_kt}kt" if f.speed_kt is not None else ""
-        pages.append(f"{alt_text(f)}{vr}{spd}")
-    trk = f" Kurs {kompass(f.track)}" if f.track is not None else ""
-    pages.append(f"{int(f.dist_km)}km {kompass(f.bearing)}{trk}")
-    if not hide_callsign:
-        pages.append(f.callsign)
-    return pages
+    for page in which:
+        if page == "eta" and f.land_eta_s is not None:
+            pages.append("landet gleich" if f.land_eta_s < 60
+                         else f"landet in ~{max(1, round(f.land_eta_s / 60))} min")
+        elif page == "alt" and f.alt_ft is not None:
+            vr = "↑" if (f.vrate_fpm or 0) > 300 else "↓" if (f.vrate_fpm or 0) < -300 else ""
+            spd = f" {f.speed_kt}kt" if f.speed_kt is not None else ""
+            pages.append(f"{alt_text(f)}{vr}{spd}")
+        elif page == "dist":
+            trk = f" Kurs {kompass(f.track)}" if f.track is not None else ""
+            pages.append(f"{int(f.dist_km)}km {kompass(f.bearing)}{trk}")
+        elif page == "callsign" and not hide_callsign:
+            pages.append(f.callsign)
+    return pages or [""]
 
 
 def type_width(fl: Flight, line2: str, avail: int) -> int:
@@ -157,11 +161,16 @@ class Renderer:
 
     # ------------------------------------------------------------ Auswahl --
     def _pick(self, model: DisplayModel, now: float) -> tuple[Flight, int]:
-        """Welcher Flug und welche Infoseite gerade dran ist."""
-        tick = int(now // self.cfg.page_seconds)
-        n_pages = 4 if any(fl.land_eta_s is not None for fl in model.flights) else 3   # Landende: + Landezeit
-        idx = (tick // n_pages) % len(model.flights)
-        return model.flights[idx], tick % n_pages
+        """Welcher Flug und welche Infoseite gerade dran ist: Jeder Flug zeigt jede
+        Infoseite einmal (die Landezeit nur, wenn einer landet), mindestens aber
+        FLIGHT_SECONDS lang."""
+        which = self.cfg.info_pages
+        landing = any(fl.land_eta_s is not None for fl in model.flights)
+        n_pages = max(1, len(which) - ("eta" in which and not landing))
+        ps = self.cfg.page_seconds
+        per_flight = max(n_pages * ps, self.cfg.flight_seconds)
+        idx = int(now // per_flight) % len(model.flights)
+        return model.flights[idx], int(now % per_flight // ps) % n_pages
 
     def _sky_dots(self, model: DisplayModel, fl: Flight) -> list[tuple[tuple[int, int, int], bool]]:
         """(Statusfarbe, ist der gezeigte Flug) für jeden Flug im Wechsel, der im
@@ -218,7 +227,7 @@ class Renderer:
             right(img, FONT_MID, ROW2, fl.actype, MUTED, f)
 
         # Zeile 3: wechselnde Info, ohne das Rufzeichen, wenn es oben schon steht
-        pages = info_pages(fl, hide_callsign=shown_elsewhere(fl.callsign, name, route))
+        pages = info_pages(fl, shown_elsewhere(fl.callsign, name, route), self.cfg.info_pages)
         line(img, x0, ROW3, pages[page % len(pages)], INFO, f, avail)
 
     def _layout_a(self, img: Image.Image, fl: Flight, page: int, f: float, dots=()) -> None:
@@ -247,7 +256,7 @@ class Renderer:
 
         # Zeile 3: wechselnde Info, rechts die Himmelspunkte, wenn Platz ist; ohne
         # Rufzeichen, wenn es schon oben steht
-        pages = info_pages(fl, hide_callsign=bool(cs) or shown_elsewhere(fl.callsign, name, route))
+        pages = info_pages(fl, bool(cs) or shown_elsewhere(fl.callsign, name, route), self.cfg.info_pages)
         dw = self._dots_width(dots)
         line(img, 0, ROW3, pages[page % len(pages)], INFO, f, W - (dw + 6 if dots else 0))
         if dots:

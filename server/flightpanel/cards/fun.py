@@ -7,7 +7,7 @@ from datetime import datetime
 
 from .. import sprites
 from ..colors import ARR_C, DEP_C, GOLD, INFO, MUTED, RED, dim
-from ..draw import ROW1, ROW2, ROW3, blink, center, km, line, minutes, right, text
+from ..draw import ROW1, ROW2, ROW3, center, km, line, minutes, right, text
 from ..fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from ..idle import Ctx, Hit
 from .common import slot_rng
@@ -174,7 +174,7 @@ def santa_draw(img, ctx, d, t_in, f):
     sw = sprites.width(sprites.SLEIGH)
     x = int(-sw + (W + sw) * (t_in / max(1.0, ctx.cfg.idle_seconds)))
     pal = dict(sprites.SLEIGH_PAL)
-    if not blink(ctx.now):
+    if not ctx.blink_on:
         pal["n"] = (120, 20, 20)
     sprites.blit(img, sprites.SLEIGH, x, 2, pal, f)
     left = "gelandet!" if d["km"] <= 0 else f"{km(d['km'])} km"

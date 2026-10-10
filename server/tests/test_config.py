@@ -54,3 +54,16 @@ def test_brightness_schedule():
     assert (at(12), at(20), at(23, 30), at(6, 29), at(6, 30)) == (90, 35, 0, 0, 35)
     assert c.active_seconds_per_day() == (24 * 60 - 7 * 60 - 30) * 60
     assert in_hours((23 * 60, 60), 0) and not in_hours((23 * 60, 60), 120)
+
+
+def test_calm_mode_sets_defaults_explicit_values_win():
+    calm = Config.from_env(env(CALM="1"))
+    assert (calm.page_seconds, calm.flight_seconds, calm.idle_seconds, calm.blink) == (10, 20, 30, False)
+    assert calm.info_pages == ("eta", "alt")
+    own = Config.from_env(env(CALM="1", PAGE_SECONDS="6", BLINK="1", INFO_PAGES="alt, eta"))
+    assert (own.page_seconds, own.blink, own.info_pages, own.idle_seconds) == (6, True, ("alt", "eta"), 30)
+    normal = Config.from_env(env())
+    assert (normal.page_seconds, normal.flight_seconds, normal.blink) == (4, 0, True)
+    assert normal.info_pages == ("eta", "alt", "dist", "callsign")
+    with pytest.raises(ValueError, match="INFO_PAGES"):
+        Config.from_env(env(INFO_PAGES="eta,wetter"))

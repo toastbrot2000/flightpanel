@@ -5,7 +5,7 @@ from datetime import datetime
 from .. import sprites
 from ..astro import Pass, hhmm, sun_day
 from ..colors import ARR_C, CLOCK, CYAN, GOLD, HORIZON, INFO, MUTED, dim
-from ..draw import ROW1, ROW2, ROW3, blink, line, minutes, text
+from ..draw import ROW1, ROW2, ROW3, line, minutes, text
 from ..fonts import FONT_BIG, FONT_CLOCK, FONT_MID, FONT_SMALL
 from ..geo import kompass
 from ..idle import Ctx, Hit
@@ -56,7 +56,7 @@ def iss_draw(img, ctx, d, t_in, f):
     W = img.width
     sprites.blit(img, sprites.ISS, W - 8, 2, sprites.ISS_PAL, f)
     if d["now"]:
-        if blink(ctx.now):
+        if ctx.blink_on:
             FONT_BIG.draw(img, 0, ROW1, "ISS jetzt!", dim(CYAN, f))
         text(img, FONT_MID, 0, ROW2, f"{kompass(d['az'])}, {d['el']:.0f}° hoch", INFO, f, W)
         if in_cone(ctx, d["az"], d["el"]):

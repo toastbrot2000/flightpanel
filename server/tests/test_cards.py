@@ -202,3 +202,48 @@ def test_render_priorities():
              "az": 120, "alt_ft": 3000, "in_view": False}
     r.render(DisplayModel(source="test", flights=[fl()], alert=alert), now)
     assert r.idle.last_pick == "alert"                      # Notfall vor allem
+
+
+# ------------------------------------------------------------ ruhiger Modus --
+def test_calm_info_pages_and_rotation():
+    from flightpanel.render import info_pages
+
+    landing = Flight(icao24="a", callsign="EZY1", status="ARR", dist_km=12, bearing=150, alt_ft=4200, speed_kt=210,
+                     track=249, vrate_fpm=-800, land_eta_s=420, visible=True)
+    over = Flight(icao24="b", callsign="EZY2", status="OVF", dist_km=30, bearing=170, alt_ft=34000, speed_kt=450,
+                  track=90, vrate_fpm=0, visible=True)
+    assert info_pages(landing, which=("eta", "alt")) == ["landet in ~7 min", "4200ft↓ 210kt"]
+    assert info_pages(over, which=("eta", "alt")) == ["FL340 450kt"]
+    assert info_pages(over, which=("eta",)) == [""]                 # nichts zu sagen: leere Zeile
+    calm = make_cfg(page_seconds=10, flight_seconds=20, info_pages=("eta", "alt"), blink=False)
+    r = _renderer(calm)
+    m = DisplayModel(source="test", flights=[landing, over])
+    t0 = ts(2026, 10, 10, 15, 0) // 40 * 40                        # Beginn eines Durchlaufs
+    picks = [(fl.callsign, page) for fl, page in (r._pick(m, t0 + s) for s in range(0, 40, 5))]
+    assert picks == [("EZY1", 0), ("EZY1", 0), ("EZY1", 1), ("EZY1", 1),      # 20 s pro Flug, 10 s pro Seite
+                     ("EZY2", 0), ("EZY2", 0), ("EZY2", 1), ("EZY2", 1)]
+    only_over = DisplayModel(source="test", flights=[over])
+    assert {r._pick(only_over, t0 + s)[1] for s in range(0, 40, 5)} == {0}   # eine Seite, steht still
+
+
+def test_calm_mode_does_not_blink_except_emergencies():
+    t = ts(2026, 10, 10, 15, 0)
+    m = DisplayModel(source="test", generated_at=t, upcoming=fl(), upcoming_eta_s=40, upcoming_az=150)
+
+    def phases(draw, data, cfg, model=m):
+        """Bild im An- und im Aus-Takt (2 s später)."""
+        out = []
+        for now in (t, t + 2):
+            img = Image.new("RGB", (128, 32))
+            draw(img, ctx(now, model, cfg=cfg), data, 0, 1.0)
+            out.append(img.tobytes())
+        return out
+
+    normal, calm = make_cfg(), make_cfg(blink=False)
+    nxt = traffic.next_cond(ctx(t, m, cfg=normal)).data       # unter 1 min: Richtung blinkt
+    a, b = phases(traffic.next_draw, nxt, normal)
+    assert a != b
+    a, b = phases(traffic.next_draw, nxt, calm)
+    assert a == b
+    a, b = phases(traffic.alert_draw, traffic.alert_demo(None), calm)
+    assert a != b                                               # ein Notfall blinkt immer

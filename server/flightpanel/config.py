@@ -7,7 +7,10 @@ Position und METAR-Station des Flughafens kommen aus data/airports.json, wenn si
 nicht gesetzt sind. Die Defaults sind Berlin und BER.
 
 Leerlauf-Karten lassen sich einzeln abschalten: CARD_<ID>=0, z. B. CARD_JOKE=0
-(alle IDs unter /idle und in docs/screens.md)."""
+(alle IDs unter /idle und in docs/screens.md).
+
+CALM=1, der ruhige Modus, setzt nur Defaults (CALM_PRESET): Was ausdrücklich in
+der Umgebung steht, gilt trotzdem."""
 
 import math
 import os
@@ -31,6 +34,18 @@ def _hours(s: str) -> tuple[int, int]:
     """"23:00-06:30" -> (1380, 390): Minuten des Tages, von bis."""
     a, b = s.split("-")
     return _hhmm(a), _hhmm(b)
+
+
+INFO_PAGES = ("eta", "alt", "dist", "callsign")    # mögliche Infoseiten, siehe render.info_pages
+
+
+def _pages(s: str) -> tuple[str, ...]:
+    """"eta,alt" -> ("eta", "alt"); nur bekannte Seiten."""
+    pages = tuple(p.strip().lower() for p in s.split(",") if p.strip())
+    unknown = [p for p in pages if p not in INFO_PAGES]
+    if unknown or not pages:
+        raise ValueError(f"unbekannte Infoseite {', '.join(unknown)}; möglich: {', '.join(INFO_PAGES)}")
+    return pages
 
 
 def in_hours(rng: tuple[int, int], minute: int) -> bool:
@@ -95,8 +110,12 @@ class Config:
     width: int = _env("WIDTH", 128)
     height: int = _env("HEIGHT", 32)
     layout: str = _env("LAYOUT", "AUTO", str.upper)         # AUTO | A | B | C, siehe render.py
-    page_seconds: int = _env("PAGE_SECONDS", 4)
     max_flights: int = _env("MAX_FLIGHTS", 3)
+    calm: bool = _env("CALM", False)                        # ruhiger Modus, setzt CALM_PRESET
+    page_seconds: int = _env("PAGE_SECONDS", 4)             # so lange steht eine Infoseite
+    flight_seconds: int = _env("FLIGHT_SECONDS", 0)         # so lange mindestens ein Flug; 0: jede Seite einmal
+    info_pages: tuple[str, ...] = _env("INFO_PAGES", INFO_PAGES, _pages)
+    blink: bool = _env("BLINK", True)                       # sonst blinkt nur ein Notfall
 
     # --- Leerlauf-Karten, wenn keine Airline zu sehen ist
     idle_seconds: int = _env("IDLE_SECONDS", 12)
@@ -139,6 +158,9 @@ class Config:
                 except ValueError as e:
                     raise ValueError(f"{name}={raw!r}: {e}") from None
         values.setdefault("scan_radius_km", values.get("radius_km", cls.scan_radius_km))
+        if values.get("calm"):
+            for k, v in CALM_PRESET.items():
+                values.setdefault(k, v)
         values["cards_off"] = frozenset(k[len("CARD_"):].lower() for k, v in env.items()
                                         if k.startswith("CARD_") and v.strip() and not _bool(v))
         _airport_from_list(values, values.get("data_dir", cls.data_dir))
@@ -179,6 +201,12 @@ class Config:
         """Sekunden pro Tag außerhalb der Quiet Hours, in denen abgerufen wird."""
         a, b = self.quiet_hours
         return (24 * 60 - (b - a) % (24 * 60)) * 60
+
+
+# Ruhiger Modus: seltener wechseln, nicht blinken, in der Infozeile nur Landezeit und
+# Höhe/Tempo. Nur Defaults; ausdrücklich gesetzte Werte gehen vor.
+CALM_PRESET = {"page_seconds": 10, "flight_seconds": 20, "idle_seconds": 30, "blink": False,
+               "info_pages": ("eta", "alt")}
 
 
 def _airport_from_list(values: dict, data_dir: str) -> None:

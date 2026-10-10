@@ -6,7 +6,7 @@ from datetime import datetime
 from PIL import Image
 
 from ..colors import ARR_C, GOLD, HORIZON, INFO, MUTED, PINK, dim
-from ..draw import ROW1, ROW2, ROW3, blink, frame, km, line, minutes, right, text
+from ..draw import ROW1, ROW2, ROW3, frame, km, line, minutes, right, text
 from ..fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from ..geo import kompass
 from ..idle import Ctx, Hit
@@ -96,7 +96,7 @@ def new_draw(img, ctx, d, t_in, f):
             logo = Image.eval(logo, lambda v: int(v * f))
         img.paste(logo, (0, (img.height - logo.height) // 2))
         x0 = logo.width + 2
-    if blink(ctx.now):
+    if ctx.blink_on:
         FONT_BIG.draw(img, x0, ROW1, "NEU!", dim(GOLD, f))
     FONT_SMALL.draw(img, W - FONT_SMALL.text_width(d.get("callsign", "")), ROW1 + 1, d.get("callsign", ""),
                     dim(MUTED, f * 0.7))
@@ -106,7 +106,7 @@ def new_draw(img, ctx, d, t_in, f):
     else:
         text(img, FONT_SMALL, x0, ROW3 + 1, "nicht im Album", PINK, f, W - x0)
     if logo is None:
-        frame(img, GOLD if blink(ctx.now) else ARR_C, f * 0.6)
+        frame(img, GOLD if ctx.blink_on else ARR_C, f * 0.6)
 
 
 def rare_cond(ctx: Ctx):
