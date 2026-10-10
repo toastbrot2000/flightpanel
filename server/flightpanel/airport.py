@@ -121,6 +121,17 @@ def is_arrival(cfg: Config, s: State, route: dict) -> bool:
             and haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon) < APPROACH_AREA_KM)
 
 
+def returning(cfg: Config, s: State, route: dict) -> bool:
+    """Die Route beginnt am Heimatflughafen, aber das Flugzeug sinkt tief in Platznähe:
+    Es kommt zurück, die Route ist der Hinflug unter demselben Callsign (adsbdb kennt
+    bei EWG9SK nur BER-NCE). Umgekehrt gilt das nicht: Wer kurz vor der Landung
+    steigt, startet vielleicht nur durch."""
+    alt = s.alt_m
+    return (route.get("origin") == cfg.local_airport_iata and not s.on_ground
+            and alt is not None and alt < TERMINAL_ALT_M and (s.vrate_ms or 0.0) < -1.0
+            and haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon) < APPROACH_AREA_KM)
+
+
 async def landing_sequence(cfg: Config, states: list[State], names: dict[str, dict], course: float,
                            route_for: RouteFor) -> tuple[dict[str, int], dict[str, float]]:
     """(icao24 -> Platz in der Landefolge, icao24 -> Sekunden bis zum Aufsetzen).

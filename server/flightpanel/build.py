@@ -16,7 +16,7 @@ from .aircraft import describe
 from .airlines import (AIRLINER_CATEGORIES, callsign_airline, is_airline, note_operator, route_plausible,
                        short_airline)
 from .airport import (APPROACH_AREA_KM, DEP_AIR_KM, DEP_GROUND_KM, TERMINAL_ALT_M, find_departures,
-                      landing_course_votes, landing_sequence, predict_entry)
+                      landing_course_votes, landing_sequence, predict_entry, returning)
 from .config import Config
 from .geo import FPM_PER_MS, FT_PER_M, KT_PER_MS, haversine_km
 from .issues import Issues
@@ -176,11 +176,15 @@ class _Builder:
         self.etas: dict[str, float] = {}     # icao24 -> Sekunden bis zum Aufsetzen
 
     async def route_for(self, s: State) -> dict:
-        """Route von adsbdb, Strecke von adsb.im, wenn die zur Position passt."""
+        """Route von adsbdb, Strecke von adsb.im, wenn die zur Position passt. Eine
+        Strecke ab hier für ein Flugzeug, das hier landet, ist der Hinflug: weg damit
+        (Herkunft dann aus der Flugspur)."""
         route = await self.adsb.route(s.callsign)
         alt = self.im.get(s.callsign)
         if alt and route_plausible(alt, s.lat, s.lon):
-            return {**route, **alt}
+            route = {**route, **alt}
+        if returning(self.cfg, s, route):
+            route = {k: v for k, v in route.items() if k not in ("origin", "dest", "origin_pos", "dest_pos")}
         return route
 
     async def rank(self, cands: list[Candidate]) -> list[tuple[State, Sighting, int, dict, bool]]:

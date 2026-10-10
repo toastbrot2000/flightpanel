@@ -52,3 +52,24 @@ def test_route_from_x_to_x_is_not_plausible():
                                *BER)
     assert route_plausible({"origin": "PMI", "dest": "BER", "origin_pos": list(PMI), "dest_pos": list(BER)},
                            52.0, 13.0)
+
+
+def test_outbound_route_of_a_returning_plane_is_dropped():
+    # EWG9SK: adsbdb kennt nur BER-NCE, das Flugzeug sinkt 15 km vor BER
+    import asyncio
+
+    from conftest import NAMES, FakeAdsb, make_cfg
+    from flightpanel.airport import returning
+    from flightpanel.build import build_model
+
+    cfg = make_cfg()
+    lat, lon = destination(BER[0], BER[1], 69, 15)
+    outbound = {"origin": "BER", "dest": "NCE", "origin_pos": list(BER), "dest_pos": list(NCE),
+                "airline": "Eurowings", "airline_icao": "EWG", "airline_iata": "EW"}
+    landing = state(icao="3c56ec", cs="EWG9SK", lat=lat, lon=lon, alt=800, track=249, vrate=-4)
+    assert returning(cfg, landing, outbound)
+    assert not returning(cfg, state(cs="EWG9SK", lat=lat, lon=lon, alt=800, vrate=8), outbound)   # steigt: Abflug
+    m = asyncio.run(build_model(cfg, [landing], FakeAdsb({"EWG9SK": outbound}), NAMES))
+    f = m.flights[0]
+    assert f.status == "ARR" and f.seq == 1 and (f.origin, f.dest) == ("", "")    # "?→BER" statt "BER→NCE"
+    assert f.airline == "Eurowings"
