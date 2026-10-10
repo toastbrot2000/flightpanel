@@ -5,7 +5,7 @@
 *An LED panel for the window that shows which plane you are looking at. Documentation in German.*
 
 > [!WARNING]
-> **Ein komplett vibe-codetes Wochenendprojekt.** Jede Zeile Code und Doku hier hat eine KI geschrieben (Claude). Ein Mensch hat gesagt, was er will, am Fenster mit echten Flugzeugen verglichen und Fehler gemeldet. Das alles an einem Wochenende im Oktober 2026. Kein Produkt, keine Wartungszusage, keine Garantie. Nachbauen, Abschauen und Weitermachen ausdrücklich erwünscht, auf eigene Gefahr.
+> **Ein komplett vibe-codetes Wochenendprojekt.** Jede Zeile Code und Doku hier hat eine KI geschrieben (Claude). Keine Wartungszusage, keine Garantie. Nachbauen, Abschauen und Weitermachen ausdrücklich erwünscht, auf eigene Gefahr.
 >
 > *Fully vibe-coded weekend project: all code and docs were written by an AI (Claude), directed and checked against the real sky by a human over one weekend. Not a product, no support, no warranty.*
 
