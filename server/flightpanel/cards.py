@@ -234,8 +234,8 @@ def departures_demo(ctx: Ctx):
 
 
 def departures_draw(img, ctx, deps, t_in, f):
-    """Wer gerade am BER startet: rollt zur Bahn, startet, oder ist vor kurzem gestartet."""
-    _title(img, ctx, "↑ Abflug BER", DEP_C, f)
+    """Wer gerade am Platz startet: rollt zur Bahn, startet, oder ist vor kurzem gestartet."""
+    _title(img, ctx, f"↑ Abflug {ctx.cfg.local_airport_iata}", DEP_C, f)
     rows = []
     for d in deps:
         name = [f"{d['airline']} → {d['dest']}", f"{d['airline']} {d['dest']}", d["airline"]] if d.get("dest") else [d["airline"]]
@@ -262,7 +262,7 @@ def arrivals_demo(ctx: Ctx):
 
 def arrivals_draw(img, ctx, arr, t_in, f):
     """Wer als nächstes landet, mit Herkunft und Minuten bis zum Aufsetzen."""
-    _title(img, ctx, "↓ Landung BER", ARR_C, f)
+    _title(img, ctx, f"↓ Landung {ctx.cfg.local_airport_iata}", ARR_C, f)
     rows = []
     for a in arr:
         name = [f"{a['airline']} aus {a['origin']}", f"{a['airline']} {a['origin']}", a["airline"]] if a.get("origin") else [a["airline"]]
@@ -448,7 +448,7 @@ def weather_draw(img, ctx, d, t_in, f):
               INFO, f)
         text(img, FONT_MID, 0, ROW2, "Flieger nur zu hören", INFO, f, W)
     elif kind == "snow":
-        FONT_BIG.draw(img, 0, ROW1, "Schnee am BER", dim(CYAN, f))
+        FONT_BIG.draw(img, 0, ROW1, f"Schnee am {ctx.cfg.local_airport_iata}", dim(CYAN, f))
         text(img, FONT_MID, 0, ROW2, "Enteisen dauert", INFO, f, W)
     else:
         FONT_BIG.draw(img, 0, ROW1, f"Wolken auf {km(round(m.ceiling_m, -2))} m", dim(MUTED, f))
@@ -786,10 +786,11 @@ def delay_demo(ctx: Ctx):
 
 
 def delay_draw(img, ctx, d, t_in, f):
-    """Echte Gründe, warum der BER neun Jahre zu spät eröffnete (data/jokes.json):
-    zwei Zeilen, das Jahr rechts unten, wenn es neben die zweite passt."""
+    """Echte Verspätungsgründe des Heimatflughafens (data/jokes.json, für BER: warum er
+    neun Jahre zu spät eröffnete): zwei Zeilen, das Jahr rechts unten, wenn es neben
+    die zweite passt."""
     W = img.width
-    text(img, FONT_SMALL, 0, ROW1 + 1, "Verspätungsgrund BER", ARR_C, f, W)
+    text(img, FONT_SMALL, 0, ROW1 + 1, f"Verspätungsgrund {ctx.cfg.local_airport_iata}", ARR_C, f, W)
     a, b, year = (_fmt(d["reason"], ctx).split("|") + ["", "", ""])[:3]
     line(img, 0, ROW2, a, INFO, f)
     yw = FONT_SMALL.text_width(year) + 6 if year else 0
@@ -842,11 +843,11 @@ def ber_opening_draw(img, ctx, d, t_in, f):
         text(img, FONT_SMALL, x, img.height - FONT_SMALL.cap_height, msg, MUTED, f, W - x)
 
 
-PLANE_TEXTS = ["Himmel frei", "Warteschleife …", "gleich kommt einer", "Funkstille über Berlin"]
+PLANE_TEXTS = ["Himmel frei", "Warteschleife …", "gleich kommt einer"]   # ohne eigene in jokes.json
 
 
 def plane_cond(ctx: Ctx):
-    return Hit({"text": _rng(ctx, "plane").choice(PLANE_TEXTS)})
+    return Hit({"text": _rng(ctx, "plane").choice(ctx.fun.get("plane") or PLANE_TEXTS)})
 
 
 def plane_draw(img, ctx, d, t_in, f):
@@ -986,8 +987,8 @@ CARDS = [
     Card("sunrise", sunrise_cond, sunrise_draw, tier=3, group="himmel", demo=sunrise_demo),
     Card("joke", joke_cond, joke_draw, weight=0.6, tier=4, group="spaß", demo=joke_demo),
     Card("delay", delay_cond, delay_draw, weight=0.5, tier=4, group="spaß", demo=delay_demo),
-    Card("txl", txl_cond, txl_draw, weight=0.25, tier=4, group="spaß"),
-    Card("ber_opening", ber_opening_cond, ber_opening_draw, weight=0.25, tier=4, group="spaß"),
+    Card("txl", txl_cond, txl_draw, weight=0.25, tier=4, group="spaß", only_at="BER"),
+    Card("ber_opening", ber_opening_cond, ber_opening_draw, weight=0.25, tier=4, group="spaß", only_at="BER"),
     Card("plane", plane_cond, plane_draw, weight=0.5, tier=4, group="spaß"),
     Card("pigeon", pigeon_cond, pigeon_draw, weight=0.3, tier=4, group="spaß"),
     Card("santa", santa_cond, santa_draw, tier=3, group="saison", demo=santa_demo),

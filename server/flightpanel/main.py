@@ -28,16 +28,17 @@ from .adsbim import AdsbIm
 from .adsblol import AdsbLol, Paused
 from .astro import Iss
 from .cards import CARDS
-from .config import CFG, Config
+from .config import Config
+from .data import load_airlines, load_airports, load_fun, load_rare
 from .idle import IdleScreen
 from .issues import Issues
-from .origins import Origins, load_airports
 from .logos import make_logo_store
 from .metar import MetarSource
-from .model import DisplayModel, build_model, load_airlines, mock_model
+from .model import DisplayModel, build_model, mock_model
 from .opensky import OpenSky
-from .render import Renderer, active_seconds_per_day, brightness_for
-from .stats import Stats, load_rare
+from .origins import Origins
+from .render import Renderer
+from .stats import Stats
 
 log = logging.getLogger("main")
 
@@ -56,19 +57,6 @@ a{color:#8ab;margin-right:14px}</style>
 """
 
 
-def load_fun(data_dir: str) -> dict:
-    """data/jokes.json für die Spaß-Karten; fehlt sie, gibt es eben keine Witze."""
-    try:
-        with open(os.path.join(data_dir, "jokes.json"), encoding="utf-8") as f:
-            raw = json.load(f)
-        return {"jokes": raw.get("jokes", []), "delays": raw.get("delays", [])}
-    except FileNotFoundError:
-        return {}
-    except Exception as e:
-        log.warning("jokes.json nicht lesbar: %s", e)
-        return {}
-
-
 class App:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -81,7 +69,7 @@ class App:
         self.active_source = cfg.source     # woher der letzte Abruf kam
         self.adsblol_failing = False
         self.opensky_last_try = 0.0
-        self.last_ber_move = 0.0            # letzter Start oder letzte Landung am Platz
+        self.last_airport_move = 0.0        # letzter Start oder letzte Landung am Platz
         self.issues = Issues(os.path.join(cfg.data_dir, "issues.json"))
         self.started = time.time()
         self.counters = {"polls": 0, "ok": 0, "adsblol": 0, "opensky": 0}
@@ -94,7 +82,8 @@ class App:
         self.metar = MetarSource(None, cfg.metar_station, self.issues) if cfg.metar else None
         self.iss = Iss(cfg, os.path.join(cfg.data_dir, "tle.txt"), None, self.issues) if cfg.iss else None
         self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=self.metar, astro=self.iss,
-                               logos=self.logos, names=self.names, fun=load_fun(cfg.data_dir))
+                               logos=self.logos, names=self.names,
+                               fun=load_fun(cfg.data_dir, cfg.local_airport_iata))
         self.renderer = Renderer(cfg, self.logos, idle=self.idle)
         self._stop = asyncio.Event()
 
@@ -120,7 +109,7 @@ class App:
         Hours reicht (anonym: 400 Credits -> rund alle 2,5 min). Wird es trotzdem
         knapp, doppelt so lang."""
         budget = self.opensky.daily_credits
-        need = active_seconds_per_day(self.cfg) / (budget * 0.95)
+        need = self.cfg.active_seconds_per_day() / (budget * 0.95)
         interval = max(self.cfg.poll_interval, int(need + 0.999))
         rem = self.opensky.credits_remaining
         if rem is not None and rem < budget * 0.1:
@@ -155,7 +144,7 @@ class App:
         while not self._stop.is_set():
             t0 = time.time()
             interval = self.poll_interval()
-            if not self.cfg.mock and brightness_for(self.cfg, t0) == 0:
+            if not self.cfg.mock and self.cfg.brightness(t0) == 0:
                 # Quiet Hours: Panel ist schwarz, Credits sparen
                 await asyncio.sleep(60)
                 continue
@@ -173,8 +162,8 @@ class App:
                                                    issues=self.issues, adsbim=self.adsbim, origins=self.origins)
                     self.counters[self.active_source] += 1
                     if self.model.departures or any(a["eta_s"] <= 90 for a in self.model.arrivals):
-                        self.last_ber_move = t0
-                    self.model.last_ber_move = self.last_ber_move
+                        self.last_airport_move = t0
+                    self.model.last_airport_move = self.last_airport_move
                     await self._observe(states, t0)
                     log.info("%s: %d empfangen, %d im Radius, %d im Sichtfeld, angezeigt: %s. "
                              "Nächster Abruf in %d s",
@@ -220,7 +209,7 @@ class App:
     async def metar_loop(self) -> None:
         """Alle 20 min das METAR; in den Quiet Hours nur, solange noch keins da ist."""
         while not self._stop.is_set():
-            if brightness_for(self.cfg, time.time()) > 0 or self.metar.current is None:
+            if self.cfg.brightness(time.time()) > 0 or self.metar.current is None:
                 try:
                     await self.metar.refresh()
                 except Exception as e:
@@ -277,7 +266,7 @@ class App:
         self.last_frame_fetch = now
         self.frame_count += 1
         img = self._render()
-        body = self.renderer.frame_bytes(img, brightness_for(self.cfg, time.time()))
+        body = self.renderer.frame_bytes(img, self.cfg.brightness(time.time()))
         return web.Response(body=body, content_type="application/octet-stream",
                             headers={"Cache-Control": "no-store"})
 
@@ -334,7 +323,7 @@ class App:
             "ok": True,
             "mock": self.cfg.mock,
             "layout": self.cfg.layout,
-            "brightness_now": brightness_for(self.cfg, now),
+            "brightness_now": self.cfg.brightness(now),
             "model_age_s": round(now - self.last_model_ok) if self.last_model_ok else None,
             "model_stale": self.model.stale,
             "flights": len(self.model.flights),
@@ -442,9 +431,10 @@ class App:
 
 
 async def _main() -> None:
-    logging.basicConfig(level=getattr(logging, CFG.log_level.upper(), logging.INFO),
+    cfg = Config.from_env()
+    logging.basicConfig(level=getattr(logging, cfg.log_level.upper(), logging.INFO),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    app = App(CFG)
+    app = App(cfg)
     runner = await app.start()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

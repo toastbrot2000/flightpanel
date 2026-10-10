@@ -1,5 +1,7 @@
 {
-  "_comment": "Leerlauf-Karten 'joke' und 'delay'. jokes: bis zu drei Zeilen (je ~20 Zeichen), optional dates (MM-TT): dann nur an diesen Tagen, dafür öfter. Platzhalter: {year}, {next_year}, {ber_age}. delays: echte Gründe, warum der BER erst 2020 statt 2011 eröffnete, aus dem Wikipedia-Artikel \"Bau des Flughafens Berlin Brandenburg\"; Zeile 1|Zeile 2|Jahr (Jahr darf fehlen).",
+  "_comment": "Spaß-Inhalte für die Leerlauf-Karten 'joke', 'delay' und 'plane', Berlin-Ausgabe: gilt nur, wenn LOCAL_AIRPORT_IATA gleich 'airport' ist; für einen anderen Flughafen eine eigene Datei schreiben (oder die Karten abschalten, CARD_JOKE=0 ...). jokes: bis zu drei Zeilen (je ~20 Zeichen), optional dates (MM-TT): dann nur an diesen Tagen, dafür öfter. Platzhalter: {year}, {next_year}, {ber_age}. delays: echte Gründe, warum der BER erst 2020 statt 2011 eröffnete, aus dem Wikipedia-Artikel \"Bau des Flughafens Berlin Brandenburg\"; Zeile 1|Zeile 2|Jahr (Jahr darf fehlen). plane: Sprüche unter dem Flugzeug, das durchs Bild fliegt.",
+  "airport": "BER",
+  "plane": ["Himmel frei", "Warteschleife …", "gleich kommt einer", "Funkstille über Berlin"],
   "jokes": [
     {"lines": ["SXF heißt jetzt", "BER Terminal 5", "... und ist zu."]},
     {"lines": ["BER-Baukosten:", "geplant 2 Mrd €", "am Ende gut 7 Mrd €"]},

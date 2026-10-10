@@ -16,14 +16,14 @@ import sys
 
 import aiohttp
 
-from .config import CFG
+from .config import Config
+from .data import load_airlines
 from .logos import make_logo_store
-from .model import load_airlines
 
 
-async def run(codes: list[tuple[str, str]], force: bool) -> int:
+async def run(cfg: Config, codes: list[tuple[str, str]], force: bool) -> int:
     """codes: (IATA, ICAO)-Paare, eins von beiden darf leer sein."""
-    store = make_logo_store(CFG)
+    store = make_logo_store(cfg)
     store.fetch_enabled = True
     ok = skipped = 0
     failed: list[str] = []
@@ -56,7 +56,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     force = "--force" in sys.argv
-    airlines = load_airlines(CFG.data_dir)
+    cfg = Config.from_env()
+    airlines = load_airlines(cfg.data_dir)
     if args:
         by_iata = {v["iata"]: k for k, v in airlines.items() if v["iata"]}
         codes = []
@@ -68,7 +69,7 @@ def main() -> None:
     else:
         codes = sorted({(v["iata"], k) for k, v in airlines.items() if v["airline"]})
     print(f"{len(codes)} Airlines: {' '.join(i or c for i, c in codes)}")
-    sys.exit(asyncio.run(run(codes, force)))
+    sys.exit(asyncio.run(run(cfg, codes, force)))
 
 
 if __name__ == "__main__":

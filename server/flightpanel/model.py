@@ -8,7 +8,6 @@ Sichtlinie."""
 import json
 import logging
 import math
-import os
 import random
 import time
 from dataclasses import asdict, dataclass, field
@@ -77,9 +76,9 @@ class DisplayModel:
     empty: bool = False
     nearby: list[dict] = field(default_factory=list)   # alle im Radius, zum Eichen des Sichtfelds
     landing_course: float | None = None                # erkannte Landerichtung (Kurs im Endanflug)
-    departures: list[dict] = field(default_factory=list)  # wer gerade am BER startet (Karte "departures")
+    departures: list[dict] = field(default_factory=list)  # wer gerade am Platz startet (Karte "departures")
     arrivals: list[dict] = field(default_factory=list)    # Landefolge mit Herkunft und Minuten ("arrivals")
-    last_ber_move: float = 0.0                         # letzter Start oder letzte Landung (setzt main)
+    last_airport_move: float = 0.0                     # letzter Start oder letzte Landung (setzt main)
     course_votes: int = 0                              # so viele Flugzeuge bestätigen sie gerade
     upcoming: Flight | None = None                     # kommt als nächstes ins Sichtfeld
     upcoming_eta_s: float | None = None                # in so vielen Sekunden (ab generated_at)
@@ -117,31 +116,6 @@ def classify(s: State, origin: str, dest: str, local: str, guess: bool = True) -
     if alt < 3000 and vr > 2:
         return DEP
     return OVF
-
-
-def load_airlines(data_dir: str) -> dict[str, dict]:
-    """data/airlines.json: {"DLH": {"name": "Lufthansa", "iata": "LH"}, ...}
-    (alte Form "DLH": "Lufthansa" geht auch). Kurze Anzeigenamen statt der
-    langen adsbdb-Firmennamen, plus IATA-Code als Fallback für das Logo."""
-    path = os.path.join(data_dir, "airlines.json")
-    try:
-        with open(path, encoding="utf-8") as f:
-            raw = json.load(f)
-    except FileNotFoundError:
-        return {}
-    except Exception as e:
-        log.warning("airlines.json nicht lesbar: %s", e)
-        return {}
-    out = {}
-    for k, v in raw.items():
-        if k.startswith("_"):
-            continue
-        if isinstance(v, str):
-            v = {"name": v, "iata": ""}
-        out[k.upper()] = {"name": v.get("name", ""), "iata": (v.get("iata") or "").upper(),
-                          "airline": bool(v.get("airline", True)), "label": v.get("label", ""),
-                          "number": bool(v.get("number", False))}
-    return out
 
 
 def short_airline(name: str, icao: str, names: dict[str, dict]) -> str:

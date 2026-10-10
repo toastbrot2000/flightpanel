@@ -32,20 +32,6 @@ RARE_LOG = 30
 COURSE_CONFIRM = 3           # so viele Abrufe in Folge, bis eine neue Landerichtung gilt
 
 
-def load_rare(data_dir: str) -> dict:
-    """data/rare.json: {"types": {"A388": "A380"}, "callsigns": {"GAF": "Luftwaffe"}}."""
-    try:
-        with open(os.path.join(data_dir, "rare.json"), encoding="utf-8") as f:
-            raw = json.load(f)
-    except FileNotFoundError:
-        return {"types": {}, "callsigns": {}}
-    except Exception as e:
-        log.warning("rare.json nicht lesbar: %s", e)
-        return {"types": {}, "callsigns": {}}
-    return {"types": {k.upper(): v for k, v in raw.get("types", {}).items() if not k.startswith("_")},
-            "callsigns": {k.upper(): v for k, v in raw.get("callsigns", {}).items() if not k.startswith("_")}}
-
-
 def _date(t: float) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(t))
 

@@ -13,13 +13,12 @@ nicht; bei Landungen am eigenen Platz ergänzt es das Modell.
 Nur für gezeigte Flüge ohne Route abfragen, das Ergebnis bleibt pro Flug im
 Cache: ein paar Abrufe am Tag."""
 
-import json
 import logging
-import os
 
 import aiohttp
 
 from .adsbdb import Cache
+from .data import Airport
 from .geo import haversine_km
 
 log = logging.getLogger("origins")
@@ -31,25 +30,13 @@ TTL = 3 * 3600          # Flug dauert selten länger, und die Spur ändert ihren
 NEG_TTL = 15 * 60       # keine Spur: später vielleicht doch
 
 
-def load_airports(data_dir: str) -> list[tuple[str, float, float]]:
-    """[(IATA, Breite, Länge)] aus data/airports.json, leer wenn die Datei fehlt."""
-    try:
-        with open(os.path.join(data_dir, "airports.json"), encoding="utf-8") as f:
-            return [(r[0], float(r[2]), float(r[3])) for r in json.load(f)["airports"]]
-    except FileNotFoundError:
-        return []
-    except Exception as e:
-        log.warning("airports.json nicht lesbar: %s", e)
-        return []
-
-
-def nearest_airport(airports: list[tuple[str, float, float]], lat: float, lon: float,
-                    max_km: float = MAX_AIRPORT_KM) -> tuple[str, float, float] | None:
+def nearest_airport(airports: list[Airport], lat: float, lon: float,
+                    max_km: float = MAX_AIRPORT_KM) -> Airport | None:
     best, best_d = None, max_km
     for ap in airports:
-        if abs(ap[1] - lat) > 0.2:          # grob vorfiltern, ~22 km
+        if abs(ap.lat - lat) > 0.2:         # grob vorfiltern, ~22 km
             continue
-        d = haversine_km(lat, lon, ap[1], ap[2])
+        d = haversine_km(lat, lon, ap.lat, ap.lon)
         if d <= best_d:
             best, best_d = ap, d
     return best
@@ -68,18 +55,13 @@ def track_start(track: dict, callsign: str) -> tuple[float, float] | None:
 
 
 class Origins:
-    def __init__(self, session: aiohttp.ClientSession, cache: Cache, airports: list[tuple[str, float, float]]):
+    def __init__(self, session: aiohttp.ClientSession, cache: Cache, airports: list[Airport]):
         self.session = session
         self.cache = cache
         self.airports = airports
-        self.positions = {iata: (lat, lon) for iata, lat, lon in airports}
         self.last_error: str | None = None
         self.issues = None      # Issues, setzt main
         self.auth = None        # async () -> Header mit OpenSky-Token, setzt main, wenn Zugangsdaten da sind
-
-    def position(self, iata: str) -> list[float] | None:
-        p = self.positions.get(iata)
-        return [p[0], p[1]] if p else None
 
     async def origin(self, icao24: str, callsign: str) -> dict:
         """{"origin": "ORY", "origin_pos": [lat, lon]} oder {}."""
@@ -109,8 +91,8 @@ class Origins:
             return {}
         start = track_start(track, callsign)
         ap = nearest_airport(self.airports, *start) if start else None
-        out = {"origin": ap[0], "origin_pos": [ap[1], ap[2]]} if ap else {}
+        out = {"origin": ap.iata, "origin_pos": [ap.lat, ap.lon]} if ap else {}
         self.cache.set(key, out, TTL if out else NEG_TTL)
         if out:
-            log.info("Abflughafen aus der Spur: %s %s", callsign, ap[0])
+            log.info("Abflughafen aus der Spur: %s %s", callsign, ap.iata)
         return out

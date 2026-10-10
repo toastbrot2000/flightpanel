@@ -20,7 +20,7 @@ from PIL import Image
 from .aircraft import second_line, shown_elsewhere
 from .cards import CARDS
 from .colors import ARR_C, CLOCK, DEP_C, INFO, MUTED, OVF_C, dim
-from .config import Config, in_hours
+from .config import Config
 from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from .geo import kompass
 from .idle import IdleScreen
@@ -129,7 +129,7 @@ class Renderer:
         if card:
             self.idle.draw(img, model, now, f, force=card, preview=True)
             return img
-        if model.alert and not model.stale and "alert" not in self.cfg.idle_disabled:
+        if model.alert and not model.stale and self.idle.enabled("alert"):
             self.idle.draw(img, model, now, f, force="alert")
             return img
         airline = [fl for fl in model.flights if fl.kind == "airline"]
@@ -295,21 +295,3 @@ class Renderer:
             while right and FONT_SMALL.text_width(right) > W - x - 4:
                 right = right[:-1]
             FONT_SMALL.draw(img, W - FONT_SMALL.text_width(right), y, right, _dim(INFO, f))
-
-
-def brightness_for(cfg: Config, now: float) -> int:
-    """Helligkeit nach Uhrzeit. Quiet Hours -> 0 (Panel schwarz)."""
-    t = datetime.fromtimestamp(now)
-    minute = t.hour * 60 + t.minute
-    if in_hours(cfg.quiet_hours, minute):
-        return 0
-    if in_hours(cfg.day_hours, minute):
-        return cfg.brightness_day
-    return cfg.brightness_evening
-
-
-def active_seconds_per_day(cfg: Config) -> int:
-    """Sekunden pro Tag außerhalb der Quiet Hours (in denen nicht gepollt wird)."""
-    a, b = cfg.quiet_hours
-    quiet = (b - a) % (24 * 60)
-    return (24 * 60 - quiet) * 60

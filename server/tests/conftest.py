@@ -20,7 +20,7 @@ def make_cfg(**kw) -> Config:
     base = dict(home_lat=HOME[0], home_lon=HOME[1], home_alt_m=40, radius_km=40, scan_radius_km=40,
                 airport_lat=BER[0], airport_lon=BER[1], runway_course=249, view_from=0, view_to=360,
                 view_min_elev=0, view_max_elev=90, view_max_km=100, view_only=True, show_other=True,
-                max_flights=3, data_dir=DATA, idle_seconds=12, idle_off="", idle_clock_share=0.35)
+                max_flights=3, data_dir=DATA, idle_seconds=12, idle_clock_share=0.35)
     base.update(kw)
     return Config(**base)
 

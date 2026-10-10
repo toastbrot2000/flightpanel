@@ -1,18 +1,22 @@
-"""Leerlauf: Wenn kein Flug zu zeigen ist, wechseln Karten.
+"""Leerlauf: Wenn keine Airline zu zeigen ist, wechseln Karten.
 
-Jede Karte (cards.py) hat eine Bedingung und eine Zeichenfunktion. Die Bedingung
+Jede Karte (cards/) hat eine Bedingung und eine Zeichenfunktion. Die Bedingung
 schaut in den Kontext (Display-Modell, Statistik, Wetter, Sonne/ISS, Uhrzeit) und
 gibt ein Hit mit den Daten zurück, oder None, wenn die Karte gerade nichts zu sagen
 hat. Fällt eine Quelle aus (kein METAR, keine Bahndaten), liefern ihre Karten None
-und die anderen kommen dran; die Uhr geht immer.
+und die anderen kommen dran.
 
 Auswahl pro Zeitscheibe (IDLE_SECONDS):
-  1. Dringendes bricht durch: Notfall-Squawk (schon in render), NEU!-Airline,
-     Flieger in unter 3 min, ISS gerade über dem Haus. Mehrere wechseln sich ab.
+  1. Dringendes bricht durch: NEU!-Airline, Flieger in unter 3 min, ISS gerade
+     über dem Haus. Mehrere wechseln sich ab. (Den Notfall-Squawk zeigt render.py
+     vor allem anderen.)
   2. Sonst mit IDLE_CLOCK_SHARE die Uhr, ansonsten gewichteter Zufall unter den
      Karten der höchsten Stufe, die etwas zu zeigen hat (docs/screens.md):
-     2 Verkehr am BER, 3 wenig los, 4 Spielereien. Stufe 4 nur, wenn gar nichts
+     2 Verkehr am Platz, 3 wenig los, 4 Spielereien. Stufe 4 nur, wenn gar nichts
      los ist (Ctx.quiet), dann gemischt mit Stufe 3. Ohne die der letzten Scheiben.
+
+Jede Karte lässt sich abschalten (CARD_<ID>=0). Hat keine Karte etwas zu zeigen,
+auch nicht die Uhr, bleibt das Panel dunkel.
 
 Gerendert wird bei jedem Abruf des ESP32 (alle 2 s); Animationen hängen nur von
 der Zeit seit Beginn der Scheibe ab, nicht von einem Bildzähler."""
@@ -22,8 +26,9 @@ import logging
 import random
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from PIL import Image
 
@@ -45,14 +50,15 @@ class Hit:
 
 @dataclass
 class Ctx:
+    """Alles, was eine Karte sehen darf."""
     cfg: Config
-    model: Any
+    model: Any                                    # model.DisplayModel
     now: float
-    stats: Any = None
-    metar: Any = None
-    astro: Any = None
-    logos: Any = None
-    names: dict = field(default_factory=dict)
+    stats: Any = None                             # stats.Stats
+    metar: Any = None                             # metar.MetarSource
+    astro: Any = None                             # astro.Iss
+    logos: Any = None                             # logos.LogoStore
+    names: dict = field(default_factory=dict)     # data/airlines.json
     fun: dict = field(default_factory=dict)       # data/jokes.json
     draw_flight: Any = None                       # Renderer: Flug wie im Normalbetrieb zeichnen
 
@@ -61,11 +67,11 @@ class Ctx:
         """Gar nichts los am Platz: seit 15 min kein Start und keine Landung, und in
         den nächsten 10 min landet keiner. Erst dann kommen Spielereien (Stufe 4)."""
         m = self.model
-        if getattr(m, "departures", None):
+        if m.departures:
             return False
-        if any((a.get("eta_s") or 9e9) <= QUIET_AHEAD_S for a in getattr(m, "arrivals", None) or []):
+        if any((a.get("eta_s") or 9e9) <= QUIET_AHEAD_S for a in m.arrivals):
             return False
-        return self.now - (getattr(m, "last_ber_move", 0.0) or 0.0) > QUIET_SINCE_S
+        return self.now - m.last_airport_move > QUIET_SINCE_S
 
     @property
     def live(self) -> bool:
@@ -77,12 +83,13 @@ class Ctx:
 class Card:
     id: str
     cond: Callable[[Ctx], Hit | None]
-    draw: Callable[[Image.Image, Ctx, Any, float, float], None]
+    draw: Callable[[Image.Image, Ctx, Any, float, float], None]   # (img, ctx, data, t_in, f)
     weight: float = 1.0
     group: str = ""
-    live: bool = False                                  # braucht frische Flugdaten
-    tier: int = 3                                       # 2 Verkehr am BER, 3 wenig los, 4 Spielereien
-    demo: Callable[[Ctx], Any] | None = None            # Beispieldaten für ?card=<id>
+    tier: int = 3                         # 0 Notfall, 2 Verkehr am Platz, 3 wenig los, 4 Spielereien
+    live: bool = False                    # braucht frische Flugdaten
+    only_at: str = ""                     # nur an diesem Heimatflughafen (IATA), z. B. Tegel-Karte
+    demo: Callable[[Ctx], Any] | None = None   # Beispieldaten für /frame.png?card=<id>
 
 
 class IdleScreen:
@@ -95,9 +102,16 @@ class IdleScreen:
         self._recent: deque[str] = deque(maxlen=RECENT)
         self._errors: dict[str, float] = {}
         self.last_pick: str | None = None
+        for cid in sorted(cfg.cards_off - self.cards.keys()):
+            log.warning("CARD_%s: keine solche Karte (IDs unter /idle)", cid.upper())
 
     def context(self, model, now: float) -> Ctx:
         return Ctx(cfg=self.cfg, model=model, now=now, **self.providers)
+
+    def enabled(self, cid: str) -> bool:
+        c = self.cards.get(cid)
+        return (c is not None and cid not in self.cfg.cards_off
+                and (not c.only_at or c.only_at == self.cfg.local_airport_iata))
 
     def _fail(self, cid: str, what: str, e: Exception) -> None:
         """Fehler einer Karte loggen, höchstens einmal pro Stunde je Karte."""
@@ -107,10 +121,10 @@ class IdleScreen:
             log.exception("Karte %s: %s fehlgeschlagen: %s", cid, what, e)
 
     def candidates(self, ctx: Ctx) -> dict[str, Hit]:
+        """Die eingeschalteten Karten, die gerade etwas zu sagen haben."""
         out: dict[str, Hit] = {}
-        off = self.cfg.idle_disabled
         for cid, c in self.cards.items():
-            if cid in off or (c.live and not ctx.live):
+            if not self.enabled(cid) or (c.live and not ctx.live):
                 continue
             try:
                 h = c.cond(ctx)
@@ -124,7 +138,18 @@ class IdleScreen:
     def slot(self, now: float) -> int:
         return int(now // max(1, self.cfg.idle_seconds))
 
-    def pick(self, ctx: Ctx) -> tuple[str, Hit]:
+    def _top_tier(self, ctx: Ctx, pool: dict[str, Hit]) -> dict[str, Hit]:
+        """Nur die höchste Stufe mit etwas zu zeigen; Spielereien nur, wenn gar nichts los ist."""
+        quiet = ctx.quiet
+        pool = {cid: h for cid, h in pool.items() if self.cards[cid].tier < 4 or quiet}
+        if not pool:
+            return pool
+        top = min(self.cards[cid].tier for cid in pool)
+        ok = {top, 4} if top == 3 and quiet else {top}
+        return {cid: h for cid, h in pool.items() if self.cards[cid].tier in ok}
+
+    def pick(self, ctx: Ctx) -> tuple[str, Hit] | None:
+        """Die Karte für diese Zeitscheibe; None, wenn keine etwas zu zeigen hat."""
         slot = self.slot(ctx.now)
         cands = self.candidates(ctx)
         urgent = sorted(cid for cid, h in cands.items() if h.urgent)
@@ -139,16 +164,10 @@ class IdleScreen:
         rng = random.Random(slot)
         pool = {cid: h for cid, h in cands.items() if cid != "clock"}
         if pool:
-            # Nur die höchste Stufe mit etwas zu zeigen; Spielereien nur, wenn gar nichts los ist
-            quiet = ctx.quiet
-            pool = {cid: h for cid, h in pool.items() if self.cards[cid].tier < 4 or quiet}
-            if pool:
-                top = min(self.cards[cid].tier for cid in pool)
-                ok = {top, 4} if top == 3 and quiet else {top}
-                pool = {cid: h for cid, h in pool.items() if self.cards[cid].tier in ok}
+            pool = self._top_tier(ctx, pool)
         last = self._recent[-1] if self._recent else None
         if not pool or ("clock" in cands and last != "clock" and rng.random() < self.cfg.idle_clock_share):
-            cid = "clock" if "clock" in cands else next(iter(cands), "clock")
+            cid = "clock" if "clock" in cands else None
         else:
             fresh = {k: h for k, h in pool.items() if k not in self._recent}
             if not fresh:
@@ -157,12 +176,13 @@ class IdleScreen:
             weights = [fresh[k].weight if fresh[k].weight is not None else self.cards[k].weight for k in ids]
             cid = rng.choices(ids, weights=weights)[0]
         self._cur = cid
-        return cid, cands.get(cid, Hit())
+        return (cid, cands[cid]) if cid else None
 
     def draw(self, img: Image.Image, model, now: float, f: float = 1.0, force: str | None = None,
-             preview: bool = False) -> str:
-        """Zeichnet die dran befindliche Karte (oder force) und gibt ihre ID zurück. preview:
-        Vorschau mit ?card=, zählt nicht als "gerade gezeigt"."""
+             preview: bool = False) -> str | None:
+        """Zeichnet die Karte, die dran ist (oder force), und gibt ihre ID zurück; None,
+        wenn keine dran ist (Panel bleibt dunkel). preview: Vorschau mit ?card=, zählt
+        nicht als gezeigt und zeigt auch abgeschaltete Karten."""
         ctx = self.context(model, now)
         if force and force in self.cards:
             c = self.cards[force]
@@ -175,16 +195,19 @@ class IdleScreen:
                 h = Hit(c.demo(ctx))
             cid, hit = force, h or Hit()
         else:
-            cid, hit = self.pick(ctx)
-        t_in = now - self.slot(now) * max(1, self.cfg.idle_seconds)
-        try:
-            self.cards[cid].draw(img, ctx, hit.data, t_in, f)
-        except Exception as e:
-            self._fail(cid, "Zeichnen", e)
-            img.paste((0, 0, 0), (0, 0, img.width, img.height))
-            if cid != "clock" and "clock" in self.cards:
-                self.cards["clock"].draw(img, ctx, None, t_in, f)
-                cid = "clock"
+            picked = self.pick(ctx)
+            cid, hit = picked if picked else (None, None)
+        if cid is not None:
+            t_in = now - self.slot(now) * max(1, self.cfg.idle_seconds)
+            try:
+                self.cards[cid].draw(img, ctx, hit.data, t_in, f)
+            except Exception as e:
+                self._fail(cid, "Zeichnen", e)
+                img.paste((0, 0, 0), (0, 0, img.width, img.height))
+                failed, cid = cid, None
+                if failed != "clock" and self.enabled("clock"):
+                    self.cards["clock"].draw(img, ctx, None, t_in, f)
+                    cid = "clock"
         if not preview:
             self.last_pick = cid
         return cid
@@ -193,7 +216,6 @@ class IdleScreen:
         """Für GET /idle: welche Karten gerade etwas zu sagen haben."""
         ctx = self.context(model, now)
         cands = self.candidates(ctx)
-        off = self.cfg.idle_disabled
 
         def js(v):
             try:
@@ -206,7 +228,7 @@ class IdleScreen:
             "showing": self.last_pick,
             "recent": list(self._recent),
             "cards": [{"id": cid, "tier": c.tier, "group": c.group, "weight": c.weight,
-                       "state": "off" if cid in off else "active" if cid in cands else "idle",
+                       "state": "off" if not self.enabled(cid) else "active" if cid in cands else "idle",
                        "urgent": bool(cands.get(cid) and cands[cid].urgent),
                        "data": js(cands[cid].data) if cid in cands else None}
                       for cid, c in self.cards.items()],
