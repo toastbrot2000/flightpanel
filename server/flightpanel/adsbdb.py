@@ -4,6 +4,7 @@ der stündlich als JSON auf die Platte geschrieben wird."""
 import json
 import logging
 import os
+import re
 import time
 
 import aiohttp
@@ -13,6 +14,18 @@ log = logging.getLogger("adsbdb")
 ROUTE_TTL = 24 * 3600
 AIRCRAFT_TTL = 30 * 24 * 3600
 NEGATIVE_TTL = 6 * 3600
+
+# Werte kommen ungeprüft aus OpenSky und landen im URL-Pfad: nur gültige Formen durchlassen.
+CALLSIGN_RE = re.compile(r"^[A-Z0-9]{2,8}$")
+ICAO24_RE = re.compile(r"^[0-9a-f]{6}$")
+
+
+def _pos(airport: dict) -> list[float] | None:
+    """[lat, lon] eines Flughafens aus der adsbdb-Antwort, für die Plausibilitätsprüfung."""
+    try:
+        return [float(airport["latitude"]), float(airport["longitude"])]
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 class Cache:
@@ -86,7 +99,7 @@ class AdsbDb:
 
     async def route(self, callsign: str) -> dict:
         """{'origin': 'LGW', 'dest': 'BER', 'airline': 'easyJet', 'airline_icao': 'EZY', 'airline_iata': 'U2'} oder {}."""
-        if not callsign:
+        if not CALLSIGN_RE.match(callsign or ""):
             return {}
         key = f"route:{callsign}"
         hit = self.cache.get(key)
@@ -103,6 +116,8 @@ class AdsbDb:
             out = {
                 "origin": (o.get("iata_code") or "").upper(),
                 "dest": (d.get("iata_code") or "").upper(),
+                "origin_pos": _pos(o),
+                "dest_pos": _pos(d),
                 "airline": al.get("name") or "",
                 "airline_icao": (al.get("icao") or "").upper(),
                 "airline_iata": (al.get("iata") or "").upper(),
@@ -112,7 +127,7 @@ class AdsbDb:
 
     async def aircraft(self, icao24: str) -> dict:
         """{'type': 'A320', 'type_long': 'Airbus A320-214', 'operator': 'easyJet Europe'} oder {}."""
-        if not icao24:
+        if not ICAO24_RE.match(icao24 or ""):
             return {}
         key = f"ac:{icao24}"
         hit = self.cache.get(key)

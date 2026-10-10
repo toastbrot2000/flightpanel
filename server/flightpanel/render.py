@@ -234,3 +234,10 @@ def brightness_for(cfg: Config, now: float) -> int:
     if inside(cfg.day_hours):
         return cfg.brightness_day
     return cfg.brightness_evening
+
+
+def active_seconds_per_day(cfg: Config) -> int:
+    """Sekunden pro Tag außerhalb der Quiet Hours (in denen nicht gepollt wird)."""
+    a, b = cfg.quiet_hours
+    quiet = (b - a) % (24 * 60)
+    return (24 * 60 - quiet) * 60

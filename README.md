@@ -17,7 +17,7 @@ Der Server rendert das komplette Bild. Der ESP32 holt es ab und schreibt es in d
 cp .env.example .env            # MOCK=1 ist schon gesetzt
 docker compose up -d --build
 open http://localhost:8080      # Vorschau, wechselt alle 2 s
-docker compose exec flightpanel python3 -m flightpanel.fetch_logos   # Logos für ~110 Airlines holen
+docker compose exec flightpanel python3 -m flightpanel.fetch_logos   # Logos für ~130 Betreiber holen
 ```
 
 Oder ohne Docker (braucht DejaVu-Fonts, `fonts-dejavu-core`):
@@ -36,7 +36,7 @@ Die Vorschauseite hat Links für die Layouts. `/frame.png?layout=C&scale=8&gap=0
 | `/` | Vorschauseite |
 | `/frame` | Binär für den ESP32: `[1, helligkeit, 128, 32]` + 12 288 Byte RGB |
 | `/frame.png` | Vorschau, Parameter `layout`, `scale`, `gap` |
-| `/display.json` | Display-Modell (Flüge, Status, Route, Höhe, Airline-Codes …) |
+| `/display.json` | Display-Modell (Flüge, Status, Route, Höhe, Airline-Codes …), dazu `nearby`: alle Flugzeuge im Radius mit Richtung (`az`), Höhenwinkel (`elev`) und `in_view` |
 | `/health` | OpenSky-Credits, Cache, vorhandene/fehlende Logos, letzter ESP32-Abruf. `esp32.alive=false` heißt: Panel hängt. |
 
 ## Layouts
@@ -50,23 +50,38 @@ Drei Zeilen à 11 px, DejaVu Sans als harte Pixelschrift, Pfeile als Pixelmuster
 
 Bei zwei Flügen im Modell wechseln A und C alle 12 s zum nächsten Flug. Leer: Uhr und Datum. Farben: Ankunft amber, Abflug grün, Überflug blau, kein Weiß als Textfarbe.
 
+## Was angezeigt wird
+
+Pro Abruf ordnet der Server alle Flugzeuge im Radius (unter `MAX_ALT_M`, nicht am Boden):
+
+1. **Sichtfeld zuerst.** `VIEW_FROM`/`VIEW_TO` (Richtung im Uhrzeigersinn, 0 = Nord, 90 = Ost), `VIEW_MIN_ELEV` (Grad über dem Horizont) und `VIEW_MAX_KM` beschreiben, was man vom Fenster aus sieht. Zählt auch, wer bis zum nächsten Abruf hineinfliegt (aus Geschwindigkeit, Kurs und Steigrate weitergerechnet), sonst wären Anflüge schon durch, bevor sie auf dem Panel stehen. `VIEW_ONLY=1` zeigt nur das Sichtfeld und sonst die Uhr, `VIEW_ONLY=0` zeigt Sichtbares zuerst und sonst das nächste Flugzeug. Default: rundum.
+2. **Airlines vor dem Rest.** Linien-, Charter- und Frachtflüge zählen als Airline: Betreiber aus `data/airlines.json` oder mit Route bei adsbdb. Privatflüge (Callsign = Kennzeichen), Rettungshubschrauber, Polizei und Luftwaffe (`"airline": false` in `airlines.json`) kommen nur dran, wenn keine Airline zu sehen ist; `SHOW_OTHER=0` blendet sie ganz aus.
+3. **Kürzeste Sichtlinie.**
+
+Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen `az` und `elev` ablesen.
+
+Routen von adsbdb sind pro Callsign gespeichert, und Airlines verwenden Callsigns für andere Strecken weiter. Liegt das Flugzeug weit neben der gespeicherten Strecke, verwirft der Server die Route und zeigt das Callsign.
+
 ## Airline-Logos
 
-Der Server holt fehlende Logos selbst: adsbdb liefert zum Callsign den IATA-Code der Airline (`U2`, `LH`, `FR`), der Server lädt `https://pics.avs.io/200/200/<IATA>.png`, entfernt den weißen Hintergrund, schneidet zu, skaliert auf 30 × 30 und legt `data/logos/<IATA>.png` ab. Fehlschläge stehen in `/health` → `logos_missing` und werden nach 7 Tagen erneut probiert.
+Nur quadratische Bildmarken: Schriftzüge sind bei 30 × 30 Pixeln unlesbar, dann zeigt das Panel Layout A ohne Logo. Der Server holt fehlende Logos selbst und probiert die Quellen der Reihe nach: Kiwi.com (App-Icons, per IATA), dann FlightAware (Bildmarken, per ICAO). Er nimmt das erste Bild mit Seitenverhältnis bis `LOGO_MAX_ASPECT` (1,5), entfernt weißen Hintergrund, skaliert auf 30 × 30 und legt `data/logos/<IATA>.png` ab (ohne IATA-Code `<ICAO>.png`). Platzhalterbilder der Quellen (graues Flugzeug) erkennt er, indem er jede Quelle einmal nach einem Code fragt, den es nicht gibt. Fehlschläge stehen in `/health` → `logos_missing` und werden nach 7 Tagen erneut probiert.
 
 - Alles auf einmal: `python3 -m flightpanel.fetch_logos` (alle Airlines aus `data/airlines.json`), oder gezielt `… fetch_logos LH U2 FR`, `--force` überschreibt.
 - Handgemachte Logos haben Vorrang: eine 30 × 30-PNG als `data/logos/<IATA>.png` oder `<ICAO>.png` ablegen. Neue Dateien werden im Betrieb erkannt.
 - `tools/make_logo.py bild.svg LH` macht aus beliebigen Bildern (PNG/JPG/SVG) das passende Format, mit Vorschau. `--bg "#ff6600"` legt eine Markenfarbe hinter das Logo, `--crop 10` schneidet Rand ab.
-- `LOGO_FETCH=0` schaltet den Abruf ab, `LOGO_URL` tauscht die Quelle (`{code}` wird ersetzt).
+- `LOGO_FETCH=0` schaltet den Abruf ab, `LOGO_URLS` ersetzt die Quellen (kommagetrennt, `{iata}` oder `{icao}`).
 
-`data/airlines.json` bildet ICAO-Codes auf kurze Anzeigenamen und IATA-Codes ab (adsbdb liefert sonst "Deutsche Lufthansa AG" und manchmal keinen IATA-Code). Rund 110 Einträge: alles, was in Berlin regelmäßig fliegt, plus große Überflieger und Frachter.
+`data/airlines.json` bildet ICAO-Codes auf kurze Anzeigenamen und den Logo-Code ab (adsbdb liefert sonst "Deutsche Lufthansa AG"). Der Logo-Code ist die IATA-Marke, nicht unbedingt die des Tochterbetriebs: Malta Air → `FR`, DHL-Betriebe → `D0`. Leer heißt: Logo per ICAO, weil der IATA-Code doppelt vergeben ist (Cargolux `CV` ist bei Kiwi Air Chathams). Rund 130 Einträge: alles, was in Berlin regelmäßig fliegt, große Überflieger und Frachter.
 
 ## Echte Daten
 
+Läuft auch ohne Account: In `.env` `MOCK=0`, `HOME_LAT`, `HOME_LON` setzen, `docker compose up -d --build`. Anonym gibt OpenSky 400 Credits am Tag (1 Credit pro Abruf), der Server pollt dann nur alle ~2,5 min. Für ein Panel, das Anflüge zeigt, ist das zu langsam:
+
 1. OpenSky-Account anlegen, unter *API Clients* einen Client erzeugen.
-2. In `.env`: `MOCK=0`, `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET`, `HOME_LAT`, `HOME_LON`.
-3. `docker compose up -d --build`, dann `/health` ansehen: `credits_remaining` sollte um 4000 liegen, bei 30 s Intervall reicht das für den Tag. Unter 500 Credits schaltet der Server selbst auf 60 s.
-4. Ein paar Tage `/display.json` beobachten und `RADIUS_KM` / `MAX_ALT_M` einstellen.
+2. In `.env`: `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET`. Dann 4000 Credits am Tag, Abruf alle `POLL_INTERVAL` Sekunden (20 s reichen gut).
+3. `docker compose up -d --build`, dann `/health` ansehen: `opensky.anonymous=false`, `poll_interval_s`, `credits_remaining`.
+
+Der Server rechnet das Intervall selbst aus: nie kürzer als `POLL_INTERVAL`, aber so lang, dass das Tagesbudget für die Stunden außerhalb `QUIET_HOURS` reicht (in den Quiet Hours ist das Panel schwarz und es wird nicht gepollt). Bei unter 10 % Rest-Credits verdoppelt er das Intervall, bei HTTP 429 wartet er so lange, wie OpenSky es sagt.
 
 Routen und Flugzeugtypen kommen von adsbdb.com (kostenlos, ohne Account) und werden 24 h bzw. 30 Tage in `data/cache.json` gehalten.
 
@@ -96,7 +111,7 @@ Verdrahtung ESP32 → HUB75 (Standard der Bibliothek, Tabelle auch im Bauplan 4.
 
 Beim Boot zeigt die Firmware ein Testbild: linkes Panel rot, rechtes grün (Kettenreihenfolge), dann Rahmen plus Diagonale (Geometrie), dann Schriftzug (Orientierung). Danach holt sie alle 2 s `/frame`. Schalter in `include/config.h`: `SWAP_HALVES`, `HUB75_CLKPHASE`, `HUB75_LATCH_BLANKING`, `MAX_BRIGHTNESS 160`. Ohne Server-Kontakt bleibt das letzte Bild stehen und nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu.
 
-Die Firmware ist gegen die Bibliotheksquelle 3.0.14 geschrieben, aber in der Entwicklungsumgebung nicht kompiliert worden (keine Registry). Der erste `pio run` ist der Test.
+Die Firmware ist gegen die Bibliotheksquelle 3.0.14 geschrieben. Kompilieren lässt sie sich auch ohne lokale PlatformIO-Installation in Docker, siehe `tools/check_firmware.sh`.
 
 ## Struktur
 

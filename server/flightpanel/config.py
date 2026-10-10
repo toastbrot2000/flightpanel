@@ -29,6 +29,18 @@ class Config:
     max_alt_m: float = float(_env("MAX_ALT_M", "6000"))
     local_airport_iata: str = _env("LOCAL_AIRPORT_IATA", "BER").upper()
 
+    # Sichtfeld: was man vom Fenster aus sieht. Richtung im Uhrzeigersinn von
+    # VIEW_FROM bis VIEW_TO (0 = Nord, 90 = Ost), Höhenwinkel über dem Horizont,
+    # Sichtweite. Default: rundum, also wie ohne Sichtfeld.
+    home_alt_m: float = float(_env("HOME_ALT_M", "40"))
+    view_from: float = float(_env("VIEW_FROM", "0"))
+    view_to: float = float(_env("VIEW_TO", "360"))
+    view_min_elev: float = float(_env("VIEW_MIN_ELEV", "0"))
+    view_max_elev: float = float(_env("VIEW_MAX_ELEV", "90"))
+    view_max_km: float = float(_env("VIEW_MAX_KM", "100"))
+    view_only: bool = _env("VIEW_ONLY", "0") in ("1", "true", "yes")   # sonst Sichtbares nur zuerst
+    show_other: bool = _env("SHOW_OTHER", "1") in ("1", "true", "yes")  # Private, Hubschrauber, Militär
+
     # Datenquellen
     mock: bool = _env("MOCK", "0") in ("1", "true", "yes")
     opensky_client_id: str = _env("OPENSKY_CLIENT_ID", "")
@@ -44,9 +56,13 @@ class Config:
     max_flights: int = int(_env("MAX_FLIGHTS", "2"))
     logo_size: int = int(_env("LOGO_SIZE", "30"))
 
-    # Logos: automatischer Abruf per IATA-Code beim ersten Auftauchen einer Airline
+    # Logos: automatischer Abruf beim ersten Auftauchen einer Airline. LOGO_URLS:
+    # kommagetrennte Vorlagen mit {iata} oder {icao}, werden der Reihe nach probiert.
+    # Leer = eingebaute Liste (logos.DEFAULT_URLS). Nur annähernd quadratische Logos
+    # (Seitenverhältnis bis LOGO_MAX_ASPECT) werden genommen.
     logo_fetch: bool = _env("LOGO_FETCH", "1") in ("1", "true", "yes")
-    logo_url: str = _env("LOGO_URL", "https://pics.avs.io/200/200/{code}.png")
+    logo_urls: tuple[str, ...] = tuple(u.strip() for u in _env("LOGO_URLS", _env("LOGO_URL", "")).split(",") if u.strip())
+    logo_max_aspect: float = float(_env("LOGO_MAX_ASPECT", "1.5"))
 
     # Helligkeit
     brightness_day: int = int(_env("BRIGHTNESS_DAY", "90"))

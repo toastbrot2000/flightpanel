@@ -21,3 +21,20 @@ def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 def compass(deg: float) -> str:
     return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][int((deg + 22.5) // 45) % 8]
+
+
+def destination(lat: float, lon: float, bearing: float, dist_km: float) -> tuple[float, float]:
+    """Punkt in dist_km Entfernung in Richtung bearing (Koppelnavigation)."""
+    p1, l1, b = math.radians(lat), math.radians(lon), math.radians(bearing)
+    d = dist_km / EARTH_KM
+    p2 = math.asin(math.sin(p1) * math.cos(d) + math.cos(p1) * math.sin(d) * math.cos(b))
+    l2 = l1 + math.atan2(math.sin(b) * math.sin(d) * math.cos(p1), math.cos(d) - math.sin(p1) * math.sin(p2))
+    return math.degrees(p2), math.degrees(l2)
+
+
+def elevation_deg(dist_km: float, height_m: float) -> float:
+    """Höhenwinkel über dem Horizont für ein Objekt height_m über dem Beobachter,
+    mit Erdkrümmung und Standardrefraktion (k = 0,13)."""
+    d_m = max(dist_km, 0.001) * 1000
+    drop_m = d_m ** 2 / (2 * EARTH_KM * 1000 / (1 - 0.13))
+    return math.degrees(math.atan2(height_m - drop_m, d_m))

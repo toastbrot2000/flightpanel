@@ -1,5 +1,9 @@
 """Airline-Logos: aus data/logos/<CODE>.png laden, und wenn keins da ist,
-einmalig von einem Logo-CDN per IATA-Code holen, aufbereiten und ablegen.
+einmalig von Logo-CDNs holen, aufbereiten und ablegen.
+
+Quellen (LOGO_URLS) werden der Reihe nach probiert. Genommen werden nur
+annähernd quadratische Bildmarken (Seitenverhältnis bis LOGO_MAX_ASPECT):
+Schriftzüge werden bei 30 x 30 Pixeln unlesbar, dann lieber Layout A ohne Logo.
 
 Aufbereitung: weißen Hintergrund entfernen (Flood-Fill vom Rand), auf den
 Inhalt zuschneiden, proportional in LOGO_SIZE einpassen, auf Schwarz legen.
@@ -9,6 +13,7 @@ Neue Dateien werden im Betrieb erkannt, man kann also jederzeit handgemachte
 Logos ablegen; die haben Vorrang vor dem Abruf."""
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -23,6 +28,23 @@ log = logging.getLogger("logos")
 EXTS = ("png", "PNG", "gif", "bmp", "jpg", "jpeg")
 MISSING_TTL = 7 * 24 * 3600
 ERROR_RETRY = 10 * 60          # nach Netzfehler erst nach 10 min wieder versuchen
+MAX_DOWNLOAD = 2 * 1024 * 1024 # Bytes; Logos sind wenige KB
+MAX_SOURCE_PX = 512            # größere Bilder vor dem Flood-Fill verkleinern
+
+# Schutz vor Dekompressionsbomben aus dem Netz: Logos haben selten mehr als 1000 x 1000,
+# Pillow bricht ab dem Doppelten ab.
+Image.MAX_IMAGE_PIXELS = 4_000_000
+
+# Kiwi: quadratische App-Icon-Kacheln, per IATA. FlightAware: Bildmarken, per ICAO.
+DEFAULT_URLS = (
+    "https://images.kiwi.com/airlines/128x128/{iata}.png",
+    "https://images.kiwi.com/airlines/64/{iata}.png",
+    "https://www.flightaware.com/images/airline_logos/90p/{icao}.png",
+)
+
+
+class NotSquare(ValueError):
+    pass
 
 
 def remove_background(img: Image.Image, threshold: int = 235) -> Image.Image:
@@ -53,14 +75,21 @@ def remove_background(img: Image.Image, threshold: int = 235) -> Image.Image:
     return img
 
 
-def prepare_logo(data: bytes, size: int, strip_white: bool = True) -> Image.Image:
+def prepare_logo(data: bytes, size: int, strip_white: bool = True,
+                 max_aspect: float | None = None) -> Image.Image:
+    """max_aspect: Seitenverhältnis des Inhalts nach dem Zuschnitt, ab dem das
+    Bild als Schriftzug gilt und mit NotSquare abgelehnt wird."""
     img = Image.open(io.BytesIO(data)).convert("RGBA")
+    if max(img.size) > MAX_SOURCE_PX:
+        img.thumbnail((MAX_SOURCE_PX, MAX_SOURCE_PX), Image.LANCZOS)
     if strip_white:
         img = remove_background(img)
     bbox = img.getchannel("A").getbbox()
     if bbox:
         img = img.crop(bbox)
     w, h = img.size
+    if max_aspect is not None and max(w, h) > max_aspect * max(1, min(w, h)):
+        raise NotSquare(f"{w}x{h}")
     s = max(w, h, 1)
     sq = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     sq.paste(img, ((s - w) // 2, (s - h) // 2))
@@ -72,15 +101,17 @@ def prepare_logo(data: bytes, size: int, strip_white: bool = True) -> Image.Imag
 
 class LogoStore:
     def __init__(self, directory: str, size: int, fetch: bool = True,
-                 url_template: str = "https://pics.avs.io/200/200/{code}.png"):
+                 urls: tuple[str, ...] = DEFAULT_URLS, max_aspect: float = 1.5):
         self.dir = directory
         self.size = size
         self.fetch_enabled = fetch
-        self.url_template = url_template
+        self.urls = urls
+        self.max_aspect = max_aspect
         self.session: aiohttp.ClientSession | None = None
         self._cache: dict[str, tuple[float, Image.Image | None]] = {}
         self._inflight: set[str] = set()
         self._errors: dict[str, float] = {}
+        self._placeholders: dict[str, str | None] = {}
         self._missing_path = os.path.join(directory, ".missing.json")
         self._missing: dict[str, float] = self._load_missing()
         os.makedirs(directory, exist_ok=True)
@@ -133,7 +164,8 @@ class LogoStore:
             return []
 
     def missing(self) -> list[str]:
-        """IATA-Codes, für die der Abruf zuletzt nichts geliefert hat (Kandidaten für Handarbeit)."""
+        """Codes (IATA, sonst ICAO), für die keine Quelle ein quadratisches Logo
+        geliefert hat (Kandidaten für Handarbeit)."""
         now = time.time()
         return [k for k, t in self._missing.items() if now - t < MISSING_TTL]
 
@@ -152,50 +184,112 @@ class LogoStore:
         except OSError as e:
             log.warning("missing.json: %s", e)
 
-    def ensure(self, iata: str) -> None:
+    @staticmethod
+    def key(iata: str, icao: str = "") -> str:
+        """Dateiname und Schlüssel: IATA, wenn bekannt, sonst ICAO."""
+        iata, icao = (iata or "").upper(), (icao or "").upper()
+        if len(iata) == 2 and iata.isalnum():
+            return iata
+        if len(icao) == 3 and icao.isalpha():
+            return icao
+        return ""
+
+    def ensure(self, iata: str, icao: str = "") -> None:
         """Startet im Hintergrund den Abruf, falls nötig. Blockiert nicht."""
-        iata = (iata or "").upper()
-        if not self.fetch_enabled or not self.session or len(iata) != 2:
+        k = self.key(iata, icao)
+        if not self.fetch_enabled or not self.session or not k:
             return
-        if self.path_for(iata) or iata in self._inflight:
+        if self.path_for(iata) or self.path_for(icao) or k in self._inflight:
             return
-        if time.time() - self._missing.get(iata, 0) < MISSING_TTL:
+        if time.time() - self._missing.get(k, 0) < MISSING_TTL:
             return
-        if time.time() - self._errors.get(iata, 0) < ERROR_RETRY:
+        if time.time() - self._errors.get(k, 0) < ERROR_RETRY:
             return
-        self._inflight.add(iata)
-        asyncio.create_task(self._fetch(iata))
+        self._inflight.add(k)
+        asyncio.create_task(self._fetch(iata, icao))
 
-    async def fetch_now(self, iata: str) -> bool:
-        """Synchroner Abruf, für das Seed-Skript."""
-        iata = iata.upper()
-        if self.path_for(iata):
+    async def fetch_now(self, iata: str, icao: str = "") -> bool:
+        """Direkter Abruf, für das Seed-Skript."""
+        if self.path_for(iata) or self.path_for(icao):
             return True
-        return await self._fetch(iata)
+        if not self.key(iata, icao):
+            return False
+        return await self._fetch(iata, icao)
 
-    async def _fetch(self, iata: str) -> bool:
-        url = self.url_template.format(code=iata)
+    async def _download(self, url: str) -> bytes | None:
+        """Bild laden, höchstens MAX_DOWNLOAD Bytes. None heißt: gibt es dort nicht."""
+        async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+            if r.status in (403, 404, 410):
+                return None
+            r.raise_for_status()
+            if not r.headers.get("Content-Type", "").startswith("image"):
+                return None
+            if int(r.headers.get("Content-Length") or 0) > MAX_DOWNLOAD:
+                return None
+            data = bytearray()
+            async for chunk in r.content.iter_chunked(64 * 1024):
+                data += chunk
+                if len(data) > MAX_DOWNLOAD:
+                    return None
+            return bytes(data)
+
+    async def _placeholder(self, tpl: str) -> str | None:
+        """Hash der Antwort für einen Code, den es nicht gibt. Manche Quellen liefern
+        dann statt 404 ein Ersatzbild (graues Flugzeug), das kein Logo ist."""
+        if tpl not in self._placeholders:
+            try:
+                data = await self._download(tpl.format(iata="ZZ", icao="ZZZ", code="ZZ"))
+            except Exception:
+                return None   # beim nächsten Mal wieder probieren
+            self._placeholders[tpl] = hashlib.md5(data).hexdigest() if data else None
+        return self._placeholders[tpl]
+
+    async def _fetch(self, iata: str, icao: str) -> bool:
+        """Quellen der Reihe nach probieren, das erste quadratische Logo nehmen."""
+        iata, icao = (iata or "").upper(), (icao or "").upper()
+        k = self.key(iata, icao)
+        net_error = False
         try:
-            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                if r.status != 200 or not r.headers.get("Content-Type", "").startswith("image"):
-                    log.info("Kein Logo für %s (HTTP %s)", iata, r.status)
-                    self._missing[iata] = time.time()
-                    self._save_missing()
-                    return False
-                data = await r.read()
-            img = await asyncio.to_thread(prepare_logo, data, self.size)
-            # Leeres oder fast leeres Ergebnis (z. B. Platzhalterbild) verwerfen
-            if sum(1 for p in img.getdata() if max(p) > 40) < self.size * self.size * 0.05:
-                log.info("Logo für %s ist leer, verworfen", iata)
-                self._missing[iata] = time.time()
+            for tpl in self.urls:
+                if ("{iata}" in tpl or "{code}" in tpl) and len(iata) != 2:
+                    continue
+                if "{icao}" in tpl and len(icao) != 3:
+                    continue
+                url = tpl.format(iata=iata, icao=icao, code=iata)
+                try:
+                    data = await self._download(url)
+                except Exception as e:
+                    log.warning("Logo-Abruf %s: %s", url, e)
+                    net_error = True
+                    continue
+                if data is None or hashlib.md5(data).hexdigest() == await self._placeholder(tpl):
+                    continue
+                try:
+                    img = await asyncio.to_thread(prepare_logo, data, self.size, True, self.max_aspect)
+                except NotSquare as e:
+                    log.info("Logo %s ist ein Schriftzug (%s), übersprungen", url, e)
+                    continue
+                except Exception as e:
+                    log.info("Logo %s nicht lesbar: %s", url, e)
+                    continue
+                # Leeres oder fast leeres Ergebnis (z. B. Platzhalterbild) verwerfen
+                if sum(1 for p in img.getdata() if max(p) > 40) < self.size * self.size * 0.05:
+                    log.info("Logo %s ist leer, verworfen", url)
+                    continue
+                img.save(os.path.join(self.dir, f"{k}.png"))
+                log.info("Logo geholt: %s (%s)", k, url)
+                return True
+            if net_error:
+                self._errors[k] = time.time()   # später noch einmal
+            else:
+                log.info("Kein quadratisches Logo für %s", k)
+                self._missing[k] = time.time()
                 self._save_missing()
-                return False
-            img.save(os.path.join(self.dir, f"{iata}.png"))
-            log.info("Logo geholt: %s", iata)
-            return True
-        except Exception as e:
-            log.warning("Logo-Abruf %s: %s", iata, e)
-            self._errors[iata] = time.time()
             return False
         finally:
-            self._inflight.discard(iata)
+            self._inflight.discard(k)
+
+
+def make_logo_store(cfg) -> LogoStore:
+    return LogoStore(os.path.join(cfg.data_dir, "logos"), cfg.logo_size, fetch=cfg.logo_fetch,
+                     urls=cfg.logo_urls or DEFAULT_URLS, max_aspect=cfg.logo_max_aspect)

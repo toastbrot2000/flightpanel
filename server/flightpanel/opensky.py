@@ -11,6 +11,11 @@ log = logging.getLogger("opensky")
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 STATES_URL = "https://opensky-network.org/api/states/all"
 
+# Tagesbudget laut OpenSky: anonym 400, mit Account 4000 Credits.
+# Eine Abfrage bis 25 Quadratgrad kostet 1 Credit.
+DAILY_CREDITS_ANON = 400
+DAILY_CREDITS_USER = 4000
+
 
 @dataclass
 class State:
@@ -23,6 +28,7 @@ class State:
     velocity_ms: float | None
     track_deg: float | None
     vrate_ms: float | None
+    geo_alt_m: float | None = None
 
 
 class OpenSky:
@@ -40,6 +46,10 @@ class OpenSky:
     @property
     def anonymous(self) -> bool:
         return not (self.client_id and self.client_secret)
+
+    @property
+    def daily_credits(self) -> int:
+        return DAILY_CREDITS_ANON if self.anonymous else DAILY_CREDITS_USER
 
     async def _ensure_token(self) -> None:
         if self.anonymous:
@@ -76,11 +86,20 @@ class OpenSky:
                 except ValueError:
                     pass
             if r.status == 429:
-                self.backoff_until = time.time() + 300
-                self.last_error = "429 rate limited"
-                raise RuntimeError("OpenSky 429, 5 min Pause")
+                # OpenSky sagt, wann wieder Credits da sind; bei leerem Tagesbudget Stunden.
+                try:
+                    wait = int(r.headers.get("X-Rate-Limit-Retry-After-Seconds", "300"))
+                except ValueError:
+                    wait = 300
+                wait = max(60, min(wait, 24 * 3600))
+                self.backoff_until = time.time() + wait
+                self.credits_remaining = 0
+                self.last_error = f"429 rate limited, Pause {wait // 60} min"
+                raise RuntimeError(f"OpenSky 429, Pause {wait} s")
             if r.status == 401 and not self.anonymous:
                 self._token = None  # beim nächsten Mal neu holen
+            if r.status >= 400:
+                self.last_error = f"HTTP {r.status}"
             r.raise_for_status()
             j = await r.json()
         self.last_ok = time.time()
@@ -99,6 +118,7 @@ class OpenSky:
                     velocity_ms=float(s[9]) if s[9] is not None else None,
                     track_deg=float(s[10]) if s[10] is not None else None,
                     vrate_ms=float(s[11]) if s[11] is not None else None,
+                    geo_alt_m=float(s[13]) if len(s) > 13 and s[13] is not None else None,
                 ))
             except (IndexError, TypeError, ValueError):
                 continue

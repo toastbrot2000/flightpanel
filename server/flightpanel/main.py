@@ -20,10 +20,10 @@ from aiohttp import web
 
 from .adsbdb import AdsbDb, Cache
 from .config import CFG, Config
-from .logos import LogoStore
+from .logos import make_logo_store
 from .model import DisplayModel, build_model, load_airlines, mock_model
 from .opensky import OpenSky
-from .render import Renderer, brightness_for
+from .render import Renderer, active_seconds_per_day, brightness_for
 
 log = logging.getLogger("main")
 
@@ -52,35 +52,58 @@ class App:
         self.cache = Cache(os.path.join(cfg.data_dir, "cache.json"))
         self.adsb: AdsbDb | None = None
         self.names = load_airlines(cfg.data_dir)
-        self.logos = LogoStore(os.path.join(cfg.data_dir, "logos"), cfg.logo_size,
-                               fetch=cfg.logo_fetch, url_template=cfg.logo_url)
+        self.logos = make_logo_store(cfg)
         self.renderer = Renderer(cfg, self.logos)
         self._stop = asyncio.Event()
 
     # ------------------------------------------------------------ Polling --
+    def poll_interval(self) -> int:
+        """Abstand zwischen zwei OpenSky-Abrufen. Mindestens POLL_INTERVAL, aber
+        so lang, dass das Tagesbudget für alle Stunden außerhalb der Quiet Hours
+        reicht (anonym: 400 Credits -> rund alle 2,5 min). Wird es trotzdem
+        knapp, doppelt so lang."""
+        if self.cfg.mock:
+            return self.cfg.poll_interval
+        budget = self.opensky.daily_credits
+        need = active_seconds_per_day(self.cfg) / (budget * 0.95)
+        interval = max(self.cfg.poll_interval, int(need + 0.999))
+        rem = self.opensky.credits_remaining
+        if rem is not None and rem < budget * 0.1:
+            interval *= 2
+        return interval
+
     async def poll_loop(self) -> None:
-        interval = self.cfg.poll_interval
         while not self._stop.is_set():
             t0 = time.time()
+            interval = self.poll_interval()
+            if not self.cfg.mock and brightness_for(self.cfg, t0) == 0:
+                # Quiet Hours: Panel ist schwarz, Credits sparen
+                await asyncio.sleep(60)
+                continue
             try:
                 if self.cfg.mock:
                     self.model = mock_model(self.cfg, seed=int(t0 // 20))
                 else:
                     states = await self.opensky.fetch(self.cfg.bbox)
-                    self.model = await build_model(self.cfg, states, self.adsb, self.names)
-                    rem = self.opensky.credits_remaining
-                    interval = 60 if (rem is not None and rem < 500) else self.cfg.poll_interval
-                    log.info("OpenSky: %d States in Box, %d angezeigt, Credits %s",
-                             len(states), len(self.model.flights), rem)
+                    self.model = await build_model(self.cfg, states, self.adsb, self.names, horizon_s=interval)
+                    log.info("OpenSky: %d in der Box, %d im Radius, %d im Sichtfeld, angezeigt: %s. "
+                             "Credits %s, nächster Abruf in %d s",
+                             len(states), len(self.model.nearby),
+                             sum(1 for n in self.model.nearby if n["in_view"] != "no"),
+                             ", ".join(f.callsign for f in self.model.flights) or "-",
+                             self.opensky.credits_remaining, interval)
                 for f in self.model.flights:
-                    self.logos.ensure(f.airline_iata)   # holt fehlende Logos im Hintergrund
+                    if f.kind == "airline":
+                        self.logos.ensure(f.airline_iata, f.airline_icao)   # holt fehlende Logos im Hintergrund
                 self.last_model_ok = t0
             except Exception as e:
                 log.warning("Poll fehlgeschlagen: %s", e)
                 age = time.time() - self.last_model_ok
-                if age > self.cfg.empty_after:
+                # Schwellen nie kürzer als ein paar Abrufintervalle, sonst dimmt
+                # das Bild bei langsamem (anonymem) Polling nach jedem Fehlversuch.
+                if age > max(self.cfg.empty_after, 4 * interval):
                     self.model = replace(self.model, flights=[], empty=True, stale=True)
-                elif age > self.cfg.stale_after:
+                elif age > max(self.cfg.stale_after, 2 * interval):
                     self.model = replace(self.model, stale=True)
             await asyncio.sleep(max(5, interval - (time.time() - t0)))
 
@@ -135,6 +158,7 @@ class App:
             "flights": len(self.model.flights),
             "opensky": None if self.cfg.mock else {
                 "anonymous": self.opensky.anonymous,
+                "poll_interval_s": self.poll_interval(),
                 "last_ok_age_s": round(now - self.opensky.last_ok) if self.opensky.last_ok else None,
                 "credits_remaining": self.opensky.credits_remaining,
                 "last_error": self.opensky.last_error,
@@ -158,8 +182,9 @@ class App:
         self.opensky = OpenSky(self.session, self.cfg.opensky_client_id, self.cfg.opensky_client_secret)
         self.adsb = AdsbDb(self.session, self.cfg.adsbdb_base, self.cache)
         if not self.cfg.mock and self.opensky.anonymous:
-            log.warning("Keine OpenSky-Zugangsdaten: anonymer Zugriff (400 Credits/Tag). "
-                        "OPENSKY_CLIENT_ID/SECRET setzen oder MOCK=1.")
+            log.warning("Keine OpenSky-Zugangsdaten: anonymer Zugriff (400 Credits/Tag), "
+                        "Abruf nur alle %d s. Mit OPENSKY_CLIENT_ID/SECRET alle %d s.",
+                        self.poll_interval(), self.cfg.poll_interval)
         app = web.Application()
         app.add_routes([
             web.get("/", self.h_index),

@@ -188,10 +188,10 @@ data/
 
 **Datenfluss, alle `POLL_INTERVAL` Sekunden (Default 30):**
 
-1. OpenSky `GET /api/states/all` mit Bounding Box aus `HOME_LAT/LON` ± `RADIUS_KM`. Bei 40 km unter 1 Quadratgrad → 1 Credit pro Abruf → 2880 Credits/Tag, Budget 4000. OAuth2 Client Credentials, Token 30 Minuten. Unter 500 Rest-Credits: Intervall 60 s. Bei 429: 5 Minuten Pause.
+1. OpenSky `GET /api/states/all` mit Bounding Box aus `HOME_LAT/LON` ± `RADIUS_KM`. Bei 40 km unter 1 Quadratgrad → 1 Credit pro Abruf. Budget mit Account 4000 Credits/Tag, anonym 400. Der Server rechnet das Intervall aus: nie kürzer als `POLL_INTERVAL`, aber so lang, dass das Budget für die Stunden außerhalb der Quiet Hours reicht (dort wird nicht gepollt). Mit Account also 20 bis 30 s, anonym rund 2,5 min. Unter 10 % Rest-Credits doppelt so lang, bei 429 so lange Pause, wie OpenSky im Header sagt. OAuth2 Client Credentials, Token 30 Minuten.
 2. Filter: nicht am Boden, Höhe unter `MAX_ALT_M` (6000 m), Distanz unter `RADIUS_KM`.
 3. Pro Flugzeug: Distanz und Peilung; adsbdb Route (Herkunft, Ziel, Airline mit ICAO- und IATA-Code, Cache 24 h) und Flugzeug (Typ, Cache 30 Tage). Klassifizieren: Ziel == BER → Ankunft, Herkunft == BER → Abflug, sonst Höhe und Vertikalrate, sonst Überflug.
-4. Sortieren nach Distanz, die nächsten `MAX_FLIGHTS` (2) ins Modell.
+4. Sortieren, die vordersten `MAX_FLIGHTS` (2) ins Modell: erst was im Sichtfeld vom Fenster ist (`VIEW_*` in `.env`; zählt auch, wer bis zum nächsten Abruf hineinfliegt), dann Airlines vor Privatflügen, Hubschraubern und Militär (Frachtflüge zählen als Airline), dann die kürzeste Sichtlinie. Routen, die nicht zur Position passen (adsbdb kennt alte Strecken desselben Callsigns), werden verworfen.
 5. Für jede Airline im Modell: Logo da? Sonst im Hintergrund holen (5.5).
 6. Rendern bei jedem `/frame`-Abruf (billig, 128 × 32).
 
@@ -263,7 +263,7 @@ Stellschrauben in `config.h`, falls das Testbild nicht stimmt:
 Der Server holt fehlende Logos selbst, beim ersten Auftauchen einer Airline:
 
 1. adsbdb liefert zum Callsign den IATA-Code der Airline (`U2`, `LH`, `FR`). Fehlt er, kommt er aus `data/airlines.json` (ICAO → IATA).
-2. `GET https://pics.avs.io/200/200/{IATA}.png` (Logo-CDN von Aviasales; `LOGO_URL` in `.env` ist austauschbar).
+2. Quellen der Reihe nach: `https://images.kiwi.com/airlines/128x128/{IATA}.png` (quadratische App-Icons), dann FlightAware per ICAO (Bildmarken). Genommen wird nur, was annähernd quadratisch ist (`LOGO_MAX_ASPECT` 1,5): Schriftzüge sind bei 30 × 30 unlesbar, dann lieber Layout A. Platzhalterbilder der Quellen werden erkannt. `LOGO_URLS` in `.env` ersetzt die Liste.
 3. Aufbereitung: weißer Hintergrund per Flood-Fill vom Rand weg (weiße Flächen im Logo bleiben), auf den Inhalt zuschneiden, quadratisch einpassen, auf 30 × 30 skalieren, auf Schwarz legen.
 4. Ablegen als `data/logos/{IATA}.png`. Fehlschläge in `.missing.json`, nächster Versuch nach 7 Tagen.
 
@@ -295,7 +295,9 @@ Alle drei Layouts sind in `render.py` je 20 Zeilen. Anpassen, Container neu star
 ### 5.7 Konfiguration (`.env`)
 
 ```
-HOME_LAT=52.5xxx            HOME_LON=13.5xxx
+HOME_LAT=52.5xxx            HOME_LON=13.5xxx        HOME_ALT_M=60
+VIEW_FROM=140               VIEW_TO=190             VIEW_MIN_ELEV=0.5   VIEW_MAX_KM=40
+VIEW_ONLY=1                 SHOW_OTHER=1            POLL_INTERVAL=20
 RADIUS_KM=40                MAX_ALT_M=6000          LOCAL_AIRPORT_IATA=BER
 MOCK=0                      OPENSKY_CLIENT_ID=…     OPENSKY_CLIENT_SECRET=…
 WIDTH=128                   HEIGHT=32               LAYOUT=auto
@@ -427,7 +429,7 @@ Aufwand: Software läuft (Mock heute, echte Daten nach dem OpenSky-Client), Hard
 
 - **Gehäuse.** Bewusst später. Die Panels sind von vorn schon fertig (schwarze LED-Maske), von der Seite sieht man die Platine.
 - **Helligkeitssensor.** Zeitplan reicht; BH1750 nachrüstbar.
-- **Kompilierte Firmware.** Die Firmware wurde gegen die Quelle der Bibliothek (3.0.14) geschrieben und geprüft, aber in dieser Umgebung nicht kompiliert (kein Zugriff auf die PlatformIO-Registry). Der erste `pio run` bei dir findet eventuelle Tippfehler; die Bibliotheksaufrufe sind die aus den offiziellen Beispielen.
+- **Firmware auf echter Hardware.** Die Firmware kompiliert (`tools/check_firmware.sh`, PlatformIO in Docker), ist aber noch nicht auf einem ESP32 mit Panels gelaufen. Das Testbild am Montag ist der Test.
 
 ### 9.4 Risiken
 
