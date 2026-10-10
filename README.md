@@ -7,7 +7,7 @@
 > [!WARNING]
 > **Ein komplett vibe-codetes Wochenendprojekt.** Jede Zeile Code und Doku hier hat eine KI geschrieben (Claude). Keine Wartungszusage, keine Garantie. Nachbauen, Abschauen und Weitermachen ausdrücklich erwünscht, auf eigene Gefahr.
 >
-> *Fully vibe-coded weekend project: all code and docs were written by an AI (Claude), directed and checked against the real sky by a human over one weekend. Not a product, no support, no warranty.*
+> *Fully vibe-coded weekend project: every line of code and documentation was written by an AI (Claude). No support, no warranty. Rebuilding, borrowing and building on it is explicitly welcome, at your own risk.*
 
 ![Sechs Beispiele vom Panel: Landung mit Logo und Himmelspunkten, Abflüge am BER, nächster Flieger, Radar, Abflug ohne Logo, Verspätungsgrund](docs/images/overview.png)
 
