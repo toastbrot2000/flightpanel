@@ -24,7 +24,7 @@ from .aircraft import second_line, shown_elsewhere
 from .cards import CARDS
 from .colors import CLOCK, INFO, MUTED, dim
 from .config import INFO_PAGES, Config
-from .draw import ROW1, ROW2, ROW3, STATUS_COLORS, line, right, status_glyph, text
+from .draw import ROW1, ROW2, ROW3, STATUS_COLORS, headline, line, right, status_glyph
 from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from .geo import kompass
 from .idle import IdleScreen
@@ -217,7 +217,7 @@ class Renderer:
 
         # Zeile 1: Pfeil + Airline (oder Callsign, wenn kein Name bekannt)
         name = fl.airline or fl.callsign
-        text(img, FONT_BIG, x0, ROW1, f"{status_glyph(fl.status)} {name}", STATUS_COLORS[fl.status], f, avail)
+        headline(img, x0, ROW1, f"{status_glyph(fl.status)} {name}", STATUS_COLORS[fl.status], f, avail)
 
         # Zeile 2: Route, sonst was der Flug ist, sonst ?→BER; rechtsbündig der Typ
         route = second_line(fl.origin, fl.dest, fl.status, fl.label, self.cfg.local_airport_iata)
@@ -243,7 +243,7 @@ class Renderer:
             cs = ""
         csw = FONT_BIG.text_width(cs) if cs else 0
         col = STATUS_COLORS[fl.status]
-        text(img, FONT_BIG, 0, ROW1, head, col, f, W - (csw + 6 if cs else 0))
+        headline(img, 0, ROW1, head, col, f, W - (csw + 6 if cs else 0))
         if cs:
             right(img, FONT_BIG, ROW1, cs, col, f)
 

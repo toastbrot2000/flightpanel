@@ -8,7 +8,7 @@ Sinn ändert: erst kleinere Schrift, dann kürzere Fassung (Aufrufer), zuletzt k
 from PIL import Image
 
 from .colors import ARR_C, DEP_C, OVF_C, Color, dim
-from .fonts import FONT_MID, FONT_SMALL, Font
+from .fonts import FONT_BIG, FONT_MID, FONT_SMALL, Font
 from .model import ARR, DEP, OVF
 
 ROW1, ROW2, ROW3 = 0, 12, 24
@@ -33,6 +33,15 @@ def line(img: Image.Image, x: int, y: int, s: str, c: Color, f: float, max_w: in
     if FONT_MID.text_width(s) <= max_w:
         return FONT_MID.draw(img, x, y, s, dim(c, f))
     return FONT_SMALL.draw(img, x, y + FONT_MID.cap_height - FONT_SMALL.cap_height, FONT_SMALL.fit(s, max_w), dim(c, f))
+
+
+def headline(img: Image.Image, x: int, y: int, s: str, c: Color, f: float, max_w: int) -> int:
+    """Zeile 1 eines Flugs: fett, passt der Name nicht, in FONT_MID, dann FONT_SMALL
+    (bündig mit der Unterkante der Großbuchstaben), erst dann gekürzt ("Germanwin")."""
+    for font in (FONT_BIG, FONT_MID):
+        if font.text_width(s) <= max_w:
+            return font.draw(img, x, y + FONT_BIG.cap_height - font.cap_height, s, dim(c, f))
+    return FONT_SMALL.draw(img, x, y + FONT_BIG.cap_height - FONT_SMALL.cap_height, FONT_SMALL.fit(s, max_w), dim(c, f))
 
 
 def center(img: Image.Image, font: Font, y: int, s: str, c: Color, f: float, x0: int = 0,
