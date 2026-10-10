@@ -77,6 +77,9 @@ class DisplayModel:
     empty: bool = False
     nearby: list[dict] = field(default_factory=list)   # alle im Radius, zum Eichen des Sichtfelds
     landing_course: float | None = None                # erkannte Landerichtung (Kurs im Endanflug)
+    departures: list[dict] = field(default_factory=list)  # wer gerade am BER startet (Karte "departures")
+    arrivals: list[dict] = field(default_factory=list)    # Landefolge mit Herkunft und Minuten ("arrivals")
+    last_ber_move: float = 0.0                         # letzter Start oder letzte Landung (setzt main)
     course_votes: int = 0                              # so viele Flugzeuge bestätigen sie gerade
     upcoming: Flight | None = None                     # kommt als nächstes ins Sichtfeld
     upcoming_eta_s: float | None = None                # in so vielen Sekunden (ab generated_at)
@@ -437,6 +440,67 @@ def note_operator(issues: Issues, s: State, route: dict, names: dict[str, dict],
         issues.note("name_mismatch", code, s.callsign, ours=names[code]["name"], adsbdb=route["airline"])
 
 
+def _needs_route(cfg: Config, s: State) -> bool:
+    """Wer eine Route brauchen kann: in der Luft im Anzeigeradius oder in der Landefolge
+    (45 km um den Platz), am Boden nur, wer am Platz rollt (Abflug-Karte); nicht der
+    ganze Statistik-Abruf (SCAN_RADIUS_KM)."""
+    d_ap = haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon)
+    if s.on_ground:
+        return d_ap <= DEP_GROUND_KM and (s.velocity_ms or 0.0) * 1.94384 >= 5
+    return haversine_km(cfg.home_lat, cfg.home_lon, s.lat, s.lon) <= cfg.radius_km or d_ap <= 45
+
+
+DEP_GROUND_KM = 4      # so weit vom Bezugspunkt reicht das Flughafengelände
+DEP_AIR_KM = 30        # gerade gestartet: so weit weg, unter 3000 m, steigend
+DEP_RECENT_S = 300     # "in den letzten ~5 min gestartet"
+
+
+def ber_departures(cfg: Config, states: list[State], routes: dict[str, dict], names: dict[str, dict]) -> list[dict]:
+    """Wer gerade am eigenen Platz startet: rollt zur Bahn, beschleunigt auf der Bahn
+    oder ist in den letzten Minuten gestartet.
+
+    Am Boden zählt nur, wer laut Route am Platz abfliegt: Rollen nach der Landung
+    sieht sonst genauso aus. In der Luft genügt es auch ohne Route, tief zu steigen
+    und sich vom Platz zu entfernen."""
+    out = []
+    for s in states:
+        code = callsign_airline(s.callsign)
+        if not code or s.category in NOT_RUNWAY_CATEGORIES:
+            continue
+        route = routes.get(s.callsign, {})
+        if not route_plausible(route, s.lat, s.lon):
+            route = {}
+        if route.get("dest") == cfg.local_airport_iata:
+            continue
+        from_here = route.get("origin") == cfg.local_airport_iata
+        d = haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon)
+        kt = (s.velocity_ms or 0.0) * 1.94384
+        if s.on_ground:
+            if d > DEP_GROUND_KM or not from_here or kt < 5:
+                continue
+            phase, rank, ago = ("startet", 0, None) if kt >= 40 else ("rollt", 1, None)
+        else:
+            alt = _alt(s)
+            vr = s.vrate_ms or 0.0
+            if alt is None or alt > 3000 or d > DEP_AIR_KM or vr < 0:
+                continue
+            away = s.track_deg is not None and _angle(
+                s.track_deg, bearing_deg(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon)) < 60
+            if not (from_here or (vr > 2 and away)):
+                continue
+            ago = d * 1000 / max(s.velocity_ms or 0.0, 80.0)
+            if ago > DEP_RECENT_S:
+                continue
+            phase, rank = "gestartet", 2
+        out.append({"callsign": s.callsign, "icao24": s.icao24, "phase": phase, "rank": rank,
+                    "ago_s": round(ago) if ago is not None else None,
+                    "airline": short_airline(route.get("airline", ""), route.get("airline_icao") or code, names)
+                               or s.callsign,
+                    "dest": route.get("dest", ""), "type": s.actype})
+    out.sort(key=lambda x: (x["rank"], x["ago_s"] or 0))
+    return out
+
+
 async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dict[str, dict],
                       horizon_s: float = 0, prev_course: float | None = None,
                       issues: Issues | None = None, adsbim=None, origins=None) -> DisplayModel:
@@ -452,9 +516,7 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
         # nur, wer eine Route brauchen kann: im Anzeigeradius oder in der Landefolge
         # (45 km um den Platz), nicht der ganze Statistik-Abruf (SCAN_RADIUS_KM)
         im = await adsbim.routes([(s.callsign, s.lat, s.lon) for s in states
-                                  if not s.on_ground and callsign_airline(s.callsign)
-                                  and (haversine_km(cfg.home_lat, cfg.home_lon, s.lat, s.lon) <= cfg.radius_km
-                                       or haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon) <= 45)])
+                                  if callsign_airline(s.callsign) and _needs_route(cfg, s)])
 
     async def route_for(s: State) -> dict:
         route = await adsb.route(s.callsign)
@@ -512,7 +574,27 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
                "eta_s": round(preds[s.icao24][0]) if preds[s.icao24] else None,
                "status": ARR if s.icao24 in seq else classify(s, "", "", cfg.local_airport_iata)}
               for s, v, vis in cands]
+    # Für die Karten der Stufe 2: wer gerade startet, wer als nächstes landet
+    routes = {s.callsign: await route_for(s) for s in states
+              if callsign_airline(s.callsign) and (s.icao24 in seq or _needs_route(cfg, s)
+                                                   and haversine_km(cfg.airport_lat, cfg.airport_lon, s.lat, s.lon)
+                                                   <= DEP_AIR_KM)}
+    departures = ber_departures(cfg, states, routes, names)
+    by_icao = {s.icao24: s for s in states}
+    in_view_ids = {s.icao24 for s, v, vis in cands if vis > 0}
+    arrivals = []
+    for icao, pos in sorted(seq.items(), key=lambda kv: kv[1]):
+        s = by_icao[icao]
+        route = routes.get(s.callsign, {})
+        if not route_plausible(route, s.lat, s.lon):
+            route = {}
+        code = callsign_airline(s.callsign)
+        arrivals.append({"callsign": s.callsign, "icao24": icao, "seq": pos, "eta_s": round(etas[icao]),
+                         "airline": short_airline(route.get("airline", ""), route.get("airline_icao") or code, names)
+                                    or s.callsign,
+                         "origin": route.get("origin", ""), "type": s.actype, "in_view": icao in in_view_ids})
     model = DisplayModel(flights=flights, source="opensky", empty=not flights, nearby=nearby,
+                         departures=departures, arrivals=arrivals,
                          landing_course=course, course_votes=votes, alert=find_alert(cfg, states, names))
 
     # Der nächste, der ins Sichtfeld kommt: große Flugzeuge mit Airline-Callsign zuerst

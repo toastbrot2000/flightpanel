@@ -73,11 +73,13 @@ Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` desse
 
 ## Leerlauf: wenn keine Airline im Sichtfeld ist
 
-Statt nur Uhr und Datum wechseln Karten, alle `IDLE_SECONDS` (12 s). Eine Karte kommt nur, wenn sie gerade etwas zu sagen hat; die Uhr ist immer dabei, etwa in einem Drittel der Fälle (`IDLE_CLOCK_SHARE`). Dringendes bricht durch, sonst entscheidet gewichteter Zufall, ohne dieselbe Karte kurz hintereinander. Privatflieger, Hubschrauber, Polizei und Militär im Sichtfeld sind eine Karte wie jede andere, ohne Vorrang.
+Statt nur Uhr und Datum wechseln Karten, alle `IDLE_SECONDS` (12 s), in festen Stufen (Übersicht und Entscheidungen: `docs/screens.md`): **2 Verkehr am BER** (Abflüge, Landungen, nächster Flieger, Privatflieger und Hubschrauber im Sichtfeld, Pistenwechsel) vor **3 wenig los** (Radar, Landerichtung, Wetter, Statistik, ISS, Sonne, Saison) vor **4 Spielereien** (Witze, Verspätungsgründe, Animationen). Eine Stufe kommt nur dran, wenn keine höhere etwas zu zeigen hat; Spielereien nur, wenn seit 15 min am BER nichts gestartet oder gelandet ist und in den nächsten 10 min keiner landet. Die Uhr ist in jeder Stufe dabei, etwa in einem Drittel der Fälle (`IDLE_CLOCK_SHARE`). Dringendes bricht durch.
 
 | Karte | Wann | Was |
 |---|---|---|
 | `alert` | Squawk 7700/7600/7500 im Abrufradius | Vollbild, vor allem anderen, auch vor Flügen |
+| `departures` | am BER rollt oder startet ein Flug mit Route ab BER, oder ist vor wenigen Minuten gestartet | "↑ Abflug BER", Piste, bis zu zwei Flüge mit Ziel und "rollt" / "startet" / "vor 2 min" |
+| `arrivals` | Landende in den nächsten 15 min | "↓ Landung BER", Piste, die nächsten zwei mit Herkunft und Minuten |
 | `next` | ein Flugzeug kommt in 15 s bis 10 min ins Sichtfeld, unter 3 min dringend | wer, "Sichtbar in ~N min" (Zeit bis zum Sichtfeld, nicht bis zur Landung), auf welcher Seite des Fensters (← →) |
 | `private` | Privatflieger, Hubschrauber, Militär im Sichtfeld | wie ein Flug in Layout A/C |
 | `radar` | Flugzeuge im Radius | Rundumblick, Sichtfeld als Band in der Mitte, Punkte nach Richtung und Höhenwinkel in Statusfarbe; der nächste blinkt |

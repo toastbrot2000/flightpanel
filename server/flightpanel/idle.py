@@ -10,7 +10,9 @@ Auswahl pro Zeitscheibe (IDLE_SECONDS):
   1. Dringendes bricht durch: Notfall-Squawk (schon in render), NEU!-Airline,
      Flieger in unter 3 min, ISS gerade über dem Haus. Mehrere wechseln sich ab.
   2. Sonst mit IDLE_CLOCK_SHARE die Uhr, ansonsten gewichteter Zufall unter den
-     übrigen Karten, ohne die der letzten Scheiben.
+     Karten der höchsten Stufe, die etwas zu zeigen hat (docs/screens.md):
+     2 Verkehr am BER, 3 wenig los, 4 Spielereien. Stufe 4 nur, wenn gar nichts
+     los ist (Ctx.quiet), dann gemischt mit Stufe 3. Ohne die der letzten Scheiben.
 
 Gerendert wird bei jedem Abruf des ESP32 (alle 2 s); Animationen hängen nur von
 der Zeit seit Beginn der Scheibe ab, nicht von einem Bildzähler."""
@@ -30,6 +32,8 @@ from .config import Config
 log = logging.getLogger("idle")
 
 RECENT = 3                  # so viele zuletzt gezeigte Karten kommen nicht gleich wieder
+QUIET_SINCE_S = 15 * 60     # gar nichts los: so lange kein Start und keine Landung am Platz
+QUIET_AHEAD_S = 10 * 60     # ... und so lange landet auch keiner
 
 
 @dataclass
@@ -53,6 +57,17 @@ class Ctx:
     draw_flight: Any = None                       # Renderer: Flug wie im Normalbetrieb zeichnen
 
     @property
+    def quiet(self) -> bool:
+        """Gar nichts los am Platz: seit 15 min kein Start und keine Landung, und in
+        den nächsten 10 min landet keiner. Erst dann kommen Spielereien (Stufe 4)."""
+        m = self.model
+        if getattr(m, "departures", None):
+            return False
+        if any((a.get("eta_s") or 9e9) <= QUIET_AHEAD_S for a in getattr(m, "arrivals", None) or []):
+            return False
+        return self.now - (getattr(m, "last_ber_move", 0.0) or 0.0) > QUIET_SINCE_S
+
+    @property
     def live(self) -> bool:
         """Flugdaten frisch genug für Karten, die sich auf sie stützen."""
         return not self.model.stale and self.model.source not in ("startup", "none")
@@ -66,6 +81,7 @@ class Card:
     weight: float = 1.0
     group: str = ""
     live: bool = False                                  # braucht frische Flugdaten
+    tier: int = 3                                       # 2 Verkehr am BER, 3 wenig los, 4 Spielereien
     demo: Callable[[Ctx], Any] | None = None            # Beispieldaten für ?card=<id>
 
 
@@ -122,6 +138,14 @@ class IdleScreen:
         self._slot = slot
         rng = random.Random(slot)
         pool = {cid: h for cid, h in cands.items() if cid != "clock"}
+        if pool:
+            # Nur die höchste Stufe mit etwas zu zeigen; Spielereien nur, wenn gar nichts los ist
+            quiet = ctx.quiet
+            pool = {cid: h for cid, h in pool.items() if self.cards[cid].tier < 4 or quiet}
+            if pool:
+                top = min(self.cards[cid].tier for cid in pool)
+                ok = {top, 4} if top == 3 and quiet else {top}
+                pool = {cid: h for cid, h in pool.items() if self.cards[cid].tier in ok}
         last = self._recent[-1] if self._recent else None
         if not pool or ("clock" in cands and last != "clock" and rng.random() < self.cfg.idle_clock_share):
             cid = "clock" if "clock" in cands else next(iter(cands), "clock")
@@ -181,7 +205,7 @@ class IdleScreen:
             "slot_seconds": self.cfg.idle_seconds,
             "showing": self.last_pick,
             "recent": list(self._recent),
-            "cards": [{"id": cid, "group": c.group, "weight": c.weight,
+            "cards": [{"id": cid, "tier": c.tier, "group": c.group, "weight": c.weight,
                        "state": "off" if cid in off else "active" if cid in cands else "idle",
                        "urgent": bool(cands.get(cid) and cands[cid].urgent),
                        "data": js(cands[cid].data) if cid in cands else None}

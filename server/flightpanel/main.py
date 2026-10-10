@@ -81,6 +81,7 @@ class App:
         self.active_source = cfg.source     # woher der letzte Abruf kam
         self.adsblol_failing = False
         self.opensky_last_try = 0.0
+        self.last_ber_move = 0.0            # letzter Start oder letzte Landung am Platz
         self.issues = Issues(os.path.join(cfg.data_dir, "issues.json"))
         self.started = time.time()
         self.counters = {"polls": 0, "ok": 0, "adsblol": 0, "opensky": 0}
@@ -171,6 +172,9 @@ class App:
                                                    prev_course=self.model.landing_course,
                                                    issues=self.issues, adsbim=self.adsbim, origins=self.origins)
                     self.counters[self.active_source] += 1
+                    if self.model.departures or any(a["eta_s"] <= 90 for a in self.model.arrivals):
+                        self.last_ber_move = t0
+                    self.model.last_ber_move = self.last_ber_move
                     await self._observe(states, t0)
                     log.info("%s: %d empfangen, %d im Radius, %d im Sichtfeld, angezeigt: %s. "
                              "Nächster Abruf in %d s",

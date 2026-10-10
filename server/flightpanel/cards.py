@@ -194,6 +194,85 @@ def next_draw(img, ctx, d, t_in, f):
         right(img, FONT_MID, ROW3, fl.actype, MUTED, 0.7 * f)
 
 
+# --------------------------------------------------- Abflug und Landung BER --
+def _runway_lab(ctx: Ctx) -> str:
+    c = getattr(ctx.model, "landing_course", None)
+    return f"Piste {runway_name(c)}" if c is not None else ""
+
+
+def _two_rows(img, ctx, rows, f) -> None:
+    """Bis zu zwei Flüge in Zeile 2 und 3: links Airline und Ort, rechts der Zustand.
+    Links mehrere Fassungen, lang bis kurz ("Lufthansa aus MUC", "Lufthansa MUC", "Lufthansa"):
+    die erste, die (notfalls in FONT_SMALL) passt, statt abzuschneiden."""
+    W = img.width
+    for (variants, state, hot), y in zip(rows[:2], (ROW2, ROW3)):
+        sw = FONT_MID.text_width(state) + 4 if state else 0
+        avail = W - sw
+        name = next((v for v in variants if min(FONT_MID.text_width(v), FONT_SMALL.text_width(v)) <= avail),
+                    variants[-1])
+        line(img, 0, y, name, INFO, f, avail)
+        if state:
+            right(img, FONT_MID, y, state, GOLD if hot else MUTED, f)
+
+
+def _title(img, ctx, text_: str, col, f) -> None:
+    W = img.width
+    x = FONT_MID.draw(img, 0, ROW1, text_, dim(col, f))
+    lab = _runway_lab(ctx)
+    if lab and x + 4 + FONT_SMALL.text_width(lab) <= W:
+        right(img, FONT_SMALL, ROW1 + 1, lab, MUTED, 0.8 * f)
+
+
+def departures_cond(ctx: Ctx):
+    deps = getattr(ctx.model, "departures", None) or []
+    return Hit(deps[:2]) if deps else None
+
+
+def departures_demo(ctx: Ctx):
+    return [{"airline": "easyJet", "dest": "LGW", "phase": "startet", "ago_s": None, "type": "A320"},
+            {"airline": "Ryanair", "dest": "PMI", "phase": "gestartet", "ago_s": 130, "type": "B738"}]
+
+
+def departures_draw(img, ctx, deps, t_in, f):
+    """Wer gerade am BER startet: rollt zur Bahn, startet, oder ist vor kurzem gestartet."""
+    _title(img, ctx, "↑ Abflug BER", DEP_C, f)
+    rows = []
+    for d in deps:
+        name = [f"{d['airline']} → {d['dest']}", f"{d['airline']} {d['dest']}", d["airline"]] if d.get("dest") else [d["airline"]]
+        if d["phase"] == "gestartet":
+            ago = (d.get("ago_s") or 0) + (ctx.now - ctx.model.generated_at)
+            state = "gerade" if ago < 60 else f"vor {minutes(ago)}"
+        else:
+            state = d["phase"]
+        rows.append((name, state, d["phase"] == "startet"))
+    if len(rows) == 1 and deps[0].get("type"):
+        rows.append(([deps[0]["type"]], "", False))   # zweite Zeile frei: der Typ
+    _two_rows(img, ctx, rows, f)
+
+
+def arrivals_cond(ctx: Ctx):
+    arr = [a for a in getattr(ctx.model, "arrivals", None) or [] if (a.get("eta_s") or 9e9) <= 15 * 60]
+    return Hit(arr[:2]) if arr else None
+
+
+def arrivals_demo(ctx: Ctx):
+    return [{"airline": "Ryanair", "origin": "DUB", "eta_s": 240, "type": "B738"},
+            {"airline": "Lufthansa", "origin": "MUC", "eta_s": 520, "type": "A21N"}]
+
+
+def arrivals_draw(img, ctx, arr, t_in, f):
+    """Wer als nächstes landet, mit Herkunft und Minuten bis zum Aufsetzen."""
+    _title(img, ctx, "↓ Landung BER", ARR_C, f)
+    rows = []
+    for a in arr:
+        name = [f"{a['airline']} aus {a['origin']}", f"{a['airline']} {a['origin']}", a["airline"]] if a.get("origin") else [a["airline"]]
+        eta = (a.get("eta_s") or 0) - (ctx.now - ctx.model.generated_at)
+        rows.append((name, "landet" if eta < 60 else f"~{minutes(eta)}", eta < 60))
+    if len(rows) == 1 and arr[0].get("type"):
+        rows.append(([arr[0]["type"]], "", False))
+    _two_rows(img, ctx, rows, f)
+
+
 # ----------------------------------------------------------------- Radar --
 def radar_cond(ctx: Ctx):
     near = ctx.model.nearby
@@ -885,28 +964,32 @@ ALERT = Card("alert", alert_cond, alert_draw, demo=alert_demo, group="notfall", 
 
 CARDS = [
     ALERT,
-    Card("clock", clock_cond, clock_draw, group="uhr"),
-    Card("private", private_cond, private_draw, weight=2.0, group="nützlich", live=True, demo=private_demo),
-    Card("next", next_cond, next_draw, weight=3.0, group="nützlich", live=True, demo=next_demo),
-    Card("radar", radar_cond, radar_draw, weight=1.5, group="nützlich", live=True, demo=radar_demo),
-    Card("runway", runway_cond, runway_draw, weight=1.5, group="nützlich", demo=runway_demo),
-    Card("runway_change", runway_change_cond, runway_change_draw, group="nützlich", demo=runway_change_demo),
-    Card("weather", weather_cond, weather_draw, group="nützlich", demo=weather_demo),
-    Card("curfew", curfew_cond, curfew_draw, group="nützlich", demo=curfew_demo),
-    Card("scoreboard", scoreboard_cond, scoreboard_draw, weight=1.2, group="nerdig", demo=scoreboard_demo),
-    Card("pokedex", pokedex_cond, pokedex_draw, weight=1.0, group="nerdig", demo=pokedex_demo),
-    Card("new", new_cond, new_draw, group="nerdig", demo=new_demo),
-    Card("rare", rare_cond, rare_draw, group="nerdig", demo=rare_demo),
-    Card("quiet", quiet_cond, quiet_draw, weight=1.0, group="nerdig", live=True, demo=quiet_demo),
-    Card("iss", iss_cond, iss_draw, group="himmel", demo=iss_demo),
-    Card("sunset", sunset_cond, sunset_draw, group="himmel", demo=sunset_demo),
-    Card("sunrise", sunrise_cond, sunrise_draw, group="himmel", demo=sunrise_demo),
-    Card("joke", joke_cond, joke_draw, weight=0.6, group="spaß", demo=joke_demo),
-    Card("delay", delay_cond, delay_draw, weight=0.5, group="spaß", demo=delay_demo),
-    Card("txl", txl_cond, txl_draw, weight=0.25, group="spaß"),
-    Card("ber_opening", ber_opening_cond, ber_opening_draw, weight=0.25, group="spaß"),
-    Card("plane", plane_cond, plane_draw, weight=0.5, group="spaß"),
-    Card("pigeon", pigeon_cond, pigeon_draw, weight=0.3, group="spaß"),
-    Card("santa", santa_cond, santa_draw, group="saison", demo=santa_demo),
-    Card("fireworks", fireworks_cond, fireworks_draw, group="saison", demo=lambda ctx: {}),
+    Card("clock", clock_cond, clock_draw, tier=3, group="uhr"),
+    Card("private", private_cond, private_draw, weight=2.0, tier=2, group="nützlich", live=True, demo=private_demo),
+    Card("departures", departures_cond, departures_draw, weight=3.0, tier=2, group="nützlich", live=True,
+         demo=departures_demo),
+    Card("arrivals", arrivals_cond, arrivals_draw, weight=2.5, tier=2, group="nützlich", live=True,
+         demo=arrivals_demo),
+    Card("next", next_cond, next_draw, weight=3.0, tier=2, group="nützlich", live=True, demo=next_demo),
+    Card("radar", radar_cond, radar_draw, weight=1.5, tier=3, group="nützlich", live=True, demo=radar_demo),
+    Card("runway", runway_cond, runway_draw, weight=1.5, tier=3, group="nützlich", demo=runway_demo),
+    Card("runway_change", runway_change_cond, runway_change_draw, tier=2, group="nützlich", demo=runway_change_demo),
+    Card("weather", weather_cond, weather_draw, tier=3, group="nützlich", demo=weather_demo),
+    Card("curfew", curfew_cond, curfew_draw, tier=3, group="nützlich", demo=curfew_demo),
+    Card("scoreboard", scoreboard_cond, scoreboard_draw, weight=1.2, tier=3, group="nerdig", demo=scoreboard_demo),
+    Card("pokedex", pokedex_cond, pokedex_draw, weight=1.0, tier=3, group="nerdig", demo=pokedex_demo),
+    Card("new", new_cond, new_draw, tier=3, group="nerdig", demo=new_demo),
+    Card("rare", rare_cond, rare_draw, tier=3, group="nerdig", demo=rare_demo),
+    Card("quiet", quiet_cond, quiet_draw, weight=1.0, tier=3, group="nerdig", live=True, demo=quiet_demo),
+    Card("iss", iss_cond, iss_draw, tier=3, group="himmel", demo=iss_demo),
+    Card("sunset", sunset_cond, sunset_draw, tier=3, group="himmel", demo=sunset_demo),
+    Card("sunrise", sunrise_cond, sunrise_draw, tier=3, group="himmel", demo=sunrise_demo),
+    Card("joke", joke_cond, joke_draw, weight=0.6, tier=4, group="spaß", demo=joke_demo),
+    Card("delay", delay_cond, delay_draw, weight=0.5, tier=4, group="spaß", demo=delay_demo),
+    Card("txl", txl_cond, txl_draw, weight=0.25, tier=4, group="spaß"),
+    Card("ber_opening", ber_opening_cond, ber_opening_draw, weight=0.25, tier=4, group="spaß"),
+    Card("plane", plane_cond, plane_draw, weight=0.5, tier=4, group="spaß"),
+    Card("pigeon", pigeon_cond, pigeon_draw, weight=0.3, tier=4, group="spaß"),
+    Card("santa", santa_cond, santa_draw, tier=3, group="saison", demo=santa_demo),
+    Card("fireworks", fireworks_cond, fireworks_draw, tier=3, group="saison", demo=lambda ctx: {}),
 ]
