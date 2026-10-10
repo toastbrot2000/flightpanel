@@ -57,10 +57,16 @@ def remove_background(img: Image.Image, threshold: int = 235) -> Image.Image:
     img = img.convert("RGBA")
     w, h = img.size
     px = img.load()
+    border = [(x, y) for x in range(w) for y in (0, h - 1)] + [(x, y) for y in range(h) for x in (0, w - 1)]
+    # Kachel (Rand größtenteils deckend, App-Icons von Kiwi): halbtransparente Pixel sind
+    # die geglätteten runden Ecken und fliegen mit raus, sonst bleiben graue Ecken stehen.
+    # Logo auf transparentem Grund: halbtransparente Pixel sind seine eigene Kante (etwa
+    # weiße Schrift) und bleiben, sonst frisst die Füllung die Schrift auf.
+    tile = sum(1 for x, y in border if px[x, y][3] >= 10) > len(border) // 2
 
     def bright(x, y):
         r, g, b, a = px[x, y]
-        return a < 10 or (r >= threshold and g >= threshold and b >= threshold)
+        return a < 10 or (tile and a < 255) or (r >= threshold and g >= threshold and b >= threshold)
 
     seen = bytearray(w * h)
     stack = [(x, y) for x in range(w) for y in (0, h - 1)] + [(x, y) for y in range(h) for x in (0, w - 1)]
@@ -79,6 +85,33 @@ def remove_background(img: Image.Image, threshold: int = 235) -> Image.Image:
     return img
 
 
+def drop_specks(img: Image.Image, min_px: int) -> Image.Image:
+    """Entfernt winzige sichtbare Inseln, die nach dem Freistellen übrig bleiben,
+    etwa geglättete Pixel an den runden Ecken eines Icons (sonst drei graue
+    Pixel in jeder Ecke). Bei 30 x 30 wäre so eine Insel kleiner als eine LED."""
+    w, h = img.size
+    px = img.load()
+    seen = bytearray(w * h)
+    for y0 in range(h):
+        for x0 in range(w):
+            if seen[y0 * w + x0] or px[x0, y0][3] < 10:
+                continue
+            seen[y0 * w + x0] = 1
+            comp, stack = [], [(x0, y0)]
+            while stack:
+                x, y = stack.pop()
+                comp.append((x, y))
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                    if 0 <= nx < w and 0 <= ny < h and not seen[ny * w + nx] and px[nx, ny][3] >= 10:
+                        seen[ny * w + nx] = 1
+                        stack.append((nx, ny))
+            if len(comp) < min_px:
+                for x, y in comp:
+                    r, g, b, _ = px[x, y]
+                    px[x, y] = (r, g, b, 0)
+    return img
+
+
 def prepare_logo(data: bytes, size: int, strip_white: bool = True,
                  max_aspect: float | None = None) -> Image.Image:
     """max_aspect: Seitenverhältnis des Inhalts nach dem Zuschnitt, ab dem das
@@ -87,7 +120,7 @@ def prepare_logo(data: bytes, size: int, strip_white: bool = True,
     if max(img.size) > MAX_SOURCE_PX:
         img.thumbnail((MAX_SOURCE_PX, MAX_SOURCE_PX), Image.LANCZOS)
     if strip_white:
-        img = remove_background(img)
+        img = drop_specks(remove_background(img), max(4, img.width * img.height // 1000))
     bbox = img.getchannel("A").getbbox()
     if bbox:
         img = img.crop(bbox)
