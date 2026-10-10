@@ -37,7 +37,8 @@ Die Vorschauseite hat Links für die Layouts. `/frame.png?layout=C&scale=8&gap=0
 | `/frame` | Binär für den ESP32: `[1, helligkeit, 128, 32]` + 12 288 Byte RGB |
 | `/frame.png` | Vorschau, Parameter `layout`, `scale`, `gap` |
 | `/display.json` | Display-Modell (Flüge, Status, Route, Höhe, Airline-Codes …), dazu `nearby`: alle Flugzeuge im Radius mit Richtung (`az`), Höhenwinkel (`elev`) und `in_view` |
-| `/health` | OpenSky-Credits, Cache, vorhandene/fehlende Logos, letzter ESP32-Abruf. `esp32.alive=false` heißt: Panel hängt. |
+| `/health` | Quelle, OpenSky-Credits, Cache, vorhandene/fehlende Logos, letzter ESP32-Abruf, Anzahl Auffälligkeiten. `esp32.alive=false` heißt: Panel hängt. |
+| `/issues` | gesammelte Auffälligkeiten (siehe unten), `POST /issues/clear` leert |
 
 ## Layouts
 
@@ -89,6 +90,34 @@ In `.env` `MOCK=0`, `HOME_LAT`, `HOME_LON` setzen, `docker compose up -d --build
 Das OpenSky-Intervall rechnet der Server selbst aus: nie kürzer als `POLL_INTERVAL`, aber so lang, dass das Tagesbudget für die Stunden außerhalb `QUIET_HOURS` reicht (in den Quiet Hours ist das Panel schwarz, es wird nicht gepollt). Bei unter 10 % Rest-Credits verdoppelt er das Intervall, bei HTTP 429 wartet er so lange, wie OpenSky es sagt. `/health` → `source` zeigt, welche Quelle gerade liefert.
 
 Routen und Flugzeugtypen kommen von adsbdb.com (kostenlos, ohne Account) und werden 24 h bzw. 30 Tage in `data/cache.json` gehalten.
+
+## Betrieb auf dem Server
+
+```bash
+git clone https://github.com/toastbrot2000/flightpanel && cd flightpanel
+cp /pfad/zur/alten/.env .env       # steht nicht im Repo: Standort, Sichtfeld, Zugangsdaten
+docker compose up -d --build
+docker compose exec flightpanel python3 -m flightpanel.fetch_logos
+```
+
+Dann `/health` ansehen: `source.active` sollte `adsblol` sein, `poll_interval_s` 20. Der ESP32 zeigt mit `FRAME_URL` in `secrets.h` auf diesen Server. Updates: `git pull && docker compose up -d --build`; Cache, Logos und Auffälligkeiten liegen in `data/` und bleiben.
+
+### Auffälligkeiten: `/issues`
+
+Der Server sammelt im Betrieb, was nachgepflegt oder angesehen werden sollte, mit Zähler, erstem und letztem Auftreten, Callsigns und einem Beispiel:
+
+| Art | Bedeutung | Was tun |
+|---|---|---|
+| `unknown_operator` | Betreibercode nicht in `airlines.json` | eintragen (Name, Logo-Code), `"airline": false` für Rettung/Polizei/Militär |
+| `name_mismatch` | unser Name passt nicht zu adsbdb | meist alte Daten bei adsbdb (SDR = Sundair), sonst Fehler bei uns |
+| `route_implausible` | adsbdb-Route passt nicht zur Position, verworfen | nichts, zur Kontrolle |
+| `route_unknown` | gezeigter Airline-Flug ohne Route | nichts, adsbdb kennt den Callsign nicht |
+| `source_error`, `rate_limit`, `fallback` | Fehler, HTTP 429, OpenSky eingesprungen | bei Häufung `POLL_INTERVAL` erhöhen |
+| `stale` | Bild gedimmt oder leer mangels Daten | Quellen prüfen |
+| `esp32_gap` | ESP32 hat länger keinen Frame geholt | WLAN, Stromversorgung |
+| `exception` | Fehler im Code, mit Datei und Zeile | Bug, Traceback im Container-Log |
+
+Dazu `logos_missing` und Abrufe seit dem Start. Liegt in `data/issues.json`, übersteht Neustarts. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`. `/health` → `issues` zeigt die Anzahl je Art.
 
 ## Firmware
 

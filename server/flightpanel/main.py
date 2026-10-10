@@ -6,20 +6,24 @@ Endpoints:
   GET /frame.png     Vorschau, 6x vergrößert; ?layout=A|B|C&scale=N&gap=0
   GET /display.json  aktuelles Display-Modell
   GET /health        Zustand von OpenSky, adsbdb, Cache, ESP32-Abruf
+  GET /issues        gesammelte Auffälligkeiten (siehe issues.py), POST /issues/clear leert
 """
 
 import asyncio
+import json
 import logging
 import os
 import signal
 import time
+import traceback
 from dataclasses import replace
 
 import aiohttp
 from aiohttp import web
 
 from .adsbdb import AdsbDb, Cache
-from .adsblol import AdsbLol
+from .adsblol import AdsbLol, Paused
+from .issues import Issues
 from .config import CFG, Config
 from .logos import make_logo_store
 from .model import DisplayModel, build_model, load_airlines, mock_model
@@ -36,7 +40,7 @@ a{color:#8ab;margin-right:14px}</style>
 <img id="f" src="/frame.png?layout=%(layout)s" alt="frame">
 <div>Layout:
 <a href="/?layout=AUTO">auto</a><a href="/?layout=A">A</a><a href="/?layout=B">B</a><a href="/?layout=C">C</a>
-| <a href="/display.json">display.json</a><a href="/health">health</a></div>
+| <a href="/display.json">display.json</a><a href="/health">health</a><a href="/issues">issues</a></div>
 <script>setInterval(()=>{const i=document.getElementById('f');i.src='/frame.png?layout=%(layout)s&t='+Date.now()},2000)</script>
 """
 
@@ -54,6 +58,9 @@ class App:
         self.active_source = cfg.source     # woher der letzte Abruf kam
         self.adsblol_failing = False
         self.opensky_last_try = 0.0
+        self.issues = Issues(os.path.join(cfg.data_dir, "issues.json"))
+        self.started = time.time()
+        self.stats = {"polls": 0, "ok": 0, "adsblol": 0, "opensky": 0}
         self.cache = Cache(os.path.join(cfg.data_dir, "cache.json"))
         self.adsb: AdsbDb | None = None
         self.names = load_airlines(cfg.data_dir)
@@ -100,12 +107,16 @@ class App:
                 self.active_source = "adsblol"
                 self.adsblol_failing = False
                 return states
-            except Exception:
+            except Exception as e:
                 self.adsblol_failing = True
+                err = self.adsblol.last_error or "?"
+                if not isinstance(e, Paused):     # die Pause selbst ist kein neuer Fehler
+                    self.issues.note("rate_limit" if "429" in err else "source_error", "adsblol", error=err)
                 wait = self.opensky_interval() - (time.time() - self.opensky_last_try)
                 if wait > 0:
                     raise RuntimeError(f"adsb.lol: {self.adsblol.last_error}, OpenSky erst in {wait:.0f} s")
                 log.warning("adsb.lol: %s, nehme OpenSky", self.adsblol.last_error)
+                self.issues.note("fallback", "opensky", reason=err)
         self.opensky_last_try = time.time()
         self.active_source = "opensky"
         return await self.opensky.fetch(self.cfg.bbox)
@@ -118,6 +129,7 @@ class App:
                 # Quiet Hours: Panel ist schwarz, Credits sparen
                 await asyncio.sleep(60)
                 continue
+            self.stats["polls"] += 1
             try:
                 if self.cfg.mock:
                     self.model = mock_model(self.cfg, seed=int(t0 // 20))
@@ -126,7 +138,9 @@ class App:
                     interval = self.poll_interval()
                     self.model = await build_model(self.cfg, states, self.adsb, self.names,
                                                    horizon_s=self.refresh_period(),
-                                                   prev_course=self.model.landing_course)
+                                                   prev_course=self.model.landing_course,
+                                                   issues=self.issues)
+                    self.stats[self.active_source] += 1
                     log.info("%s: %d empfangen, %d im Radius, %d im Sichtfeld, angezeigt: %s. "
                              "Nächster Abruf in %d s",
                              self.active_source, len(states), len(self.model.nearby),
@@ -137,25 +151,46 @@ class App:
                     if f.kind == "airline":
                         self.logos.ensure(f.airline_iata, f.airline_icao)   # holt fehlende Logos im Hintergrund
                 self.last_model_ok = t0
+                self.stats["ok"] += 1
             except Exception as e:
-                log.warning("Poll fehlgeschlagen: %s", e)
+                self._note_poll_error(e)
                 age = time.time() - self.last_model_ok
                 # Schwellen nie kürzer als ein paar Abrufintervalle, sonst dimmt
                 # das Bild bei langsamem (anonymem) Polling nach jedem Fehlversuch.
                 period = self.refresh_period()
                 if age > max(self.cfg.empty_after, 4 * period):
+                    if not self.model.empty:
+                        self.issues.note("stale", "empty", age_s=round(age))
                     self.model = replace(self.model, flights=[], empty=True, stale=True)
                 elif age > max(self.cfg.stale_after, 2 * period):
+                    if not self.model.stale:
+                        self.issues.note("stale", "dimmed", age_s=round(age))
                     self.model = replace(self.model, stale=True)
             await asyncio.sleep(max(5, interval - (time.time() - t0)))
 
+    def _note_poll_error(self, e: Exception) -> None:
+        """Netz- und Quellenfehler als source_error/rate_limit, alles andere ist
+        ein Bug: als exception mit Datei und Zeile, im Log mit Traceback."""
+        msg = str(e) or type(e).__name__
+        if isinstance(e, (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError)):
+            log.warning("Poll fehlgeschlagen: %s", msg)
+            if not msg.startswith("adsb.lol"):      # adsb.lol-Ausfälle zählt fetch_states schon
+                src = "opensky" if "OpenSky" in msg else self.active_source
+                self.issues.note("rate_limit" if "429" in msg else "source_error", src, error=msg)
+            return
+        log.exception("Poll fehlgeschlagen: %s", msg)
+        tb = traceback.extract_tb(e.__traceback__)
+        where = f"{os.path.basename(tb[-1].filename)}:{tb[-1].lineno}" if tb else "?"
+        self.issues.note("exception", f"{type(e).__name__} {where}", error=msg[:300])
+
     async def cache_loop(self) -> None:
         while not self._stop.is_set():
-            await asyncio.sleep(3600)
+            await asyncio.sleep(600)
             try:
                 self.cache.save()
+                self.issues.save()
             except Exception as e:
-                log.warning("Cache speichern: %s", e)
+                log.warning("Cache/Issues speichern: %s", e)
 
     # ----------------------------------------------------------- Handlers --
     def _render(self, layout: str | None = None):
@@ -164,7 +199,10 @@ class App:
         return r.render(self.model, time.time())
 
     async def h_frame(self, req: web.Request) -> web.Response:
-        self.last_frame_fetch = time.time()
+        now = time.time()
+        if self.last_frame_fetch and now - self.last_frame_fetch > 30:
+            self.issues.note("esp32_gap", "frames", gap_s=round(now - self.last_frame_fetch))
+        self.last_frame_fetch = now
         self.frame_count += 1
         img = self._render()
         body = self.renderer.frame_bytes(img, brightness_for(self.cfg, time.time()))
@@ -186,6 +224,23 @@ class App:
 
     async def h_display(self, req: web.Request) -> web.Response:
         return web.Response(text=self.model.to_json(), content_type="application/json")
+
+    def _issues_report(self) -> dict:
+        now = time.time()
+        return self.issues.report(
+            uptime_h=round((now - self.started) / 3600, 1),
+            polls_since_start=self.stats,
+            logos_missing=sorted(self.logos.missing()),
+        )
+
+    async def h_issues(self, req: web.Request) -> web.Response:
+        return web.json_response(self._issues_report(),
+                                 dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=1))
+
+    async def h_issues_clear(self, req: web.Request) -> web.Response:
+        self.issues.clear()
+        self.issues.save()
+        return web.json_response(self._issues_report())
 
     async def h_health(self, req: web.Request) -> web.Response:
         now = time.time()
@@ -214,6 +269,7 @@ class App:
             },
             "adsbdb_last_error": self.adsb.last_error if self.adsb else None,
             "cache_entries": len(self.cache),
+            "issues": self.issues.report()["counts"],
             "logos": self.logos.available(),
             "logos_missing": sorted(self.logos.missing()),
             "esp32": {
@@ -231,6 +287,7 @@ class App:
         self.opensky = OpenSky(self.session, self.cfg.opensky_client_id, self.cfg.opensky_client_secret)
         self.adsb = AdsbDb(self.session, self.cfg.adsbdb_base, self.cache)
         self.adsblol = AdsbLol(self.session)
+        self.adsb.issues = self.issues
         if not self.cfg.mock and self.cfg.source == "opensky" and self.opensky.anonymous:
             log.warning("Keine OpenSky-Zugangsdaten: anonymer Zugriff (400 Credits/Tag), "
                         "Abruf nur alle %d s. Mit OPENSKY_CLIENT_ID/SECRET alle %d s.",
@@ -242,6 +299,8 @@ class App:
             web.get("/frame.png", self.h_frame_png),
             web.get("/display.json", self.h_display),
             web.get("/health", self.h_health),
+            web.get("/issues", self.h_issues),
+            web.post("/issues/clear", self.h_issues_clear),
         ])
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -255,6 +314,7 @@ class App:
     async def stop(self, runner: web.AppRunner) -> None:
         self._stop.set()
         self.cache.save()
+        self.issues.save()
         await runner.cleanup()
         if self.session:
             await self.session.close()

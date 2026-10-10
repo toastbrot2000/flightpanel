@@ -81,6 +81,7 @@ class AdsbDb:
         self.base = base.rstrip("/")
         self.cache = cache
         self.last_error: str | None = None
+        self.issues = None      # Issues, setzt main
 
     async def _get(self, path: str) -> dict | None:
         try:
@@ -93,8 +94,11 @@ class AdsbDb:
             resp = j.get("response")
             return resp if isinstance(resp, dict) else None
         except Exception as e:
-            self.last_error = str(e)
-            log.warning("adsbdb %s: %s", path, e)
+            self.last_error = str(e) or type(e).__name__
+            log.warning("adsbdb %s: %s", path, self.last_error)
+            if self.issues is not None:
+                self.issues.note("rate_limit" if "429" in self.last_error else "source_error", "adsbdb",
+                                 error=self.last_error, path=path)
             raise
 
     async def route(self, callsign: str) -> dict:

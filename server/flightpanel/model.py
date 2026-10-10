@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass, field
 from .adsbdb import AdsbDb
 from .config import Config
 from .geo import bearing_deg, destination, elevation_deg, haversine_km
+from .issues import Issues, names_match
 from .opensky import State
 
 log = logging.getLogger("model")
@@ -305,10 +306,26 @@ async def landing_sequence(cfg: Config, states: list[State], adsb: AdsbDb, names
     return {icao: i + 1 for i, (_, icao) in enumerate(sorted(eta))}
 
 
+def note_operator(issues: Issues, s: State, route: dict, names: dict[str, dict], airline: bool) -> None:
+    """Unbekannte Betreiber und Namen, die nicht zu adsbdb passen: Kandidaten fürs
+    Nachpflegen von airlines.json."""
+    code = callsign_airline(s.callsign)
+    if not code:
+        return
+    if code not in names:
+        issues.note("unknown_operator", code, s.callsign, adsbdb=route.get("airline", ""),
+                    category=s.category, type=s.actype, counted_as="airline" if airline else "other")
+    elif (route.get("airline") and route.get("airline_icao") == code
+          and not names_match(names[code]["name"], route["airline"])):
+        issues.note("name_mismatch", code, s.callsign, ours=names[code]["name"], adsbdb=route["airline"])
+
+
 async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dict[str, dict],
-                      horizon_s: float = 0, prev_course: float | None = None) -> DisplayModel:
+                      horizon_s: float = 0, prev_course: float | None = None,
+                      issues: Issues | None = None) -> DisplayModel:
     """horizon_s: Zeit bis zum nächsten Abruf, für die Sichtfeld-Vorschau.
-    prev_course: Landerichtung vom letzten Abruf, falls gerade niemand landet."""
+    prev_course: Landerichtung vom letzten Abruf, falls gerade niemand landet.
+    issues: sammelt Auffälligkeiten (unbekannte Betreiber, verworfene Routen)."""
     cands: list[tuple[State, Sighting, int]] = []
     for s in states:
         if s.on_ground:
@@ -327,6 +344,8 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
     for s, v, vis in pool[:SHORTLIST]:
         route = await adsb.route(s.callsign)
         airline = is_airline(s.callsign, route, names, s.category)
+        if issues is not None:
+            note_operator(issues, s, route, names, airline)
         if airline or cfg.show_other:
             ranked.append((s, v, vis, route, airline))
     # Sichtbar vor unsichtbar, Airline vor Sonstigen, jetzt vor gleich, dann die Sichtlinie
@@ -346,7 +365,12 @@ async def build_model(cfg: Config, states: list[State], adsb: AdsbDb, names: dic
         origin, dest = route.get("origin", ""), route.get("dest", "")
         if not route_plausible(route, s.lat, s.lon):
             log.info("Route %s %s-%s passt nicht zur Position, verworfen", s.callsign, origin, dest)
+            if issues is not None:
+                issues.note("route_implausible", s.callsign, s.callsign, route=f"{origin}-{dest}",
+                            pos=[round(s.lat, 2), round(s.lon, 2)])
             origin = dest = ""
+        elif airline and not (origin or dest) and issues is not None:
+            issues.note("route_unknown", callsign_airline(s.callsign) or s.callsign, s.callsign)
         # Betreiber auch ohne Ziffer im Callsign (BPOBER -> Bundespolizei), nur für den Namen
         airline_icao = (route.get("airline_icao") or callsign_airline(s.callsign)
                         or (s.callsign[:3] if s.callsign[:3] in names else ""))

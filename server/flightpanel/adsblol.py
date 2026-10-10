@@ -1,6 +1,9 @@
 """adsb.lol: Community-Netz (ADS-B und MLAT), ohne Account und ohne Tageslimit.
 Liefert neben der Position auch den Flugzeugtyp (t) und die ADS-B-Kategorie
-(A7 = Hubschrauber), die OpenSky nicht hat."""
+(A7 = Hubschrauber), die OpenSky nicht hat.
+
+Rate-Limit pro IP: Bei zu vielen Abrufen kommt HTTP 429 (vorher bis zu einige
+Sekunden verzögert). Dann Pause, 60 s, bei Wiederholung doppelt, bis 10 min."""
 
 import logging
 import math
@@ -14,6 +17,11 @@ log = logging.getLogger("adsblol")
 
 POINT_URL = "https://api.adsb.lol/v2/point/{lat:.4f}/{lon:.4f}/{nm}"
 MAX_POS_AGE_S = 30      # ältere Positionen verwerfen
+BACKOFF_MIN, BACKOFF_MAX = 60, 600
+
+
+class Paused(RuntimeError):
+    """In der Pause nach einem 429; kein neuer Fehler."""
 FT, KT, FPM = 0.3048, 0.514444, 0.00508
 
 
@@ -54,14 +62,23 @@ class AdsbLol:
         self.session = session
         self.last_ok: float = 0
         self.last_error: str | None = None
+        self.backoff_until: float = 0
+        self._backoff = 0
 
     async def fetch(self, lat: float, lon: float, radius_km: float) -> list[State]:
         """Flugzeuge im Umkreis. Wirft bei Fehlern, damit der Aufrufer auf
         OpenSky ausweichen kann."""
+        wait = self.backoff_until - time.time()
+        if wait > 0:
+            raise Paused(f"Pause nach Rate-Limit, noch {wait:.0f} s")
         nm = max(1, min(250, math.ceil(radius_km / 1.852)))
         try:
             async with self.session.get(POINT_URL.format(lat=lat, lon=lon, nm=nm),
                                         timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status == 429:
+                    self._backoff = min(BACKOFF_MAX, max(BACKOFF_MIN, self._backoff * 2))
+                    self.backoff_until = time.time() + self._backoff
+                    raise RuntimeError(f"HTTP 429, Pause {self._backoff} s")
                 if r.status >= 400:
                     raise RuntimeError(f"HTTP {r.status}")
                 j = await r.json(content_type=None)
@@ -70,4 +87,5 @@ class AdsbLol:
             raise
         self.last_ok = time.time()
         self.last_error = None
+        self._backoff = 0
         return [s for s in (parse(ac) for ac in j.get("ac") or []) if s is not None]
