@@ -2,9 +2,10 @@
 
 import logging
 import time
-from dataclasses import dataclass
 
 import aiohttp
+
+from .model import State
 
 log = logging.getLogger("opensky")
 
@@ -15,24 +16,6 @@ STATES_URL = "https://opensky-network.org/api/states/all"
 # Eine Abfrage bis 25 Quadratgrad kostet 1 Credit.
 DAILY_CREDITS_ANON = 400
 DAILY_CREDITS_USER = 4000
-
-
-@dataclass
-class State:
-    icao24: str
-    callsign: str
-    lon: float
-    lat: float
-    baro_alt_m: float | None
-    on_ground: bool
-    velocity_ms: float | None
-    track_deg: float | None
-    vrate_ms: float | None
-    geo_alt_m: float | None = None
-    actype: str = ""        # ICAO-Typ, nur von adsb.lol
-    category: str = ""      # ADS-B-Kategorie, nur von adsb.lol (A7 = Hubschrauber)
-    squawk: str = ""        # Transpondercode, 7700/7600/7500 = Notfall
-    registration: str = ""  # Kennzeichen, nur von adsb.lol
 
 
 class OpenSky:

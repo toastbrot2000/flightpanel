@@ -1,6 +1,16 @@
+"""Geometrie auf der Erdkugel und Einheiten der Luftfahrt."""
+
 import math
 
 EARTH_KM = 6371.0
+
+# Luftfahrt rechnet in Fuß und Knoten, die Quellen teils in Metern
+M_PER_FT = 0.3048          # Fuß -> Meter
+FT_PER_M = 3.28084         # Meter -> Fuß
+KT_PER_MS = 1.94384        # m/s -> Knoten
+MS_PER_KT = 0.514444       # Knoten -> m/s
+FPM_PER_MS = 196.85        # m/s -> Fuß pro Minute
+MS_PER_FPM = 0.00508       # Fuß pro Minute -> m/s
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -12,6 +22,7 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Richtung von Punkt 1 zu Punkt 2, 0 = Nord, 90 = Ost."""
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dl = math.radians(lon2 - lon1)
     x = math.sin(dl) * math.cos(p2)
@@ -19,17 +30,14 @@ def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return (math.degrees(math.atan2(x, y)) + 360) % 360
 
 
-def compass(deg: float) -> str:
-    return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][int((deg + 22.5) // 45) % 8]
+def angle_diff(a: float, b: float) -> float:
+    """Kleinster Winkel zwischen zwei Richtungen, 0 bis 180."""
+    return abs((a - b + 180) % 360 - 180)
 
 
 def kompass(deg: float) -> str:
-    """Himmelsrichtung auf Deutsch (O statt E) für die Leerlauf-Karten."""
+    """Himmelsrichtung auf Deutsch, O statt E."""
     return ["N", "NO", "O", "SO", "S", "SW", "W", "NW"][int((deg + 22.5) // 45) % 8]
-
-
-RICHTUNG = {"N": "Norden", "NO": "Nordosten", "O": "Osten", "SO": "Südosten",
-            "S": "Süden", "SW": "Südwesten", "W": "Westen", "NW": "Nordwesten"}
 
 
 def destination(lat: float, lon: float, bearing: float, dist_km: float) -> tuple[float, float]:

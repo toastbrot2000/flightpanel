@@ -34,7 +34,9 @@ from .idle import IdleScreen
 from .issues import Issues
 from .logos import make_logo_store
 from .metar import MetarSource
-from .model import DisplayModel, build_model, mock_model
+from .build import build_model
+from .mock import mock_model
+from .model import DisplayModel
 from .opensky import OpenSky
 from .origins import Origins
 from .render import Renderer
@@ -159,7 +161,8 @@ class App:
                     self.model = await build_model(self.cfg, states, self.adsb, self.names,
                                                    horizon_s=self.refresh_period(),
                                                    prev_course=self.model.landing_course,
-                                                   issues=self.issues, adsbim=self.adsbim, origins=self.origins)
+                                                   issues=self.issues, adsbim=self.adsbim, origins=self.origins,
+                                                   source=self.active_source)
                     self.counters[self.active_source] += 1
                     if self.model.departures or any(a["eta_s"] <= 90 for a in self.model.arrivals):
                         self.last_airport_move = t0

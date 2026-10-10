@@ -11,7 +11,7 @@ import time
 
 import aiohttp
 
-from .opensky import State
+from .model import State
 
 log = logging.getLogger("adsblol")
 

@@ -18,9 +18,11 @@ import logging
 import os
 import time
 
+from .airlines import AIRLINER_CATEGORIES, callsign_airline
 from .config import Config
-from .model import AIRLINER_CATEGORIES, DisplayModel, callsign_airline, sighting
-from .opensky import State
+from .geo import angle_diff
+from .model import DisplayModel, State
+from .view import sighting
 
 log = logging.getLogger("stats")
 
@@ -34,10 +36,6 @@ COURSE_CONFIRM = 3           # so viele Abrufe in Folge, bis eine neue Landerich
 
 def _date(t: float) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(t))
-
-
-def _angle(a: float, b: float) -> float:
-    return abs((a - b + 180) % 360 - 180)
 
 
 def _new_day(date: str) -> dict:
@@ -141,7 +139,7 @@ class Stats:
             if s.on_ground:
                 continue
             self.day["aircraft"].add(s.icao24)
-            alt = s.geo_alt_m if s.geo_alt_m is not None else s.baro_alt_m
+            alt = s.alt_m
             if alt is not None and alt > self.day["max_alt_m"]:
                 self.day["max_alt_m"] = int(alt)
                 self.day["max_alt_callsign"] = s.callsign or s.icao24.upper()
@@ -198,7 +196,7 @@ class Stats:
                     break
         if not label:
             return
-        alt = s.geo_alt_m if s.geo_alt_m is not None else s.baro_alt_m
+        alt = s.alt_m
         v = sighting(self.cfg, s.lat, s.lon, alt)
         code = callsign_airline(s.callsign)
         airline = self.names[code]["name"] if code in self.names and kind == "type" else ""
@@ -218,10 +216,10 @@ class Stats:
         if self.course is None:
             self.course, self.course_since = c, now
             return
-        if _angle(c, self.course) < 90:
+        if angle_diff(c, self.course) < 90:
             self._pending = None
             return
-        n = self._pending[1] + 1 if self._pending and _angle(self._pending[0], c) < 90 else 1
+        n = self._pending[1] + 1 if self._pending and angle_diff(self._pending[0], c) < 90 else 1
         self._pending = (c, n)
         if n >= COURSE_CONFIRM:
             self.prev_course, self.course, self.course_since = self.course, c, now

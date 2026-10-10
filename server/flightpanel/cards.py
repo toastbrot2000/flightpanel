@@ -26,7 +26,8 @@ from .fonts import FONT_BIG, FONT_CLOCK, FONT_MID, FONT_SMALL, Font
 from .geo import kompass
 from .idle import Card, Ctx, Hit
 from .metar import describe_wx
-from .model import ARR, DEP, path_in_view, runway_name
+from .airport import path_in_view, runway_name
+from .model import ARR, DEP
 
 ROW1, ROW2, ROW3 = 0, 12, 24       # die untere Zeile sitzt auf der Kante (siehe Font.draw)
 STATUS_C = {ARR: ARR_C, DEP: DEP_C, "OVF": OVF_C}
