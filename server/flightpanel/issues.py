@@ -11,9 +11,14 @@
   esp32_gap          der ESP32 hat länger keinen Frame geholt
   exception          Fehler im Code, mit Datei und Zeile
 
-Pro Eintrag: wie oft gesehen (je Abruf), erstes und letztes Mal, bis zu zehn
-Callsigns, ein Beispiel. Liegt in data/issues.json und übersteht Neustarts;
-POST /issues/clear fängt von vorn an."""
+Pro Eintrag: wie oft gesehen (je Abruf), an wie vielen Tagen, erstes und letztes
+Mal, bis zu zehn Callsigns, ein Beispiel. Liegt in data/issues.json und übersteht
+Neustarts; POST /issues/clear fängt von vorn an.
+
+Nachts (main.App.dream) vergisst die Liste von selbst: Einmaliges (nur an einem Tag
+gesehen) nach ONE_OFF_DAYS, alles andere, wenn es FORGET_DAYS nicht mehr aufgetreten
+ist; Fehler im Code (exception) erst dann. Ist sie trotzdem voll, macht der am
+längsten nicht mehr gesehene Eintrag Platz, Neues geht nie verloren."""
 
 import logging
 import re
@@ -25,10 +30,18 @@ log = logging.getLogger("issues")
 
 MAX_KEYS = 1000
 MAX_CALLSIGNS = 10
+ONE_OFF_DAYS = 7        # nur an einem Tag gesehen: nach einer Woche vergessen
+FORGET_DAYS = 30        # alles andere: nach 30 Tagen ohne neues Auftreten
+KEEP_KINDS = {"exception"}   # auch einmalig erst nach FORGET_DAYS
+DAY_S = 24 * 3600
 
 
 def _ts(t: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
+
+
+def _day(t: float) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(t))
 
 
 def _norm(s: str) -> str:
@@ -63,9 +76,11 @@ class Issues:
         it = self.items.get(k)
         if it is None:
             if len(self.items) >= MAX_KEYS:
-                return
-            it = self.items[k] = {"kind": kind, "key": key, "seen": 0, "first": now, "callsigns": []}
+                del self.items[min(self.items, key=lambda i: self.items[i]["last"])]
+            it = self.items[k] = {"kind": kind, "key": key, "seen": 0, "days": 1, "first": now, "callsigns": []}
             log.info("Auffällig: %s %s %s", k, callsign, example or "")
+        elif _day(it["last"]) != _day(now):
+            it["days"] = it.get("days", 1) + 1
         it["seen"] += 1
         it["last"] = now
         if callsign and callsign not in it["callsigns"]:
@@ -88,11 +103,25 @@ class Issues:
         self.since = time.time()
         self.dirty = True
 
+    def forget(self, now: float) -> int:
+        """Vergessen, was vorbei ist (siehe oben). Gibt zurück, wie viele Einträge."""
+        def gone(it: dict) -> bool:
+            idle_days = (now - it["last"]) / DAY_S
+            one_off = it.get("days", 1) <= 1 and it["kind"] not in KEEP_KINDS
+            return idle_days > FORGET_DAYS or (one_off and idle_days > ONE_OFF_DAYS)
+
+        old = [k for k, it in self.items.items() if gone(it)]
+        for k in old:
+            del self.items[k]
+        self.dirty = self.dirty or bool(old)
+        return len(old)
+
     def report(self, **extra) -> dict:
         kinds: dict[str, list] = {}
         for it in sorted(self.items.values(), key=lambda i: -i["seen"]):
             kinds.setdefault(it["kind"], []).append({
-                "key": it["key"], "seen": it["seen"], "first": _ts(it["first"]), "last": _ts(it["last"]),
+                "key": it["key"], "seen": it["seen"], "days": it.get("days", 1),
+                "first": _ts(it["first"]), "last": _ts(it["last"]),
                 "callsigns": it["callsigns"], **({"example": it["example"]} if "example" in it else {}),
             })
         return {"since": _ts(self.since), "counts": {k: len(v) for k, v in kinds.items()}, **extra,

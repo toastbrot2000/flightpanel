@@ -150,6 +150,8 @@ Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Updates: `git pul
 
 Liegt in `data/issues.json`. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`.
 
+**Dauerbetrieb:** Der Server ist darauf ausgelegt, monatelang ohne Neustart zu laufen. Einmal pro Nacht, zu Beginn der `QUIET_HOURS` (ohne Ruhezeit um 4 Uhr), räumt er auf: `/issues` vergisst Einmaliges (nur an einem Tag gesehen) nach 7 Tagen und alles andere, wenn es 30 Tage nicht mehr aufgetreten ist; Fehler im Code bleiben mindestens 30 Tage. Ist `/issues` trotzdem voll (1000 Einträge), macht der älteste Platz. Der Cache wirft Abgelaufenes bei jedem Speichern weg. Was die letzte Nacht getan hat, steht in `/health` unter `dream`. Das Docker-Log ist auf 15 MB begrenzt (`compose.yml`). Einmal im Monat das Image neu bauen, damit Sicherheitsupdates und neue Zertifikate des Basis-Images ankommen: `docker compose build --pull && docker compose up -d`.
+
 ## Hardware und Firmware
 
 PlatformIO, Board `esp32dev` (klassischer ESP32, WROOM-32), Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14. Der ESP32 holt alle 2 s `/frame` und zeigt es an; ohne Server bleibt das letzte Bild stehen, nach 60 s mit einem roten Punkt unten rechts, nach 10 min startet er neu.

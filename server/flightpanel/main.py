@@ -45,6 +45,16 @@ SAVE_EVERY_S = 10 * 60      # Cache, Auffälligkeiten und Statistik auf die Plat
 METAR_EVERY_S = 20 * 60
 ISS_EVERY_S = 10 * 60       # Bahndaten einmal am Tag, Überflüge stündlich (astro.py)
 LANDED_S = 90               # Landezeit darunter zählt als Bewegung am Platz
+DREAM_FALLBACK_MIN = 4 * 60  # ohne QUIET_HOURS wird um 4 Uhr aufgeräumt
+
+
+def dream_due(cfg: Config, last_day: str | None, now: float) -> bool:
+    """Einmal pro Nacht aufräumen (App.dream): im ersten Speicherlauf nach Beginn der
+    Ruhezeit, wenn das Panel ohnehin dunkel ist; ohne Ruhezeit nach 4 Uhr."""
+    t = time.localtime(now)
+    start, end = cfg.quiet_hours
+    return (time.strftime("%Y-%m-%d", t) != last_day
+            and t.tm_hour * 60 + t.tm_min >= (start if start != end else DREAM_FALLBACK_MIN))
 
 
 class App:
@@ -88,6 +98,8 @@ class App:
         self.last_frame_fetch = 0.0             # setzt web.py bei jedem /frame
         self.frame_count = 0
         self.counters = {"polls": 0, "ok": 0, "adsblol": 0, "opensky": 0}
+        self.last_dream: dict | None = None     # was das letzte nächtliche Aufräumen getan hat
+        self._dream_day: str | None = None
         self._stop = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
 
@@ -264,6 +276,8 @@ class App:
         while not self._stop.is_set():
             await asyncio.sleep(SAVE_EVERY_S)
             try:
+                if dream_due(self.cfg, self._dream_day, time.time()):
+                    self.dream(time.time())
                 self.save()
             except Exception as e:
                 log.warning("Speichern: %s", e)
@@ -272,6 +286,18 @@ class App:
         self.cache.save()
         self.issues.save()
         self.stats.save()
+
+    def dream(self, now: float) -> None:
+        """Nachts aufräumen ("träumen"), damit der Server auch nach einem Jahr am Stück
+        so läuft wie am ersten Tag: Einmaliges und Vergangenes in /issues vergessen
+        (Issues.forget), Abgelaufenes aus dem Cache. Kostet Millisekunden."""
+        forgotten = self.issues.forget(now)
+        pruned = self.cache.prune()
+        self._dream_day = time.strftime("%Y-%m-%d", time.localtime(now))
+        self.last_dream = {"at": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),
+                           "issues_forgotten": forgotten, "cache_expired": pruned, "cache_entries": len(self.cache)}
+        log.info("Nachts aufgeräumt: %d Auffälligkeiten vergessen, %d Cache-Einträge abgelaufen, %d bleiben",
+                 forgotten, pruned, len(self.cache))
 
     # ------------------------------------------------------------- Zustand --
     def issues_report(self) -> dict:
@@ -314,6 +340,7 @@ class App:
             "track_last_error": self.origins.last_error if self.origins else None,
             "cache_entries": len(self.cache),
             "issues": self.issues.report()["counts"],
+            "dream": self.last_dream,
             "metar": None if not self.metar else {
                 "age_s": self.metar.age_s(now),
                 "last_error": self.metar.last_error,

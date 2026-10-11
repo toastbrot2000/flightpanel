@@ -5,7 +5,7 @@ import asyncio
 import json
 import time
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from conftest import make_cfg
 from flightpanel import fetch_logos
@@ -48,6 +48,21 @@ def test_missing_lists_only_codes_still_without_a_logo(tmp_path):
     _logo(tmp_path / "LY.png", (0, 0, 255))
     _logo(tmp_path / "own" / "AY.png", (0, 0, 255))
     assert LogoStore(str(tmp_path), 32, fetch=False).missing() == ["FX"]
+
+
+def test_circle_logo_keeps_its_white_inside():
+    """Turkish: weißer Vogel im roten Kreis, über Lücken mit dem weißen Rand verbunden.
+    Die Hintergrundsuche würde ihn mit wegnehmen; der Kreis-Schnitt behält ihn."""
+    from flightpanel.logo_image import circle_crop
+
+    img = Image.new("RGB", (100, 100), (255, 255, 255))
+    ImageDraw.Draw(img).ellipse((10, 10, 89, 89), fill=(200, 10, 10))
+    img.paste((255, 255, 255), (5, 45, 70, 55))                 # weißer Balken bis über den Rand
+    out = circle_crop(img)
+    assert out.getpixel((50, 50)) == (255, 255, 255, 255)      # Weiß im Kreis bleibt
+    assert out.getpixel((30, 30))[:3] == (200, 10, 10)
+    assert out.getpixel((2, 2))[3] == 0                         # außerhalb durchsichtig
+    assert out.getpixel((7, 50))[3] == 0                        # auch der Balken außerhalb
 
 
 def test_white_mark_comes_off_its_tile():

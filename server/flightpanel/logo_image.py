@@ -84,6 +84,24 @@ def white_mark(img: Image.Image, color: Color) -> Image.Image:
     return out
 
 
+def circle_crop(img: Image.Image, threshold: int = 235) -> Image.Image:
+    """Rundes Logo (Turkish): außerhalb des Kreises um den farbigen Inhalt durchsichtig,
+    innen bleibt alles, auch Weiß. Für weiße Teile, die über Lücken am Kreisrand mit dem
+    Hintergrund verbunden sind; remove_background nähme sie mit."""
+    img = img.convert("RGBA")
+    r, g, b, a = img.split()
+    low = ImageChops.darker(ImageChops.darker(r, g), b)
+    colored = ImageChops.multiply(low.point(lambda v: 255 if v < threshold else 0),
+                                  a.point(lambda v: 255 if v >= 10 else 0))
+    box = colored.getbbox()
+    if box is None:
+        return img
+    circle = Image.new("L", img.size)
+    ImageDraw.Draw(circle).ellipse((box[0], box[1], box[2] - 1, box[3] - 1), fill=255)
+    img.putalpha(ImageChops.multiply(a, circle))
+    return img
+
+
 def drop_specks(img: Image.Image, min_px: int) -> Image.Image:
     """Entfernt winzige sichtbare Inseln, die nach dem Freistellen übrig bleiben,
     etwa geglättete Pixel an den runden Ecken eines Icons (sonst drei graue

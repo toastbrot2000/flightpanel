@@ -8,3 +8,8 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data        # mitgelieferte Daten (airlines.json ...), Logos, Cache, Statistik
+    logging:                # Docker-Log begrenzen (rund 1 MB am Tag), sonst wächst es ohne Ende
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

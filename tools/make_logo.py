@@ -6,6 +6,7 @@ gefällt.
 
   python3 tools/make_logo.py lufthansa.svg LH
   python3 tools/make_logo.py easyjet.png U2 --mark "#ff6600"  # weißes e auf Orange -> oranges e
+  python3 tools/make_logo.py turkish.png TK --circle          # rund: innen alles behalten, auch Weiß
   python3 tools/make_logo.py easyjet.png U2 --bg "#ff6600"    # Markenfarbe statt Schwarz
   python3 tools/make_logo.py ryanair.png FR --crop 10         # 10 % Rand wegschneiden
   python3 tools/make_logo.py foo.png XY --keep-white          # weißen Hintergrund stehen lassen
@@ -29,7 +30,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
 from PIL import Image, ImageColor
 
-from flightpanel.logo_image import prepare_logo, remove_background, white_mark
+from flightpanel.logo_image import circle_crop, prepare_logo, remove_background, white_mark
 
 
 def load(path: str, px: int = 512) -> Image.Image:
@@ -52,12 +53,15 @@ def main() -> None:
     ap.add_argument("--crop", type=float, default=0, help="Prozent Rand abschneiden (0-40)")
     ap.add_argument("--keep-white", action="store_true", help="weißen Hintergrund nicht entfernen")
     ap.add_argument("--mark", help="weiße Bildmarke auf farbiger Kachel: nur die Marke, in dieser Farbe")
+    ap.add_argument("--circle", action="store_true", help="rundes Logo: außen weg, innen alles behalten")
     ap.add_argument("--out", default="data/logos/own")
     a = ap.parse_args()
 
     img = load(a.src)
     if a.mark:
         img = white_mark(img, ImageColor.getrgb(a.mark)[:3])
+    elif a.circle:
+        img = circle_crop(img)
     elif not a.keep_white:
         img = remove_background(img)
     if a.crop:

@@ -1,6 +1,7 @@
 """Zwischenspeicher für Antworten der Routen- und Flugzeugdienste: Schlüssel ->
 Wert mit Ablaufzeit. Lebt im Speicher; main.py schreibt ihn alle 10 min nach
-data/cache.json, beim Start wird er geladen und Abgelaufenes fällt weg.
+data/cache.json. Abgelaufenes fällt beim Laden und bei jedem Speichern weg, sonst
+wüchse er im Dauerbetrieb mit jedem Flugzeug, das je vorbeikam.
 
 Schlüssel: "route:<callsign>", "ac:<icao24>" (adsbdb), "im:<callsign>" (adsb.im),
 "trk:<icao24>:<callsign>" (Flugspur)."""
@@ -31,7 +32,17 @@ class Cache:
         except (AttributeError, TypeError, ValueError) as e:
             log.warning("cache.json unbrauchbar (%s), starte leer", e)
 
+    def prune(self) -> int:
+        """Abgelaufenes entfernen; gibt zurück, wie viele Einträge."""
+        now = time.time()
+        old = [k for k, (exp, _) in self.data.items() if exp < now]
+        for k in old:
+            del self.data[k]
+        self.dirty = self.dirty or bool(old)
+        return len(old)
+
     def save(self) -> None:
+        self.prune()
         if self.dirty:
             write_json(self.path, self.data)
             self.dirty = False

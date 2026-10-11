@@ -50,7 +50,7 @@
   "TRA": {"name": "Transavia", "iata": "HV"},
   "TVF": {"name": "Transavia", "iata": "HV"},
   "NOZ": {"name": "Norwegian", "iata": "DY"},
-  "NSZ": {"name": "Norwegian", "iata": "D8"},
+  "NSZ": {"name": "Norwegian", "iata": "DY"},
   "NAX": {"name": "Norwegian", "iata": "DY"},
   "ICE": {"name": "Icelandair", "iata": "FI"},
   "AEA": {"name": "Air Europa", "iata": "UX"},
