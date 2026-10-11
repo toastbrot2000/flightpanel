@@ -1,0 +1,2 @@
+# PlatformIO für tools/check_firmware.sh; daraus macht tools/escrow.py platformio.lock
+platformio==6.1.16

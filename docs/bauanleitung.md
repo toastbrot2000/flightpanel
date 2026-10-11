@@ -121,7 +121,7 @@ pio device monitor
 pio run -e esp32dev_ota -t upload                # danach per WLAN
 ```
 
-Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert (in Docker).
+Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert (in Docker). Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
 
 **Ablauf:** Beim Start ein Testbild (Abschnitt 6), dann WLAN, OTA und mDNS (`flightpanel.local`). Danach alle 2 s `GET /frame`, Header prüfen, Helligkeit übernehmen (gedeckelt bei `MAX_BRIGHTNESS`), 4096 Pixel schreiben, Puffer tauschen. Die Bibliothek frischt die Panels per DMA im Hintergrund auf, der Prozessor ist dabei kaum beteiligt. Ohne Server bleibt das letzte Bild stehen; nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu.
 
@@ -200,6 +200,16 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 
 ## 7. Betrieb
 
+### Vor dem Umzug auf den Server
+
+1. **Feste Adresse für den Server.** Der ESP32 findet ihn nur über `FRAME_URL` in `secrets.h`. Im Router eine feste DHCP-Zuweisung einrichten oder den Namen nehmen, den der Router auflöst (bei einer FRITZ!Box `http://<name>.fritz.box:8080/frame`). Sonst heißt eine neue IP: neu flashen.
+2. **OTA-Passwort setzen:** `OTA_PASSWORD` in `secrets.h` und `--auth=` in `platformio.ini` statt `changeme`, sonst kann jeder im WLAN die Firmware tauschen.
+3. **Mitnehmen:** `.env` (Standort, `TZ`) und `data/logos/own/` (eigene Logos samt Originalen in `own/src/`). Den Rest holt der Server selbst.
+4. **Nur im Heimnetz:** Port 8080 nicht nach außen freigeben. `/display.json` zeigt Richtung und Entfernung der Flugzeuge vom Fenster aus; daraus ließe sich der Standort ableiten.
+5. **Updates per cron:** `sh tools/update.sh` wöchentlich, Zeile in der README unter "Betrieb auf dem Server". Der Nutzer des cron-Jobs braucht die Gruppe `docker`.
+6. **Überwachen statt nachsehen:** ein Uptime-Monitor (Uptime Kuma o. ä.) auf `http://<server>:8080/ok`; der meldet sich nur, wenn Daten fehlen, das Panel nichts mehr holt oder der Code Fehler wirft.
+7. **Sichern:** `data/` ins Backup des Servers: eigene Logos, Statistik und Sammelalbum über das ganze Jahr.
+
 **Fehlerbilder:**
 
 | Symptom | Ursache | Was tun |
@@ -213,7 +223,7 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 | Keine Flüge, obwohl welche da sind | Quelle ausgefallen oder Filter zu eng | `/health`, `/issues`, `/display.json` → `nearby` |
 | Graues Flugzeug statt Airline-Logo | kein quadratisches Logo gefunden | `/health` → `logos_missing`; Tochterbetrieb: Logo-Code der Marke in `data/airlines.json`; sonst Logo von Hand (README, "Airline-Logos") |
 
-**Updates:** Server mit `git pull && docker compose up -d --build`; Cache, Logos und Statistik bleiben in `data/`. Aussehen ändern heißt Python ändern und neu bauen, nie flashen. Die Firmware braucht nur neue Pins, ein neues WLAN oder eine neue Server-URL (`pio run -e esp32dev_ota -t upload`).
+**Updates:** Server mit `sh tools/update.sh` (wöchentlich per cron, siehe oben); Cache, Logos und Statistik bleiben in `data/`. Neue Versionen von Paketen und Basis-Image kommen nur nach 7 Tagen Wartezeit ins Repo (README, "Abhängigkeiten mit Wartezeit"). Aussehen ändern heißt Python ändern und neu bauen, nie flashen. Die Firmware braucht nur neue Pins, ein neues WLAN oder eine neue Server-URL (`pio run -e esp32dev_ota -t upload`).
 
 **Verbrauch:** Die beiden Panels ziehen auch mit schwarzem Bild etwa 0,3 bis 0,5 A (Treiber-ICs), also 2 bis 3 W, dazu ESP32 0,7 W und Netzteilverlust etwa 1 W: rund 35 kWh im Jahr. Die Anzeige selbst kostet zusätzlich 2 bis 5 W. Eine Nachtabschaltung per Smart-Plug spart etwa ein Drittel; der ESP32 bootet in 10 s und holt sich das Bild.
 

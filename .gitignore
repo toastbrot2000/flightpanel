@@ -8,6 +8,7 @@ data/issues.json
 data/stats.json
 data/tle.txt
 data/*.tmp
+data/*.log
 # Logos sind Marken der Airlines: Der Server holt sie selbst, auch handgemachte bleiben lokal
 data/logos/*
 

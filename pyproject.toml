@@ -1,5 +1,5 @@
 # Nur Werkzeuge für die Entwicklung: Tests und Lint vom Repo-Wurzelverzeichnis aus.
-#   pip install -r server/requirements-dev.txt
+#   pip install --require-hashes -r server/requirements-dev.lock
 #   pytest
 #   ruff check .
 
@@ -7,8 +7,8 @@
 testpaths = ["server/tests"]
 pythonpath = ["server"]
 addopts = "-q"
-# Veraltete Aufrufe im eigenen Code sind Fehler: Der Neubau des Images holt die neueste
-# Pillow, und was dort bald wegfällt, soll vorher in den Tests auffallen.
+# Veraltete Aufrufe im eigenen Code sind Fehler: tools/escrow.py übernimmt neue Pillow-
+# und aiohttp-Versionen, und was dort bald wegfällt, soll vorher in den Tests auffallen.
 filterwarnings = ["error::DeprecationWarning:flightpanel.*"]
 
 [tool.ruff]

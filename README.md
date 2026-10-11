@@ -117,7 +117,8 @@ Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dan
 | `/frame` | Binär für den ESP32: `[1, Helligkeit, 128, 32]` + 12 288 Byte RGB |
 | `/frame.png` | Vorschau; `layout`, `card`, `scale`, `gap=0` |
 | `/display.json` | Display-Modell, dazu `nearby`: alle Flugzeuge im Radius mit Richtung, Höhenwinkel, Sichtbarkeit, Landefolge |
-| `/health` | Quellen, wirksame Anzeige-Einstellungen, Cache, Logos, letzter ESP32-Abruf (`esp32.alive=false`: Panel hängt) |
+| `/health` | Quellen, wirksame Anzeige-Einstellungen, Cache, Logos, letzter ESP32-Abruf (`esp32.alive=false`: Panel hängt), `problems`, nächtliches Aufräumen (`dream`) |
+| `/ok` | `ok` mit 200, sonst 503 und die Gründe (keine frischen Flugdaten seit 15 min, ESP32 holt seit 10 min nichts, Fehler im Code); für den Docker-Healthcheck und einen Uptime-Monitor |
 | `/issues` | gesammelte Auffälligkeiten (siehe unten), `POST /issues/clear` leert |
 | `/stats` | Tagesstatistik, Sammelalbum, seltene Sichtungen, Landerichtung |
 | `/idle` | Leerlauf-Karten: Stufe, ob sie gerade etwas zu sagen haben, welche dran ist |
@@ -126,12 +127,16 @@ Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dan
 
 ```bash
 git clone https://github.com/toastbrot2000/flightpanel && cd flightpanel
-cp /pfad/zur/alten/.env .env
+cp /pfad/zur/alten/.env .env                            # und data/logos/own/ mitnehmen
 docker compose up -d --build
 docker compose exec flightpanel python3 -m flightpanel.fetch_logos
 ```
 
-Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Updates: `git pull && docker compose up -d --build`. Cache, Logos, Statistik und Auffälligkeiten liegen in `data/` und bleiben. In den `QUIET_HOURS` ist das Panel schwarz und der Server ruft nichts ab.
+Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Cache, Logos, Statistik und Auffälligkeiten liegen in `data/` und bleiben. In den `QUIET_HOURS` ist das Panel schwarz und der Server ruft nichts ab. Die Checkliste für den Umzug steht in der [Bauanleitung](docs/bauanleitung.md#vor-dem-umzug-auf-den-server).
+
+**Updates:** `sh tools/update.sh` holt den neuen Stand, baut neu und startet neu, nur wenn es einen neuen Commit gibt. Wöchentlich per cron, montags in der Ruhezeit: `0 6 * * 1  cd /pfad/zu/flightpanel && sh tools/update.sh >> data/update.log 2>&1`.
+
+**Abhängigkeiten mit Wartezeit:** Neue Versionen von Python-Paketen, Basis-Image und Werkzeugen kommen erst ins Image, wenn sie seit 7 Tagen veröffentlicht sind; bis dahin sollte ein kompromittiertes Release aufgefallen sein. `server/requirements.lock` hält jede Version mit Prüfsummen (`pip --require-hashes`), das Basis-Image ist per Digest festgelegt, die GitHub-Actions per Commit, die Firmware-Bibliotheken per genauer Version. Einmal pro Woche übernimmt `.github/workflows/escrow.yml`, was alt genug ist, baut und testet wie auf dem Server und checkt nur ein, wenn alles grün ist. Dabei hat der Job, der fremden Code ausführt (die Tests), keine Schreibrechte; der Job, der eincheckt, rechnet die Änderung selbst nach und führt keine fremden Pakete aus. Der Server baut nur aus dem Repo und holt sich nie selbst die neueste Version. Von Hand: `sh tools/escrow.sh` (Docker).
 
 **Ältere `.env`:** `IDLE_OFF` heißt jetzt `CARD_<ID>=0` je Karte, `LOGO_URL` heißt `LOGO_URLS`. `LAYOUT=auto` ist jetzt dasselbe wie `C`. Ausdrücklich gesetzte Werte gehen dem ruhigen Modus vor: Mit `CALM=1` die alte Zeile `PAGE_SECONDS=4` löschen. `AIRPORT_LAT`, `AIRPORT_LON`, `METAR_STATION` nur noch setzen, wenn der Flughafen nicht in `data/airports.json` steht. Der Server sagt beim Start im Log, was davon er gefunden hat.
 
@@ -150,7 +155,7 @@ Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Updates: `git pul
 
 Liegt in `data/issues.json`. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`.
 
-**Dauerbetrieb:** Der Server ist darauf ausgelegt, monatelang ohne Neustart zu laufen. Einmal pro Nacht, zu Beginn der `QUIET_HOURS` (ohne Ruhezeit um 4 Uhr), räumt er auf: `/issues` vergisst Einmaliges (nur an einem Tag gesehen) nach 7 Tagen und alles andere, wenn es 30 Tage nicht mehr aufgetreten ist; Fehler im Code bleiben mindestens 30 Tage. Ist `/issues` trotzdem voll (1000 Einträge), macht der älteste Platz. Der Cache wirft Abgelaufenes bei jedem Speichern weg. Was die letzte Nacht getan hat, steht in `/health` unter `dream`. Das Docker-Log ist auf 15 MB begrenzt (`compose.yml`). Einmal im Monat das Image neu bauen, damit Sicherheitsupdates und neue Zertifikate des Basis-Images ankommen: `docker compose build --pull && docker compose up -d`.
+**Dauerbetrieb:** Der Server ist darauf ausgelegt, monatelang ohne Neustart zu laufen. Einmal pro Nacht, zu Beginn der `QUIET_HOURS` (ohne Ruhezeit um 4 Uhr), räumt er auf: `/issues` vergisst Einmaliges (nur an einem Tag gesehen) nach 7 Tagen und alles andere, wenn es 30 Tage nicht mehr aufgetreten ist; Fehler im Code bleiben mindestens 30 Tage. Ist `/issues` trotzdem voll (1000 Einträge), macht der älteste Platz. Der Cache wirft Abgelaufenes bei jedem Speichern weg. Was die letzte Nacht getan hat, steht in `/health` unter `dream`. Das Docker-Log ist auf 15 MB begrenzt (`compose.yml`), alte Images räumt `tools/update.sh` weg. Damit man nicht nachsehen muss: Ein Uptime-Monitor im Homelab (Uptime Kuma o. ä.) auf `http://server:8080/ok` meldet sich nur, wenn wirklich etwas klemmt; `docker ps` zeigt den Container dann als `unhealthy`.
 
 ## Hardware und Firmware
 
@@ -167,13 +172,15 @@ Teile, Strom, Verdrahtung (Pinbelegung), Testbild und Stellschrauben stehen in d
 ## Entwicklung
 
 ```bash
-pip install -r server/requirements-dev.txt    # dazu DejaVu-Schriften (fonts-dejavu-core), wie im Container
+pip install --require-hashes -r server/requirements-dev.lock   # dazu DejaVu-Schriften (fonts-dejavu-core)
 pytest                                        # vom Repo-Wurzelverzeichnis, ohne Netz
 ruff check .
 MOCK=1 DATA_DIR=./data PYTHONPATH=server python3 -m flightpanel.main
 ```
 
 Die Tests prüfen ohne Netz: Einstellungen, Sichtfeld und Vorhersage, Landefolge, Routen (auch hin und zurück unter einem Callsign), Kartenauswahl, Statistik, METAR, Sonne (gegen veröffentlichte Zeiten), ISS (gegen eine unabhängige Position), jede Karte mit Beispieldaten und jeden HTTP-Endpunkt. GitHub Actions baut bei jedem Push den Container und führt darin Lint und Tests aus; bei Änderungen an `firmware/` kompiliert es die Firmware. Die Bilder in dieser Doku erzeugt `tools/screenshots.py` aus Beispieldaten; nach Änderungen am Aussehen neu erzeugen.
+
+Eine neue Abhängigkeit kommt in `server/requirements.txt` (bzw. `requirements-dev.txt`), dann `sh tools/escrow.sh`: Das schreibt die Locks neu, mit Versionen, die mindestens 7 Tage alt sind. Die `.lock`-Dateien nie von Hand ändern.
 
 ### Aufbau
 
@@ -203,7 +210,8 @@ server/flightpanel/
   cards/         die Karten: traffic, runway, album, sky, fun; Liste in __init__.py
 server/tests/    pytest
 firmware/        ESP32: platformio.ini, src/main.cpp, include/config.h, secrets.h.example
-tools/           make_logo.py, make_airports.py, screenshots.py, check_firmware.sh
+tools/           make_logo.py, make_airports.py, screenshots.py, check_firmware.sh,
+                 escrow.py/.sh (Abhängigkeiten mit Wartezeit), update.sh (Server aktualisieren)
 data/            airlines.json, airports.json, rare.json, jokes.json;
                  im Betrieb logos/, cache.json, issues.json, stats.json, tle.txt
 docs/            bauanleitung.md (Hardware), screens.md (alle Bildschirme), images/

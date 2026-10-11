@@ -10,11 +10,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - name: Container bauen
         run: docker build -t flightpanel server
       - name: Lint und Tests im Container
         run: >
           docker run --rm -v "$PWD:/repo" -w /repo flightpanel sh -c
-          "pip install -q --root-user-action=ignore -r server/requirements-dev.txt
+          "pip install -q --root-user-action=ignore --require-hashes -r server/requirements-dev.lock
           && ruff check . && python -m pytest -p no:cacheprovider"

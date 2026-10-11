@@ -1,0 +1,73 @@
+# Abhängigkeiten mit Wartezeit (tools/escrow.py): einmal pro Woche übernehmen, was seit
+# mindestens 7 Tagen veröffentlicht ist, wie auf dem Server bauen und testen, nur dann
+# einchecken. Der Server holt sich Neues ausschließlich über diese Commits (tools/update.sh).
+#
+# Zwei Jobs, damit fremder Code nie Schreibrechte hat: "prepare" darf nur lesen und
+# führt die Tests aus, also auch pytest und alles, was sonst neu ist. "commit" darf
+# pushen, rechnet die Änderung aber selbst noch einmal aus (gleicher Stichtag, nur uv
+# aus tools/escrow.lock, kein fremdes Python-Paket läuft) und übernimmt sie nur, wenn
+# sie Bit für Bit der getesteten gleicht.
+name: escrow
+
+on:
+  schedule:
+    - cron: "23 3 * * 1"            # montags früh (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DAYS: "7"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      cutoff: ${{ steps.escrow.outputs.cutoff }}
+      change: ${{ steps.escrow.outputs.change }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Was ist neu und alt genug?
+        id: escrow
+        run: |
+          cutoff=$(date -u -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
+          sh tools/escrow.sh "$cutoff"
+          echo "cutoff=$cutoff" >> "$GITHUB_OUTPUT"
+          if git diff --quiet; then change=""; else change=$(git diff --binary | sha256sum | cut -d' ' -f1); fi
+          echo "change=$change" >> "$GITHUB_OUTPUT"
+          git diff --stat
+      - name: Server bauen und testen wie auf dem Server
+        if: steps.escrow.outputs.change != ''
+        run: |
+          docker build -t flightpanel server
+          docker run --rm -v "$PWD:/repo" -w /repo flightpanel sh -c \
+            "pip install -q --root-user-action=ignore --require-hashes -r server/requirements-dev.lock && ruff check . && python -m pytest -p no:cacheprovider"
+      - name: Firmware bauen, wenn sich ihr Werkzeug geändert hat
+        if: steps.escrow.outputs.change != ''
+        run: git diff --quiet -- firmware tools/check_firmware.sh || sh tools/check_firmware.sh
+
+  commit:
+    needs: prepare
+    if: needs.prepare.outputs.change != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Dieselbe Änderung selbst ausrechnen
+        run: |
+          sh tools/escrow.sh "${{ needs.prepare.outputs.cutoff }}" > summary.txt
+          test "$(git diff --binary | sha256sum | cut -d' ' -f1)" = "${{ needs.prepare.outputs.change }}"
+      - name: Einchecken
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -a -m "Abhängigkeiten nach ${DAYS} Tagen Wartezeit" -m "$(cat summary.txt)"
+          git push -q "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}" "HEAD:${{ github.ref_name }}"
