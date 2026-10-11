@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Logo-Datei (PNG/JPG/GIF, oder SVG wenn cairosvg installiert ist) von Hand
-in data/logos/<CODE>.png verwandeln, für Airlines, die der automatische
-Abruf nicht kennt (siehe /health -> logos_missing).
+"""Logo-Datei (PNG/JPG/GIF/WebP, oder SVG wenn cairosvg installiert ist) von Hand
+in ein eigenes Logo verwandeln: für Airlines, die der automatische Abruf nicht
+kennt (siehe /health -> logos_missing), oder statt eines abgerufenen, das nicht
+gefällt.
 
   python3 tools/make_logo.py lufthansa.svg LH
-  python3 tools/make_logo.py easyjet.png U2 --bg "#ff6600"   # Markenfarbe statt Schwarz
-  python3 tools/make_logo.py ryanair.png FR --crop 10        # 10 % Rand wegschneiden
-  python3 tools/make_logo.py foo.png XY --keep-white         # weißen Hintergrund stehen lassen
+  python3 tools/make_logo.py easyjet.png U2 --mark "#ff6600"  # weißes e auf Orange -> oranges e
+  python3 tools/make_logo.py easyjet.png U2 --bg "#ff6600"    # Markenfarbe statt Schwarz
+  python3 tools/make_logo.py ryanair.png FR --crop 10         # 10 % Rand wegschneiden
+  python3 tools/make_logo.py foo.png XY --keep-white          # weißen Hintergrund stehen lassen
 
-Der Code ist der IATA-Code (2 Zeichen, wie im Abruf) oder der ICAO-Code (3);
-der Server probiert beide. Ergebnis: data/logos/<CODE>.png in LOGO_SIZE
-(Default 32) plus <CODE>_preview.png (8x vergrößert) zum Begutachten.
-Dieselbe Aufbereitung wie beim automatischen Abruf: weißer Hintergrund weg,
-auf den Inhalt zuschneiden, quadratisch einpassen."""
+Ohne Python auf dem Rechner im Container (die Bilddatei muss im Repo-Ordner liegen):
+
+  docker compose run --rm -v "$PWD:/repo" -w /repo flightpanel python tools/make_logo.py bild.png LH
+
+Der Code ist der Logo-Code aus data/airlines.json (meist IATA, 2 Zeichen) oder der
+ICAO-Code (3); der Server probiert beide. Ergebnis: data/logos/own/<CODE>.png in
+LOGO_SIZE (Default 32), dazu own/preview/<CODE>.png (8x vergrößert) zum Begutachten.
+Eigene Logos gehen den abgerufenen vor, der Abruf fasst sie nie an; löschen, um zum
+abgerufenen zurückzukehren. Dieselbe Aufbereitung wie beim automatischen Abruf:
+weißer Hintergrund weg, auf den Inhalt zuschneiden, quadratisch einpassen."""
 
 import argparse
 import io
@@ -22,7 +29,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
 from PIL import Image, ImageColor
 
-from flightpanel.logo_image import prepare_logo, remove_background
+from flightpanel.logo_image import prepare_logo, remove_background, white_mark
 
 
 def load(path: str, px: int = 512) -> Image.Image:
@@ -44,11 +51,14 @@ def main() -> None:
     ap.add_argument("--bg", default="#000000", help="Hintergrundfarbe hinter transparenten Teilen")
     ap.add_argument("--crop", type=float, default=0, help="Prozent Rand abschneiden (0-40)")
     ap.add_argument("--keep-white", action="store_true", help="weißen Hintergrund nicht entfernen")
-    ap.add_argument("--out", default="data/logos")
+    ap.add_argument("--mark", help="weiße Bildmarke auf farbiger Kachel: nur die Marke, in dieser Farbe")
+    ap.add_argument("--out", default="data/logos/own")
     a = ap.parse_args()
 
     img = load(a.src)
-    if not a.keep_white:
+    if a.mark:
+        img = white_mark(img, ImageColor.getrgb(a.mark)[:3])
+    elif not a.keep_white:
         img = remove_background(img)
     if a.crop:
         w, h = img.size
@@ -73,12 +83,13 @@ def main() -> None:
         bg.alpha_composite(sq.resize((a.size, a.size), Image.LANCZOS))
         out = bg.convert("RGB")
 
-    os.makedirs(a.out, exist_ok=True)
     code = a.code.upper()
     dst = os.path.join(a.out, f"{code}.png")
+    preview = os.path.join(a.out, "preview", f"{code}.png")
+    os.makedirs(os.path.dirname(preview), exist_ok=True)
     out.save(dst)
-    out.resize((a.size * 8, a.size * 8), Image.NEAREST).save(os.path.join(a.out, f"{code}_preview.png"))
-    print(f"geschrieben: {dst} und {code}_preview.png")
+    out.resize((a.size * 8, a.size * 8), Image.NEAREST).save(preview)
+    print(f"geschrieben: {dst}, Vorschau: {preview}")
 
 
 if __name__ == "__main__":

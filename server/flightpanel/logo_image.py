@@ -7,9 +7,9 @@ import functools
 import io
 import math
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
-from .colors import MUTED, dim
+from .colors import MUTED, Color, dim
 
 MAX_SOURCE_PX = 512            # größere Bilder vor dem Flood-Fill verkleinern
 
@@ -65,6 +65,23 @@ def remove_background(img: Image.Image, threshold: int = 235) -> Image.Image:
         if y < h - 1:
             stack.append((x, y + 1))
     return img
+
+
+def white_mark(img: Image.Image, color: Color) -> Image.Image:
+    """Weiße Bildmarke auf farbiger Kachel (App-Icon, etwa das e von easyJet): nur die
+    Marke, in color, die Kachel durchsichtig. Deckkraft aus dem kleinsten Farbkanal:
+    Weiß deckt ganz, die Kachelfarbe (vom Rand) gar nicht, geglättete Kanten halb."""
+    img = img.convert("RGBA")
+    r, g, b, a = img.split()
+    low = ImageChops.darker(ImageChops.darker(r, g), b)
+    w, h = img.size
+    border = [(x, y) for x in range(w) for y in (0, h - 1)] + [(x, y) for y in range(h) for x in (0, w - 1)]
+    tile = sorted(low.getpixel(p) for p in border if a.getpixel(p) >= 128) or [0]
+    t = tile[len(tile) // 2]
+    alpha = low.point(lambda v: max(0, min(255, round((v - t) * 255 / max(1, 255 - t)))))
+    out = Image.new("RGBA", img.size, (*color, 0))
+    out.putalpha(ImageChops.multiply(alpha, a))
+    return out
 
 
 def drop_specks(img: Image.Image, min_px: int) -> Image.Image:

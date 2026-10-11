@@ -4,7 +4,7 @@ selbst nach, sobald es auftaucht.
 
     python3 -m flightpanel.fetch_logos            # alle aus airlines.json
     python3 -m flightpanel.fetch_logos LH U2 FR   # nur diese Codes (IATA oder ICAO)
-    python3 -m flightpanel.fetch_logos --force    # vorhandene überschreiben
+    python3 -m flightpanel.fetch_logos --force    # abgerufene neu holen (eigene bleiben)
 
 Im Container: docker compose exec flightpanel python3 -m flightpanel.fetch_logos
 """
@@ -24,13 +24,16 @@ from .logos import make_logo_store
 
 async def run(cfg: Config, codes: list[tuple[str, str]], force: bool) -> int:
     """codes: (IATA, ICAO)-Paare, eins von beiden darf leer sein."""
-    ok = skipped = 0
+    ok = skipped = own = 0
     failed: list[str] = []
     async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
         store = make_logo_store(cfg, session)
         store.fetch_enabled = True
         for iata, icao in codes:
             code = store.key(iata, icao)
+            if store.own(iata, icao):
+                own += 1
+                continue
             if not force and (store.path_for(iata) or store.path_for(icao)):
                 skipped += 1
                 continue
@@ -44,11 +47,11 @@ async def run(cfg: Config, codes: list[tuple[str, str]], force: bool) -> int:
             else:
                 failed.append(code)
             await asyncio.sleep(0.3)   # freundlich zum CDN
-    print(f"geholt: {ok}, schon da: {skipped}, fehlgeschlagen: {len(failed)}")
+    print(f"geholt: {ok}, schon da: {skipped}, eigene: {own}, fehlgeschlagen: {len(failed)}")
     if failed:
         print("fehlgeschlagen:", " ".join(failed))
-        print("-> Kein quadratisches Logo (nur Schriftzug) oder Netzfehler. Von Hand ablegen:")
-        print("   data/logos/<IATA>.png, tools/make_logo.py hilft. Bis dahin: Platzhalter (graues Flugzeug).")
+        print("-> Kein quadratisches Logo (nur Schriftzug) oder Netzfehler. Von Hand machen:")
+        print("   tools/make_logo.py legt data/logos/own/<IATA>.png an. Bis dahin: Platzhalter (graues Flugzeug).")
         print("   Tochterbetrieb? Logo-Code der Marke in data/airlines.json (KLM Cityhopper -> KL).")
     return 0
 

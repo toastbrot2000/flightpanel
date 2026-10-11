@@ -7,8 +7,10 @@ Schriftzüge werden bei 32 x 32 Pixeln unlesbar, dann lieber der Platzhalter
 (logo_image.placeholder_logo, ein graues Flugzeug).
 
 Negative Treffer werden in data/logos/.missing.json gemerkt (Retry nach 7 Tagen).
-Neue Dateien werden im Betrieb erkannt, man kann also jederzeit handgemachte
-Logos ablegen; die haben Vorrang vor dem Abruf."""
+
+Eigene Logos liegen in data/logos/own/ (tools/make_logo.py legt sie dort ab): Sie
+gehen den abgerufenen vor, und der Abruf fasst sie nie an, auch nicht mit
+fetch_logos --force. Neue Dateien werden im Betrieb erkannt."""
 
 import asyncio
 import hashlib
@@ -26,6 +28,7 @@ from .storage import read_json, write_json
 log = logging.getLogger("logos")
 
 EXTS = ("png", "PNG", "gif", "bmp", "jpg", "jpeg")
+OWN = "own"                    # Unterordner für eigene Logos
 MISSING_TTL = 7 * 24 * 3600
 ERROR_RETRY = 10 * 60          # nach Netzfehler erst nach 10 min wieder versuchen
 MAX_DOWNLOAD = 2 * 1024 * 1024  # Bytes; Logos sind wenige KB
@@ -48,6 +51,7 @@ class LogoStore:
                  session: aiohttp.ClientSession | None = None):
         """session: ohne gibt es keinen Abruf, nur die vorhandenen Dateien."""
         self.dir = directory
+        self.own_dir = os.path.join(directory, OWN)
         self.size = size
         self.fetch_enabled = fetch
         self.urls = urls
@@ -64,13 +68,19 @@ class LogoStore:
 
     # ------------------------------------------------------------ Dateien --
     def path_for(self, code: str) -> str | None:
+        """Datei zum Code: ein eigenes Logo vor dem abgerufenen."""
         if not code:
             return None
-        for ext in EXTS:
-            p = os.path.join(self.dir, f"{code.upper()}.{ext}")
-            if os.path.isfile(p):
-                return p
+        for d in (self.own_dir, self.dir):
+            for ext in EXTS:
+                p = os.path.join(d, f"{code.upper()}.{ext}")
+                if os.path.isfile(p):
+                    return p
         return None
+
+    def own(self, *codes: str) -> bool:
+        """Gibt es für einen der Codes ein eigenes Logo? Das fasst der Abruf nie an."""
+        return any(p and os.path.dirname(p) == self.own_dir for p in map(self.path_for, codes))
 
     def get(self, *codes: str) -> Image.Image | None:
         """Erstes vorhandene Logo für die angegebenen Codes (z. B. IATA, ICAO)."""
@@ -103,11 +113,14 @@ class LogoStore:
         return None
 
     def available(self) -> list[str]:
-        try:
-            return sorted(os.path.splitext(f)[0].upper() for f in os.listdir(self.dir)
-                          if f.lower().endswith(EXTS) and not f.startswith("."))
-        except FileNotFoundError:
-            return []
+        codes: set[str] = set()
+        for d in (self.dir, self.own_dir):
+            try:
+                codes |= {os.path.splitext(f)[0].upper() for f in os.listdir(d)
+                          if f.lower().endswith(EXTS) and not f.startswith(".")}
+            except FileNotFoundError:
+                pass
+        return sorted(codes)
 
     def missing(self) -> list[str]:
         """Codes (IATA, sonst ICAO), für die keine Quelle ein quadratisches Logo
