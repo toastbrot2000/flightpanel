@@ -38,6 +38,35 @@ def test_every_endpoint_answers(tmp_path):
     asyncio.run(run())
 
 
+def test_ok_says_what_is_wrong(tmp_path):
+    """GET /ok für Docker-Healthcheck und Uptime-Monitore: 200, sonst 503 mit Gründen."""
+    async def run():
+        cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False,
+                       quiet_hours=(0, 0))                     # keine Ruhezeit
+        app = App(cfg)
+        client = TestClient(TestServer(make_web_app(app)))
+        await client.start_server()
+        try:
+            now = time.time()
+            app.last_model_ok = now
+            assert (await client.get("/ok")).status == 200
+            app.last_model_ok = now - 20 * 60                          # seit 20 min nichts Neues
+            app.frame_count, app.last_frame_fetch = 5, now - 15 * 60    # ESP32 war da, ist weg
+            app.issues.note("exception", "KeyError build.py:12")
+            r = await client.get("/ok")
+            text = await r.text()
+            assert r.status == 503 and "Flugdaten" in text and "ESP32" in text and "KeyError" in text
+            night = App(replace(cfg, quiet_hours=(0, 24 * 60)))         # Ruhezeit: dunkel ist normal
+            night.last_model_ok, night.frame_count, night.last_frame_fetch = now - 3600, 5, now - 3600
+            assert night.problems(now) == []
+            await night.session.close()
+        finally:
+            await client.close()
+            await app.session.close()
+
+    asyncio.run(run())
+
+
 def test_quiet_hours_drop_the_old_picture(tmp_path):
     async def run():
         cfg = make_cfg(data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False,

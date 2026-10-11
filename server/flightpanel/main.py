@@ -46,6 +46,9 @@ METAR_EVERY_S = 20 * 60
 ISS_EVERY_S = 10 * 60       # Bahndaten einmal am Tag, Überflüge stündlich (astro.py)
 LANDED_S = 90               # Landezeit darunter zählt als Bewegung am Platz
 DREAM_FALLBACK_MIN = 4 * 60  # ohne QUIET_HOURS wird um 4 Uhr aufgeräumt
+OK_STALE_S = 15 * 60        # GET /ok: so lange ohne frische Flugdaten ist ein Problem
+OK_ESP32_S = 10 * 60        # ... so lange ohne Abruf des ESP32, wenn er schon da war
+OK_EXCEPTION_S = 3600       # ... Fehler im Code in dieser Zeit
 
 
 def dream_due(cfg: Config, last_day: str | None, now: float) -> bool:
@@ -304,6 +307,20 @@ class App:
         return self.issues.report(uptime_h=round((time.time() - self.started) / 3600, 1),
                                   polls_since_start=self.counters, logos_missing=sorted(self.logos.missing()))
 
+    def problems(self, now: float) -> list[str]:
+        """Was gerade nicht stimmt, für GET /ok (Docker-Healthcheck, Uptime-Monitor);
+        leer heißt alles gut. In der Ruhezeit sind alte Daten und ein dunkles Panel normal."""
+        out = []
+        if self.cfg.brightness(now) > 0:
+            age = now - (self.last_model_ok or self.started)
+            if age > OK_STALE_S:
+                out.append(f"keine frischen Flugdaten seit {age / 60:.0f} min")
+            if self.frame_count and now - self.last_frame_fetch > OK_ESP32_S:
+                out.append(f"ESP32 holt seit {(now - self.last_frame_fetch) / 60:.0f} min keine Bilder")
+        out += [f"Fehler im Code: {it['key']}" for it in self.issues.items.values()
+                if it["kind"] == "exception" and now - it["last"] < OK_EXCEPTION_S]
+        return out
+
     def health(self) -> dict:
         """Für GET /health: Quellen, Modell, Logos, ESP32."""
         now = time.time()
@@ -311,6 +328,7 @@ class App:
         cfg = self.cfg
         return {
             "ok": True,
+            "problems": self.problems(now),
             "mock": cfg.mock,
             "layout": cfg.layout,
             "calm": cfg.calm,

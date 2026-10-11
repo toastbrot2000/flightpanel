@@ -6,6 +6,7 @@
                       (mit Beispieldaten, wenn sie gerade nichts zu sagen hat), ?scale=N, ?gap=0
   GET  /display.json  aktuelles Display-Modell, mit allen Flugzeugen im Radius (nearby)
   GET  /health        Zustand der Quellen, Logos, letzter ESP32-Abruf
+  GET  /ok            200 "ok", sonst 503 mit Gründen: für Docker-Healthcheck und Uptime-Monitore
   GET  /issues        gesammelte Auffälligkeiten (issues.py); POST /issues/clear leert
   GET  /stats         Statistik und Sammelalbum (stats.py)
   GET  /idle          Leerlauf-Karten: welche gerade etwas zu sagen haben, welche dran ist
@@ -63,6 +64,7 @@ def make_web_app(panel: "App") -> web.Application:
         web.get("/frame.png", h.frame_png),
         web.get("/display.json", h.display),
         web.get("/health", h.health),
+        web.get("/ok", h.ok),
         web.get("/issues", h.issues),
         web.post("/issues/clear", h.issues_clear),
         web.get("/stats", h.stats),
@@ -125,6 +127,11 @@ class _Handlers:
 
     async def display(self, req: web.Request) -> web.Response:
         return web.Response(text=self.panel.model.to_json(), content_type="application/json")
+
+    async def ok(self, req: web.Request) -> web.Response:
+        problems = self.panel.problems(time.time())
+        return web.Response(text="\n".join(problems or ["ok"]) + "\n", status=503 if problems else 200,
+                            headers={"Cache-Control": "no-store"})
 
     async def health(self, req: web.Request) -> web.Response:
         return web.json_response(self.panel.health())
