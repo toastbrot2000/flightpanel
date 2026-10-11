@@ -6,7 +6,7 @@ from datetime import datetime
 from PIL import Image
 
 from ..colors import ARR_C, GOLD, HORIZON, INFO, MUTED, PINK, dim
-from ..draw import ROW1, ROW2, ROW3, frame, km, line, minutes, right, text
+from ..draw import ROW1, ROW2, ROW3, frame, headline, km, line, minutes, right, text
 from ..fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from ..geo import kompass
 from ..idle import Ctx, Hit
@@ -29,13 +29,12 @@ def scoreboard_demo(ctx: Ctx):
 
 
 def scoreboard_draw(img, ctx, d, t_in, f):
-    W = img.width
-    x = FONT_BIG.draw(img, 0, ROW1, "Heute:", dim(GOLD, f))
-    FONT_BIG.draw(img, x + 4, ROW1, f"{km(d['aircraft'])} Flieger", dim(GOLD, f))
-    line2 = f"{d['airlines']} Airlines" + (f" · {d['shown']} hier" if d.get("shown") else "")
-    text(img, FONT_MID, 0, ROW2, line2, INFO, f, W)
-    if d.get("max_alt_m"):
-        text(img, FONT_MID, 0, ROW3, f"höchster {km(d['max_alt_m'])} m", MUTED, f, W)
+    """Flieger im Umkreis, davon wie viele durchs Sichtfeld kamen ("im Fenster");
+    unten wechseln sich Airlines und der höchste im Takt der Infoseiten ab."""
+    headline(img, 0, ROW1, f"Heute: {km(d['aircraft'])} Flieger", GOLD, f, img.width)
+    line(img, 0, ROW2, f"davon {d['shown']} im Fenster" if d.get("shown") else "keiner im Fenster", INFO, f)
+    facts = [f"{d['airlines']} Airlines"] + ([f"höchster {km(d['max_alt_m'])} m"] if d.get("max_alt_m") else [])
+    line(img, 0, ROW3, facts[int(t_in // max(1, ctx.cfg.page_seconds)) % len(facts)], MUTED, f)
 
 
 def pokedex_cond(ctx: Ctx):
@@ -85,28 +84,30 @@ def new_demo(ctx: Ctx):
 
 
 def new_draw(img, ctx, d, t_in, f):
+    """Mit Logo steht der Text daneben. Ohne Logo blinkt ein Rahmen, und der Text bleibt
+    innerhalb wie beim Notfall: 3 px vom Rand links und rechts, oben und unten frei."""
     W = img.width
     logo = None
     if ctx.logos is not None and d.get("known"):
         n = ctx.names.get(d.get("code", ""), {})
         logo = ctx.logos.get(n.get("iata", ""), d.get("code", ""))
-    x0 = 0
     if logo is not None:
         if f < 1.0:
             logo = Image.eval(logo, lambda v: int(v * f))
         img.paste(logo, (0, (img.height - logo.height) // 2))
-        x0 = logo.width + 2
-    if ctx.blink_on:
-        FONT_BIG.draw(img, x0, ROW1, "NEU!", dim(GOLD, f))
-    FONT_SMALL.draw(img, W - FONT_SMALL.text_width(d.get("callsign", "")), ROW1 + 1, d.get("callsign", ""),
-                    dim(MUTED, f * 0.7))
-    text(img, FONT_BIG, x0, ROW2, d["name"], ARR_C, f, W - x0)
-    if d.get("known"):
-        text(img, FONT_SMALL, x0, ROW3 + 1, f"Nr. {d['seen']} von {d['total']}", INFO, f, W - x0)
+        x0, x1, top, bottom = logo.width + 2, W, ROW1, ROW3 + 1
     else:
-        text(img, FONT_SMALL, x0, ROW3 + 1, "nicht im Album", PINK, f, W - x0)
-    if logo is None:
         frame(img, GOLD if ctx.blink_on else ARR_C, f * 0.6)
+        x0, x1, top, bottom = 3, W - 3, ROW1 + 1, ROW3
+    if ctx.blink_on:
+        FONT_BIG.draw(img, x0, top, "NEU!", dim(GOLD, f))
+    cs = d.get("callsign", "")
+    FONT_SMALL.draw(img, x1 - FONT_SMALL.text_width(cs), top + 1, cs, dim(MUTED, f * 0.7))
+    text(img, FONT_BIG, x0, ROW2, d["name"], ARR_C, f, x1 - x0)
+    if d.get("known"):
+        text(img, FONT_SMALL, x0, bottom, f"Nr. {d['seen']} von {d['total']}", INFO, f, x1 - x0)
+    else:
+        text(img, FONT_SMALL, x0, bottom, "nicht im Album", PINK, f, x1 - x0)
 
 
 def rare_cond(ctx: Ctx):

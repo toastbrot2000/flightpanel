@@ -42,7 +42,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | | `runway` | "BER landet auf 25", Wind, ob Landungen oder Starts durchs Sichtfeld kommen | Landerichtung seit 30 min stabil, in den letzten 2 h bestätigt, laut METAR kein Rückenwind |
 | | `weather` | warum der Himmel leer ist: Gewitter, Nebel, tiefe Wolken, Schnee; wie viele darüber fliegen | METAR erklärt es: Gewitter, Schnee; Nebel (Sicht unter 2 km), wenn jemand fliegt; Wolken unter 1500 m, wenn jemand darüber fliegt |
 | | `curfew` | Nachtflugverbot bis … | `CURFEW_HOURS` (BER 0 bis 5 Uhr), wenn `QUIET_HOURS` das Panel dann nicht abschaltet |
-| | `scoreboard` | Tagesstatistik: Flugzeuge, Airlines, wie viele im Sichtfeld, das höchste | ab 10 Flugzeugen am Tag |
+| | `scoreboard` | Tagesstatistik: Flieger im Umkreis, "davon 38 im Fenster" (durchs Sichtfeld); unten im Takt der Infoseiten Airlines und der höchste | ab 10 Flugzeugen am Tag |
 | | `pokedex` | Sammelalbum: gesehene Marken aus `airlines.json`, dazu Exoten | ab der ersten Airline |
 | | `new` | "NEU!" mit Logo | Airline zum ersten Mal gesehen, nicht in den ersten 6 h nach dem ersten Start |
 | | `rare` | "Weit weg, aber selten: A380 Emirates, 70 km SO" | Typ oder Betreiber aus `data/rare.json` im Abrufradius |

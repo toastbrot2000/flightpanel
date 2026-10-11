@@ -9,6 +9,7 @@ from PIL import Image
 from conftest import NAMES, make_cfg, state
 from flightpanel.astro import Pass, sun_day
 from flightpanel.cards import CARDS, album, fun, runway, sky, traffic
+from flightpanel.draw import ROW2, ROW3
 from flightpanel.idle import Ctx, IdleScreen
 from flightpanel.logos import LogoStore, make_logo_store
 from flightpanel.metar import MetarSource, parse
@@ -148,6 +149,41 @@ def test_sunset_and_sunrise_windows():
     assert sky.sunset_cond(ctx(sd["sunset"] - 3 * 3600, cfg=c)) is None
     assert sky.sunrise_cond(ctx(sd["sunrise"] - 1800, cfg=c)) is not None
     assert sky.sunrise_cond(ctx(sd["sunrise"] + 600, cfg=c)) is None
+
+
+def test_scoreboard_says_how_many_came_through_the_window():
+    """Unter der Tageszahl "davon 38 im Fenster"; Airlines und der höchste wechseln sich
+    unten im Takt der Infoseiten ab. Auch mit großen Zahlen wird nichts abgeschnitten."""
+    c = ctx()
+    pages = []
+    for t_in in (0, c.cfg.page_seconds):
+        img = Image.new("RGB", (128, 32))
+        album.scoreboard_draw(img, c, album.scoreboard_demo(c), t_in, 1.0)
+        pages.append(img)
+    split = ROW3 - 2                                            # Umlautpunkte von Zeile 3 ragen über ROW3
+    top, bottom = [[p.crop(box).tobytes() for p in pages] for box in ((0, 0, 128, split), (0, split, 128, 32))]
+    assert top[0] == top[1] and bottom[0] != bottom[1]
+    many = {"aircraft": 1234, "airlines": 99, "shown": 999, "max_alt_m": 13716}
+    img = Image.new("RGB", (128, 32))
+    album.scoreboard_draw(img, c, many, 0, 1.0)
+    assert img.crop((0, 0, 128, ROW2)).getbbox()[2] < 128      # "Heute: 1 234 Flieger" kleiner statt abgeschnitten
+    for t_in in (0, c.cfg.page_seconds):
+        wide = Image.new("RGB", (256, 32))
+        album.scoreboard_draw(wide, c, many, t_in, 1.0)
+        assert wide.crop((128, ROW2, 256, 32)).getbbox() is None, t_in     # Zeile 2 und 3 in normaler Schrift
+
+
+def test_new_airline_text_stays_off_the_frame(monkeypatch):
+    """Ohne Logo hat "NEU!" einen Rahmen. Der Text bleibt innerhalb wie beim Notfall,
+    sonst schneidet der Rahmen ihn an ("JTD504", "Jet Time", "nicht im Album")."""
+    monkeypatch.setattr(album, "frame", lambda *a: None)         # nur der Text
+    d = {"name": "Jet Time", "code": "JTD", "callsign": "JTD504", "known": False, "seen": 44, "total": 119}
+    border = [(x, y) for x in range(128) for y in (0, 31)] + [(x, y) for x in (0, 127) for y in range(32)]
+    for now in (ts(2026, 10, 11, 23, 58, 0), ts(2026, 10, 11, 23, 58, 2)):      # Blinktakt an und aus
+        img = Image.new("RGB", (128, 32))
+        album.new_draw(img, ctx(now), d, 0, 1.0)
+        assert img.getbbox() is not None
+        assert [p for p in border if img.getpixel(p) != (0, 0, 0)] == []
 
 
 def test_private_planes_are_a_card_not_a_takeover():
