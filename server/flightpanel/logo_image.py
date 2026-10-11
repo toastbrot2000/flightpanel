@@ -102,6 +102,20 @@ def circle_crop(img: Image.Image, threshold: int = 235) -> Image.Image:
     return img
 
 
+def brighten(img: Image.Image) -> Image.Image:
+    """Dunkles Logo (LOT-Navy) fürs Panel aufhellen: Farben strecken, bis der hellste
+    Kanal der sichtbaren Pixel 255 erreicht; der Farbton bleibt. Auf LEDs ist Dunkelblau
+    sonst fast schwarz."""
+    img = img.convert("RGBA")
+    r, g, b, a = img.split()
+    seen = a.point(lambda v: 255 if v >= 128 else 0)
+    top = max(ImageChops.multiply(ch, seen).getextrema()[1] for ch in (r, g, b))
+    if top in (0, 255):
+        return img
+    k = 255 / top
+    return Image.merge("RGBA", [ch.point(lambda v: min(255, round(v * k))) for ch in (r, g, b)] + [a])
+
+
 def drop_specks(img: Image.Image, min_px: int) -> Image.Image:
     """Entfernt winzige sichtbare Inseln, die nach dem Freistellen übrig bleiben,
     etwa geglättete Pixel an den runden Ecken eines Icons (sonst drei graue

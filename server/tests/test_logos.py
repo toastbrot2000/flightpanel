@@ -2,6 +2,7 @@
 eine weiße Bildmarke von ihrer farbigen Kachel lösen (tools/make_logo.py --mark)."""
 
 import asyncio
+import io
 import json
 import time
 
@@ -40,6 +41,22 @@ def test_fetching_leaves_own_logos_alone(tmp_path, monkeypatch):
     assert own.exists()
 
 
+def test_fetched_logo_is_prepared_and_stored(tmp_path, monkeypatch):
+    """Abruf: die erste Quelle mit Bildmarke gewinnt, aufbereitet als <IATA>.png."""
+    tile = Image.new("RGB", (64, 64), (255, 255, 255))
+    tile.paste((200, 20, 20), (8, 8, 56, 56))
+    buf = io.BytesIO()
+    tile.save(buf, "PNG")
+
+    async def download(self, url):
+        return None if "ZZ" in url else buf.getvalue()         # ZZ: Platzhalter-Probe
+
+    monkeypatch.setattr(LogoStore, "_download", download)
+    store = LogoStore(str(tmp_path), 32, urls=(("https://logos.example/{iata}.png", None),))
+    assert asyncio.run(store.fetch_now("XQ", "XQA"))
+    assert store.get("XQ").getpixel((16, 16)) == (200, 20, 20)
+
+
 def test_missing_lists_only_codes_still_without_a_logo(tmp_path):
     """LY war vermerkt und wurde später doch geholt, AY bekommt ein eigenes: beide
     gehören nicht mehr nach /health -> logos_missing."""
@@ -63,6 +80,20 @@ def test_circle_logo_keeps_its_white_inside():
     assert out.getpixel((30, 30))[:3] == (200, 10, 10)
     assert out.getpixel((2, 2))[3] == 0                         # außerhalb durchsichtig
     assert out.getpixel((7, 50))[3] == 0                        # auch der Balken außerhalb
+
+
+def test_dark_logo_is_brightened_keeping_its_hue():
+    """LOT-Navy wäre auf LEDs fast schwarz: hellster Kanal auf 255, Farbton bleibt.
+    Logos, die schon Weiß enthalten, bleiben, wie sie sind."""
+    from flightpanel.logo_image import brighten
+
+    navy = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+    navy.paste((37, 38, 104, 255), (2, 2, 8, 8))
+    out = brighten(navy)
+    assert out.getpixel((5, 5)) == (91, 93, 255, 255)
+    assert out.getpixel((0, 0))[3] == 0
+    white = Image.new("RGBA", (4, 4), (255, 255, 255, 255))
+    assert brighten(white).getpixel((1, 1)) == (255, 255, 255, 255)
 
 
 def test_white_mark_comes_off_its_tile():

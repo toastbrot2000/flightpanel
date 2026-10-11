@@ -7,6 +7,9 @@
 testpaths = ["server/tests"]
 pythonpath = ["server"]
 addopts = "-q"
+# Veraltete Aufrufe im eigenen Code sind Fehler: Der Neubau des Images holt die neueste
+# Pillow, und was dort bald wegfällt, soll vorher in den Tests auffallen.
+filterwarnings = ["error::DeprecationWarning:flightpanel.*"]
 
 [tool.ruff]
 line-length = 120

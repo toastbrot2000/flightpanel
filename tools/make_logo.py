@@ -7,6 +7,7 @@ gefällt.
   python3 tools/make_logo.py lufthansa.svg LH
   python3 tools/make_logo.py easyjet.png U2 --mark "#ff6600"  # weißes e auf Orange -> oranges e
   python3 tools/make_logo.py turkish.png TK --circle          # rund: innen alles behalten, auch Weiß
+  python3 tools/make_logo.py lot.png LO --boost               # dunkles Navy aufhellen, sonst fast schwarz
   python3 tools/make_logo.py easyjet.png U2 --bg "#ff6600"    # Markenfarbe statt Schwarz
   python3 tools/make_logo.py ryanair.png FR --crop 10         # 10 % Rand wegschneiden
   python3 tools/make_logo.py foo.png XY --keep-white          # weißen Hintergrund stehen lassen
@@ -30,7 +31,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
 from PIL import Image, ImageColor
 
-from flightpanel.logo_image import circle_crop, prepare_logo, remove_background, white_mark
+from flightpanel.logo_image import brighten, circle_crop, prepare_logo, remove_background, white_mark
 
 
 def load(path: str, px: int = 512) -> Image.Image:
@@ -54,6 +55,7 @@ def main() -> None:
     ap.add_argument("--keep-white", action="store_true", help="weißen Hintergrund nicht entfernen")
     ap.add_argument("--mark", help="weiße Bildmarke auf farbiger Kachel: nur die Marke, in dieser Farbe")
     ap.add_argument("--circle", action="store_true", help="rundes Logo: außen weg, innen alles behalten")
+    ap.add_argument("--boost", action="store_true", help="dunkles Logo aufhellen, Farbton bleibt")
     ap.add_argument("--out", default="data/logos/own")
     a = ap.parse_args()
 
@@ -68,6 +70,8 @@ def main() -> None:
         w, h = img.size
         c = a.crop / 100
         img = img.crop((int(w * c), int(h * c), int(w * (1 - c)), int(h * (1 - c))))
+    if a.boost:
+        img = brighten(img)
 
     buf = io.BytesIO()
     img.save(buf, "PNG")

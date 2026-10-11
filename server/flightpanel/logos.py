@@ -20,7 +20,7 @@ import os
 import time
 
 import aiohttp
-from PIL import Image
+from PIL import Image, ImageChops
 
 from .logo_image import NotSquare, prepare_logo
 from .storage import read_json, write_json
@@ -231,7 +231,7 @@ class LogoStore:
                     log.info("Logo %s nicht lesbar: %s", url, e)
                     continue
                 # Leeres oder fast leeres Ergebnis (z. B. Platzhalterbild) verwerfen
-                if sum(1 for p in img.getdata() if max(p) > 40) < self.size * self.size * 0.05:
+                if lit_pixels(img) < self.size * self.size * 0.05:
                     log.info("Logo %s ist leer, verworfen", url)
                     continue
                 img.save(os.path.join(self.dir, f"{k}.png"))
@@ -246,6 +246,12 @@ class LogoStore:
             return False
         finally:
             self._inflight.discard(k)
+
+
+def lit_pixels(img: Image.Image, threshold: int = 40) -> int:
+    """Wie viele Pixel eines RGB-Bilds sichtbar leuchten (hellster Kanal über threshold)."""
+    r, g, b = img.convert("RGB").split()
+    return ImageChops.lighter(ImageChops.lighter(r, g), b).point(lambda v: 255 if v > threshold else 0).histogram()[255]
 
 
 def parse_urls(spec: str) -> tuple[tuple[str, float | None], ...]:
