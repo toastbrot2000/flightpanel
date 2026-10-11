@@ -4,7 +4,9 @@ Was das Panel zeigt, in festen Stufen: Eine Stufe kommt nur dran, wenn keine hö
 
 **Auswahl:** Innerhalb einer Stufe wechseln die Karten alle `IDLE_SECONDS` (12 s, ruhiger Modus 30 s): Dringendes zuerst (mehrere wechseln sich ab), sonst gewichteter Zufall, ohne die zuletzt gezeigten. Die Uhr läuft in jeder Leerlauf-Stufe mit, in etwa einem Drittel der Fälle (`IDLE_CLOCK_SHARE`). Dringend sind: neue Airline (2 min), Flieger in unter 3 min, seltener Typ (2 min), ISS gerade über dem Haus.
 
-**Abschalten:** Jede Karte mit `CARD_<ID>=0` in `.env`, auch Uhr und Notfall. Hat keine eingeschaltete Karte etwas zu zeigen, bleibt das Panel dunkel. `txl` und `ber_opening` laufen nur, wenn der Heimatflughafen BER ist; die Witze und Verspätungsgründe aus `data/jokes.json` nur an dem Flughafen, für den die Datei geschrieben ist.
+**Abschalten:** Jede Karte mit `CARD_<ID>=0` in `.env`, auch Uhr und Notfall. Hat keine eingeschaltete Karte etwas zu zeigen, bleibt das Panel dunkel.
+
+**Neujahr:** Um 0 Uhr gehört das Panel fünf Minuten dem Feuerwerk, vor Flügen und auch in der Ruhezeit (dann so hell wie abends); nur ein Notfall geht vor. Den restlichen 1. Januar ist das Feuerwerk eine Karte unter vielen in Stufe 3. An Silvester kommt es nicht.
 
 **Ruhiger Modus (`CALM=1`):** Nichts blinkt außer dem Notfall, Infoseiten 10 s, jeder Flug mindestens 20 s, Leerlauf-Karten 30 s, in der Infozeile nur Landezeit und Höhe/Tempo. Einzeln: `PAGE_SECONDS`, `FLIGHT_SECONDS`, `INFO_PAGES`, `BLINK`, `IDLE_SECONDS`.
 
@@ -23,8 +25,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | ![Landerichtung](images/runway.png)<br>`runway` | ![Wetter](images/weather.png)<br>`weather` |
 | ![ISS](images/iss.png)<br>`iss` | ![Tagesstatistik](images/scoreboard.png)<br>`scoreboard` |
 | ![Sammelalbum](images/pokedex.png)<br>`pokedex` | ![Uhr](images/clock.png)<br>`clock` |
-| ![Verspätungsgrund](images/delay.png)<br>`delay` | ![Tegel](images/txl.png)<br>`txl` |
-| ![Weihnachten](images/santa.png)<br>`santa` | |
+| ![Weihnachten](images/santa.png)<br>`santa` | ![Feuerwerk und "Frohes 2027!"](images/fireworks.png)<br>`fireworks`: Neujahr, um Mitternacht vor allem anderen |
 
 ## Alle Karten
 
@@ -48,11 +49,10 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | | `quiet` | Flaute und Tagesrekord | ab 10 min ohne Flugzeug im Sichtfeld; nach einer Abruflücke beginnt die Uhr neu |
 | | `iss` | ISS-Überflug: Richtung, Höhe, ob durchs Fenster | sichtbarer Überflug in 30 min, oder gerade (dringend) |
 | | `sunset`, `sunrise` | Uhrzeit; "Gegenlicht", wenn die Sonne im Sichtfeld steht | 2 h vor Sonnenuntergang, 90 min vor Sonnenaufgang |
-| | `santa`, `fireworks` | Schlitten 1 im Anflug, Feuerwerk | 24.12. ab 15 Uhr, Silvester ab 18 Uhr |
+| | `santa` | Schlitten 1 im Anflug | 24.12. ab 15 Uhr |
+| | `fireworks` | Feuerwerk, "Frohes 2027!" | 1. Januar; um 0 Uhr fünf Minuten vor allem außer dem Notfall, auch in der Ruhezeit |
 | | `clock` | Uhr und Datum | immer |
-| **4 Gar nichts los** | `joke`, `delay` | Witze, echte Verspätungsgründe des Flughafens (`data/jokes.json`); Jahrestage an ihrem Tag öfter | nur wenn gar nichts los ist (siehe unten), dann gemischt mit Stufe 3 |
-| | `plane`, `pigeon` | Animationen | wie oben |
-| | `txl`, `ber_opening` | Tegel, BER-Eröffnung | wie oben, nur am BER |
+| **4 Gar nichts los** | `plane`, `pigeon` | Animationen: Flugzeug zieht durchs Bild, Taube auf dem Balkon | nur wenn gar nichts los ist (siehe unten), dann gemischt mit Stufe 3 |
 
 ## Entscheidungen
 
@@ -64,4 +64,9 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 4. **Saison-Karten** in Stufe 3: an ihren Tagen auch, wenn etwas los ist, aber nach Flügen und Verkehr am Platz.
 5. **Radar** in Stufe 3 statt 2: Es hat fast immer etwas zu zeigen und hätte Stufe 3 sonst tagsüber nie drangelassen.
 6. **Alles abschaltbar** (`CARD_<ID>=0`), und der **ruhige Modus** (`CALM=1`) für weniger Unruhe: kein Blinken außer beim Notfall, seltener Wechsel, nur Landezeit und Höhe/Tempo.
-7. **Heimatflughafen einstellbar**: Texte nennen den eingestellten Flughafen; was nur für Berlin stimmt, läuft nur am BER.
+7. **Heimatflughafen einstellbar**: Texte nennen den eingestellten Flughafen.
+
+11. Oktober 2026:
+
+8. **Keine Witze und keine Berlin-Spielereien** (Verspätungsgründe des BER, Tegel, BER-Eröffnung): Sie passen nicht zum Panel. Mit `data/jokes.json` sind auch die Jahrestage darin weg. Als Spielereien bleiben Flugzeug und Taube.
+9. **Feuerwerk nur an Neujahr**: um 0 Uhr fünf Minuten vor allem außer einem Notfall, auch vor Flügen und in der Ruhezeit; danach den Tag über in der Rotation. An Silvester nicht.

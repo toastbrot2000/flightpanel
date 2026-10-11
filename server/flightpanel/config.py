@@ -8,7 +8,7 @@ sie nicht gesetzt sind. Die Defaults sind Berlin und BER. Unsinnige Werte (etwa
 PAGE_SECONDS=0) brechen den Start mit dem Namen der Variablen ab; Verdächtiges
 steht als Warnung im Log.
 
-Leerlauf-Karten lassen sich einzeln abschalten: CARD_<ID>=0, z. B. CARD_JOKE=0
+Leerlauf-Karten lassen sich einzeln abschalten: CARD_<ID>=0, z. B. CARD_PIGEON=0
 (alle IDs unter /idle und in docs/screens.md).
 
 CALM=1, der ruhige Modus, setzt nur Defaults (CALM_PRESET): Was ausdrücklich in
@@ -27,7 +27,7 @@ from .geo import haversine_km
 log = logging.getLogger("config")
 
 # Gibt es nicht mehr: Variable -> was stattdessen
-REMOVED = {"IDLE_OFF": "CARD_<ID>=0 je Karte, z. B. CARD_JOKE=0", "LOGO_URL": "LOGO_URLS"}
+REMOVED = {"IDLE_OFF": "CARD_<ID>=0 je Karte, z. B. CARD_PIGEON=0", "LOGO_URL": "LOGO_URLS"}
 
 
 def _bool(s: str) -> bool:

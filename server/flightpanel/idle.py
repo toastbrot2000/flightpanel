@@ -9,7 +9,7 @@ und die anderen kommen dran.
 Auswahl pro Zeitscheibe (IDLE_SECONDS):
   1. Dringendes bricht durch: NEU!-Airline, Flieger in unter 3 min, ISS gerade
      über dem Haus. Mehrere wechseln sich ab. (Den Notfall-Squawk zeigt render.py
-     vor allem anderen.)
+     vor allem anderen, danach um Mitternacht an Neujahr das Feuerwerk.)
   2. Sonst mit IDLE_CLOCK_SHARE die Uhr, ansonsten gewichteter Zufall unter den
      Karten der höchsten Stufe, die etwas zu zeigen hat (docs/screens.md):
      2 Verkehr am Platz, 3 wenig los, 4 Spielereien. Stufe 4 nur, wenn gar nichts
@@ -60,7 +60,6 @@ class Ctx:
     astro: Any = None                             # astro.Iss
     logos: Any = None                             # logos.LogoStore
     names: dict = field(default_factory=dict)     # data/airlines.json
-    fun: dict = field(default_factory=dict)       # data/jokes.json
     draw_flight: Any = None                       # Renderer: Flug wie im Normalbetrieb zeichnen
 
     @property
@@ -95,7 +94,6 @@ class Card:
     group: str = ""
     tier: int = 3                         # 0 Notfall, 2 Verkehr am Platz, 3 wenig los, 4 Spielereien
     live: bool = False                    # braucht frische Flugdaten
-    only_at: str = ""                     # nur an diesem Heimatflughafen (IATA), z. B. Tegel-Karte
     demo: Callable[[Ctx], Any] | None = None   # Beispieldaten für /frame.png?card=<id>
 
 
@@ -116,9 +114,7 @@ class IdleScreen:
         return Ctx(cfg=self.cfg, model=model, now=now, **self.providers)
 
     def enabled(self, cid: str) -> bool:
-        c = self.cards.get(cid)
-        return (c is not None and cid not in self.cfg.cards_off
-                and (not c.only_at or c.only_at == self.cfg.local_airport_iata))
+        return cid in self.cards and cid not in self.cfg.cards_off
 
     def _fail(self, cid: str, what: str, e: Exception) -> None:
         """Fehler einer Karte loggen, höchstens einmal pro Stunde je Karte."""

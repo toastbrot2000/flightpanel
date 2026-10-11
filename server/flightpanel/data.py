@@ -3,7 +3,6 @@
   airlines.json  Betreiber: ICAO-Code -> Anzeigename, Logo-Code, Airline oder nicht
   airports.json  Flughäfen mit Linienverkehr: IATA, ICAO, Position (OurAirports)
   rare.json      seltene Typen und Betreiber für die Karte "rare"
-  jokes.json     Witze, Verspätungsgründe, Sprüche für die Spaß-Karten
 
 Fehlt eine Datei, fehlen nur die Funktionen, die sie brauchen."""
 
@@ -54,12 +53,3 @@ def load_rare(data_dir: str) -> dict[str, dict[str, str]]:
     raw = read_json(os.path.join(data_dir, "rare.json")) or {}
     return {part: {k.upper(): v for k, v in raw.get(part, {}).items() if not k.startswith("_")}
             for part in ("types", "callsigns")}
-
-
-def load_fun(data_dir: str, airport: str) -> dict[str, list]:
-    """Witze, Verspätungsgründe und Sprüche. Die Datei gehört zu einem Flughafen
-    ("airport": "BER"); woanders bleibt sie ungenutzt, bis man eine eigene schreibt."""
-    raw = read_json(os.path.join(data_dir, "jokes.json")) or {}
-    if raw.get("airport") and raw["airport"].upper() != airport:
-        return {}
-    return {k: raw.get(k, []) for k in ("jokes", "delays", "plane")}

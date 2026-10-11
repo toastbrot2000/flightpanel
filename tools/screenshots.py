@@ -22,7 +22,7 @@ from PIL import Image, ImageDraw
 
 from flightpanel.cards import CARDS
 from flightpanel.config import Config
-from flightpanel.data import load_airlines, load_fun
+from flightpanel.data import load_airlines
 from flightpanel.idle import IdleScreen
 from flightpanel.logos import LogoStore
 from flightpanel.model import ARR, DEP, OVF, DisplayModel, Flight
@@ -73,8 +73,7 @@ demo_logo(LOGOS)
 
 def renderer(cfg: Config) -> Renderer:
     logos = LogoStore(LOGOS, cfg.logo_size, fetch=False)
-    idle = IdleScreen(cfg, CARDS, logos=logos, names=load_airlines(cfg.data_dir),
-                      fun=load_fun(cfg.data_dir, cfg.local_airport_iata))
+    idle = IdleScreen(cfg, CARDS, logos=logos, names=load_airlines(cfg.data_dir))
     return Renderer(cfg, logos, idle=idle)
 
 
@@ -117,12 +116,13 @@ def main() -> None:
         "private": flight_image(r, [RESCUE], RESCUE, 0),
     }
     for cid in ("departures", "arrivals", "next", "radar", "runway", "weather", "iss", "scoreboard",
-                "pokedex", "clock", "delay", "txl"):
+                "pokedex", "clock"):
         shots[cid] = card_image(r, cid)
     shots["santa"] = card_image(r, "santa", datetime(2026, 12, 24, 18, 0, 5).timestamp())
+    shots["fireworks"] = card_image(r, "fireworks", datetime(2027, 1, 1, 0, 0, 4).timestamp())
     for name, img in shots.items():
         save(r, name, img)
-    sheet = overview([shots[k] for k in ("flight-logo", "departures", "next", "radar", "flight-nologo", "delay")])
+    sheet = overview([shots[k] for k in ("flight-logo", "departures", "next", "radar", "flight-nologo", "iss")])
     sheet.save(os.path.join(OUT, "overview.png"))
     print(f"{len(shots) + 1} Bilder -> {os.path.normpath(OUT)}")
 

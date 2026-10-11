@@ -40,8 +40,8 @@ def test_layout_auto_is_c():
 
 
 def test_cards_switched_off_one_by_one():
-    c = Config.from_env(env(CARD_JOKE="0", CARD_PIGEON="false", CARD_CLOCK="1", CARD_RADAR=""))
-    assert c.cards_off == {"joke", "pigeon"}
+    c = Config.from_env(env(CARD_PLANE="0", CARD_PIGEON="false", CARD_CLOCK="1", CARD_RADAR=""))
+    assert c.cards_off == {"plane", "pigeon"}
 
 
 def test_home_airport_from_airport_list():
@@ -95,5 +95,5 @@ def test_values_out_of_range_and_old_names(caplog):
         with pytest.raises(ValueError, match=name):
             Config.from_env(env(**{name: value}))
     with caplog.at_level("WARNING"):
-        Config.from_env(env(IDLE_OFF="joke", CALM="1", PAGE_SECONDS="4"))
+        Config.from_env(env(IDLE_OFF="pigeon", CALM="1", PAGE_SECONDS="4"))
     assert "IDLE_OFF gibt es nicht mehr" in caplog.text and "PAGE_SECONDS=4" in caplog.text

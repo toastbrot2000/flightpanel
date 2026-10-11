@@ -26,7 +26,7 @@ from .build import build_model
 from .cache import Cache
 from .cards import CARDS
 from .config import Config
-from .data import load_airlines, load_airports, load_fun, load_rare
+from .data import load_airlines, load_airports, load_rare
 from .idle import IdleScreen
 from .issues import Issues
 from .logos import make_logo_store
@@ -86,7 +86,7 @@ class App:
         self.logos = make_logo_store(cfg, self.session)
         self.stats = Stats(os.path.join(data, "stats.json"), cfg, self.names, load_rare(data))
         self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=self.metar, astro=self.iss, logos=self.logos,
-                               names=self.names, fun=load_fun(data, cfg.local_airport_iata))
+                               names=self.names)
         self.renderer = Renderer(cfg, self.logos, idle=self.idle)
         self.model = DisplayModel(empty=True, source="startup", landing_course=self.stats.course)
 
@@ -335,7 +335,7 @@ class App:
             "display": {"page_seconds": cfg.page_seconds, "flight_seconds": cfg.flight_seconds,
                         "idle_seconds": cfg.idle_seconds, "blink": cfg.blink, "info_pages": list(cfg.info_pages),
                         "cards_off": sorted(cfg.cards_off)},
-            "brightness_now": cfg.brightness(now),
+            "brightness_now": self.renderer.brightness(now),
             "model_age_s": round(now - self.last_model_ok) if self.last_model_ok else None,
             "model_stale": self.model.stale,
             "flights": len(self.model.flights),

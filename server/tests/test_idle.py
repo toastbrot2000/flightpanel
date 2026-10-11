@@ -57,7 +57,8 @@ def test_cards_off_and_inactive_cards():
 
 def test_everything_off_leaves_the_panel_dark():
     drawn = []
-    cards = [card("clock", draw=lambda *a: drawn.append("clock")), card("joke", draw=lambda *a: drawn.append("joke"))]
+    cards = [card("clock", draw=lambda *a: drawn.append("clock")),
+             card("pigeon", draw=lambda *a: drawn.append("pigeon"))]
     cards[1].tier = 4
     idle = IdleScreen(make_cfg(cards_off=frozenset({"clock"})), cards)
     # Spielereien nur, wenn gar nichts los ist; sonst auch ohne Uhr nichts
@@ -65,17 +66,9 @@ def test_everything_off_leaves_the_panel_dark():
     assert idle.pick(idle.context(busy, 0)) is None
     img = Image.new("RGB", (128, 32))
     assert idle.draw(img, busy, 0) is None and img.getbbox() is None and drawn == []
-    assert idle.pick(idle.context(model(), 3600))[0] == "joke"     # gar nichts los: Spielerei
-    off = IdleScreen(make_cfg(cards_off=frozenset({"clock", "joke"})), cards)
+    assert idle.pick(idle.context(model(), 3600))[0] == "pigeon"   # gar nichts los: Spielerei
+    off = IdleScreen(make_cfg(cards_off=frozenset({"clock", "pigeon"})), cards)
     assert off.draw(img, model(), 3600) is None and off.last_pick is None
-
-
-def test_cards_for_another_airport_stay_off():
-    cards = [card("clock"), Card("txl", lambda ctx: Hit(), lambda *a: None, only_at="BER")]
-    assert "txl" in IdleScreen(make_cfg(), cards).candidates(IdleScreen(make_cfg(), cards).context(model(), 0))
-    muc = IdleScreen(make_cfg(local_airport_iata="MUC"), cards)
-    assert "txl" not in muc.candidates(muc.context(model(), 0))
-    assert {c["id"]: c["state"] for c in muc.status(model(), 0)["cards"]}["txl"] == "off"
 
 
 def test_live_cards_skipped_when_stale():

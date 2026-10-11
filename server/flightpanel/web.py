@@ -101,7 +101,7 @@ class _Handlers:
             p.issues.note("esp32_gap", "frames", gap_s=round(now - p.last_frame_fetch))
         p.last_frame_fetch = now
         p.frame_count += 1
-        body = p.renderer.frame_bytes(self._render(), p.cfg.brightness(now))
+        body = p.renderer.frame_bytes(self._render(), p.renderer.brightness(now))
         return web.Response(body=body, content_type="application/octet-stream", headers={"Cache-Control": "no-store"})
 
     async def frame_png(self, req: web.Request) -> web.Response:

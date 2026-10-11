@@ -1,6 +1,7 @@
 """Display-Modell -> 128x32-Bild -> Frame-Bytes für den ESP32 / PNG für den Browser.
 
-Was gezeigt wird (render): Notfall-Squawk vor allem, dann Airline-Flüge, sonst
+Was gezeigt wird (render): Notfall-Squawk vor allem, dann um Mitternacht an
+Neujahr ein paar Minuten Feuerwerk, auch in der Ruhezeit, dann Airline-Flüge, sonst
 Leerlauf-Karten (idle.py, cards/), zu denen auch Privatflieger, Hubschrauber und
 Militär im Sichtfeld gehören.
 
@@ -26,7 +27,7 @@ from datetime import datetime
 from PIL import Image
 
 from .aircraft import second_line, shown_elsewhere
-from .cards import CARDS
+from .cards import CARDS, fun
 from .colors import CLOCK, INFO, MUTED, dim
 from .config import INFO_PAGES, Config
 from .draw import ROW1, ROW2, ROW3, STATUS_COLORS, headline, line, right, status_glyph
@@ -100,8 +101,8 @@ class Renderer:
 
     # ---------------------------------------------------------------- API --
     def render(self, model: DisplayModel, now: float, card: str | None = None) -> Image.Image:
-        """Notfall-Squawk vor allem; dann Airline-Flüge; sonst Leerlauf-Karten.
-        card erzwingt eine Leerlauf-Karte (Vorschau)."""
+        """Notfall-Squawk vor allem; dann das Feuerwerk in den ersten Minuten des Jahres;
+        dann Airline-Flüge; sonst Leerlauf-Karten. card erzwingt eine Leerlauf-Karte (Vorschau)."""
         img = Image.new("RGB", (self.cfg.width, self.cfg.height), (0, 0, 0))
         f = STALE_FACTOR if model.stale else 1.0
 
@@ -110,6 +111,9 @@ class Renderer:
             return img
         if model.alert and not model.stale and self.idle.enabled("alert"):
             self.idle.draw(img, model, now, f, force="alert")
+            return img
+        if self.new_year(now):
+            self.idle.draw(img, model, now, 1.0, force="fireworks")     # braucht keine Flugdaten
             return img
         airline = [fl for fl in model.flights if fl.kind == "airline"]
         if model.empty or not airline:
@@ -134,6 +138,16 @@ class Renderer:
             self._layout_a(img, fl, page, f, dots)
         else:
             self._layout_c(img, fl, page, logo, f, dots)
+
+    def new_year(self, now: float) -> bool:
+        """Mitternacht an Neujahr: ein paar Minuten Feuerwerk, vor Flügen und in der Ruhezeit."""
+        return fun.new_year(now) and self.idle.enabled("fireworks")
+
+    def brightness(self, now: float) -> int:
+        """Helligkeit fürs Panel nach Uhrzeit (Config.brightness); fürs Feuerwerk um
+        Mitternacht an Neujahr auch in der Ruhezeit, dann so hell wie abends."""
+        b = self.cfg.brightness(now)
+        return self.cfg.brightness_evening if b == 0 and self.new_year(now) else b
 
     def frame_bytes(self, img: Image.Image, brightness: int) -> bytes:
         """Für den ESP32: [Version, Helligkeit, Breite, Höhe] + RGB, zeilenweise."""

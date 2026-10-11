@@ -6,10 +6,9 @@ from datetime import UTC, datetime
 import pytest
 from PIL import Image
 
-from conftest import DATA, NAMES, make_cfg, state
+from conftest import NAMES, make_cfg, state
 from flightpanel.astro import Pass, sun_day
 from flightpanel.cards import CARDS, album, fun, runway, sky, traffic
-from flightpanel.data import load_fun
 from flightpanel.idle import Ctx, IdleScreen
 from flightpanel.logos import LogoStore, make_logo_store
 from flightpanel.metar import MetarSource, parse
@@ -30,6 +29,10 @@ def fl(kind="airline", icao="f1", visible=True):
 def ctx(now=None, model=None, cfg=None, **kw):
     return Ctx(cfg=cfg or make_cfg(), model=model or DisplayModel(source="test"),
                now=now if now is not None else ts(2026, 10, 10, 15, 0), names=NAMES, **kw)
+
+
+SQUAWK = {"callsign": "DLH4AB", "squawk": "7700", "meaning": "NOTFALL", "type": "A20N", "dist_km": 9.0,
+          "az": 120, "alt_ft": 3000, "in_view": False}
 
 
 def metar_src(raw, now):
@@ -101,9 +104,10 @@ def test_date_and_time_windows():
     assert fun.santa_cond(ctx(ts(2026, 12, 24, 18, 0))).data["km"] > 0
     assert fun.santa_cond(ctx(ts(2026, 12, 25, 5, 0))) is not None
     assert fun.santa_cond(ctx(ts(2026, 12, 24, 10, 0))) is None
-    assert fun.fireworks_cond(ctx(ts(2026, 12, 31, 23, 30))) is not None
-    assert fun.fireworks_cond(ctx(ts(2027, 1, 1, 1, 0))) is not None
-    assert fun.fireworks_cond(ctx(ts(2027, 1, 1, 3, 0))) is None
+    assert fun.fireworks_cond(ctx(ts(2026, 12, 31, 23, 30))) is None       # an Silvester noch nicht
+    assert fun.fireworks_cond(ctx(ts(2027, 1, 1, 0, 0, 30))) is not None
+    assert fun.fireworks_cond(ctx(ts(2027, 1, 1, 15, 0))) is not None       # Neujahr den Tag über
+    assert fun.fireworks_cond(ctx(ts(2027, 1, 2, 0, 30))) is None
 
 
 def test_sunset_and_sunrise_windows():
@@ -113,15 +117,6 @@ def test_sunset_and_sunrise_windows():
     assert sky.sunset_cond(ctx(sd["sunset"] - 3 * 3600, cfg=c)) is None
     assert sky.sunrise_cond(ctx(sd["sunrise"] - 1800, cfg=c)) is not None
     assert sky.sunrise_cond(ctx(sd["sunrise"] + 600, cfg=c)) is None
-
-
-def test_jokes_prefer_todays_date():
-    jokes = load_fun(DATA, "BER")
-    h = fun.joke_cond(ctx(ts(2026, 10, 31, 15, 0), fun=jokes))
-    assert h.weight == 4 and "BER wird" in h.data["lines"][0]
-    assert not fun.joke_cond(ctx(ts(2026, 10, 10, 15, 0), fun=jokes)).data.get("dates")
-    assert fun.joke_cond(ctx(fun={})) is None and fun.delay_cond(ctx(fun={})) is None
-    assert load_fun(DATA, "MUC") == {}                      # Berliner Witze nur am BER
 
 
 def test_private_planes_are_a_card_not_a_takeover():
@@ -174,7 +169,7 @@ def test_iss_card_countdown_and_now():
 def _renderer(cfg):
     logos = make_logo_store(cfg)
     logos.fetch_enabled = False
-    return Renderer(cfg, logos, idle=IdleScreen(cfg, CARDS, logos=logos, names=NAMES, fun=load_fun(DATA, "BER")))
+    return Renderer(cfg, logos, idle=IdleScreen(cfg, CARDS, logos=logos, names=NAMES))
 
 
 @pytest.mark.parametrize("cid", [c.id for c in CARDS])
@@ -198,10 +193,38 @@ def test_render_priorities():
     r.idle.last_pick = None
     r.render(DisplayModel(source="test", flights=[fl()]), now)
     assert r.idle.last_pick is None                         # Airline: normales Layout
-    alert = {"callsign": "DLH4AB", "squawk": "7700", "meaning": "NOTFALL", "type": "A20N", "dist_km": 9.0,
-             "az": 120, "alt_ft": 3000, "in_view": False}
-    r.render(DisplayModel(source="test", flights=[fl()], alert=alert), now)
+    r.render(DisplayModel(source="test", flights=[fl()], alert=SQUAWK), now)
     assert r.idle.last_pick == "alert"                      # Notfall vor allem
+
+
+def test_new_year_fireworks_take_over_at_midnight():
+    """Um 0 Uhr an Neujahr ein paar Minuten Feuerwerk vor allem außer einem Notfall:
+    auch vor Flügen, und mit alten Daten (Ruhezeit) in voller Helligkeit."""
+    r = _renderer(make_cfg())
+    midnight, later = ts(2027, 1, 1, 0, 0, 2), ts(2027, 1, 1, 0, 6, 0)
+    flight = DisplayModel(source="test", flights=[fl()])
+    r.render(flight, midnight)
+    assert r.idle.last_pick == "fireworks"
+    r.idle.last_pick = None
+    r.render(flight, later)
+    assert r.idle.last_pick is None                         # danach wieder der Flug
+    r.render(DisplayModel(source="test", flights=[fl()], alert=SQUAWK), midnight)
+    assert r.idle.last_pick == "alert"
+    stale = DisplayModel(source="test", stale=True, empty=True)
+    assert r.render(stale, midnight).tobytes() == r.render(flight, midnight).tobytes()
+    off = _renderer(make_cfg(cards_off=frozenset({"fireworks"})))
+    off.render(flight, midnight)
+    assert off.idle.last_pick is None
+
+
+def test_new_year_fireworks_light_up_the_quiet_hours():
+    cfg = make_cfg(quiet_hours=(0, 6 * 60 + 30))
+    r = _renderer(cfg)
+    assert r.brightness(ts(2027, 1, 1, 0, 0, 2)) == cfg.brightness_evening
+    assert r.brightness(ts(2027, 1, 1, 0, 6, 0)) == 0          # danach Ruhezeit
+    assert r.brightness(ts(2027, 1, 2, 0, 0, 2)) == 0
+    assert r.brightness(ts(2027, 1, 1, 12, 0)) == cfg.brightness_day
+    assert _renderer(replace(cfg, cards_off=frozenset({"fireworks"}))).brightness(ts(2027, 1, 1, 0, 0, 2)) == 0
 
 
 def _lit(img, box):

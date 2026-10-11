@@ -7,16 +7,15 @@ Eine Karte sind zwei Funktionen und ein Eintrag in CARDS:
                                    der Zeitscheibe (für Animationen), f: Helligkeit
   <id>_demo(ctx), optional         Beispieldaten für die Vorschau /frame.png?card=<id>
 
-ctx (idle.Ctx) bringt Einstellungen, Display-Modell, Statistik, Wetter, ISS, Logos
-und data/jokes.json mit. Stufen (tier) und Auswahl: idle.py und docs/screens.md.
-Jede Karte lässt sich mit CARD_<ID>=0 abschalten; only_at bindet eine an einen
-Heimatflughafen.
+ctx (idle.Ctx) bringt Einstellungen, Display-Modell, Statistik, Wetter, ISS und
+Logos mit. Stufen (tier) und Auswahl: idle.py und docs/screens.md. Jede Karte lässt
+sich mit CARD_<ID>=0 abschalten.
 
   traffic.py  Notfall, Privatflieger, nächster Flieger, Abflug, Landung, Radar
   runway.py   Landerichtung, Pistenwechsel, Wetter, Nachtflugverbot
   album.py    Tagesstatistik, Sammelalbum, neue und seltene Flugzeuge, Flaute
   sky.py      Uhr, ISS, Sonnenauf- und -untergang
-  fun.py      Witze, Verspätungsgründe, Tegel, BER-Eröffnung, Animationen, Saison
+  fun.py      Flugzeug und Taube, Weihnachten und Neujahr
 """
 
 from ..idle import Card
@@ -58,13 +57,9 @@ CARDS = [
     Card("sunset", sky.sunset_cond, sky.sunset_draw, tier=3, group="himmel", demo=sky.sunset_demo),
     Card("sunrise", sky.sunrise_cond, sky.sunrise_draw, tier=3, group="himmel", demo=sky.sunrise_demo),
     Card("santa", fun.santa_cond, fun.santa_draw, tier=3, group="saison", demo=fun.santa_demo),
+    # Neujahr; um Mitternacht zeigt render.py das Feuerwerk ein paar Minuten vor allem außer dem Notfall
     Card("fireworks", fun.fireworks_cond, fun.fireworks_draw, tier=3, group="saison", demo=lambda ctx: {}),
     # Stufe 4: Spielereien, nur wenn gar nichts los ist
-    Card("joke", fun.joke_cond, fun.joke_draw, weight=0.6, tier=4, group="spaß", demo=fun.joke_demo),
-    Card("delay", fun.delay_cond, fun.delay_draw, weight=0.5, tier=4, group="spaß", demo=fun.delay_demo),
     Card("plane", fun.plane_cond, fun.plane_draw, weight=0.5, tier=4, group="spaß"),
     Card("pigeon", fun.pigeon_cond, fun.pigeon_draw, weight=0.3, tier=4, group="spaß"),
-    Card("txl", fun.txl_cond, fun.txl_draw, weight=0.25, tier=4, group="spaß", only_at="BER"),
-    Card("ber_opening", fun.ber_opening_cond, fun.ber_opening_draw, weight=0.25, tier=4, group="spaß",
-         only_at="BER"),
 ]

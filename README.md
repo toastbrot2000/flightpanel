@@ -9,7 +9,7 @@
 >
 > *Fully vibe-coded weekend project: every line of code and documentation was written by an AI (Claude). No support, no warranty. Rebuilding, borrowing and building on it is explicitly welcome, at your own risk.*
 
-![Sechs Beispiele vom Panel: Landung mit Logo und Himmelspunkten, Abflüge am BER, nächster Flieger, Radar, Abflug ohne Logo mit Platzhalter, Verspätungsgrund](docs/images/overview.png)
+![Sechs Beispiele vom Panel: Landung mit Logo und Himmelspunkten, Abflüge am BER, nächster Flieger, Radar, Abflug ohne Logo mit Platzhalter, ISS-Überflug](docs/images/overview.png)
 
 Zwei HUB75-Panels P2.5 (64 × 32) nebeneinander ergeben 128 × 32 Pixel auf 32 × 8 cm. Ein ESP32 steuert sie an, ein kleiner Server (Docker, etwa im Homelab) macht den Rest. Teile, Verdrahtung und Zusammenbau: [docs/bauanleitung.md](docs/bauanleitung.md). Alle Bildschirme mit Bildern und Rangfolge: [docs/screens.md](docs/screens.md).
 
@@ -17,7 +17,7 @@ Zwei HUB75-Panels P2.5 (64 × 32) nebeneinander ergeben 128 × 32 Pixel auf 32 �
 
 - **Läuft:** der Server mit echten Daten im Docker-Container, am Fenster gegen den Himmel und Flightradar24 geprüft. Landefolge, Minuten bis zur Landung und Sichtfeld stimmen dort gut.
 - **Ungetestet:** die Firmware auf echter Hardware (sie kompiliert) und ein Dauerbetrieb über Wochen.
-- **Ortsgebunden:** entwickelt in Berlin für den Flughafen BER. Alles Ortsabhängige ist einstellbar; die Spaß-Inhalte (`data/jokes.json`) und zwei Karten gibt es nur für den BER.
+- **Ortsgebunden:** entwickelt in Berlin für den Flughafen BER. Alles Ortsabhängige ist einstellbar.
 
 ## So funktioniert es
 
@@ -51,7 +51,7 @@ Alles Ortsabhängige steht in `.env` (nicht im Repo; jede Einstellung ist in [.e
 
 **3. Heimatflughafen.** `LOCAL_AIRPORT_IATA` genügt: Position, Höhe und METAR-Station kommen aus `data/airports.json`. Dazu `RUNWAY_COURSE`, der Kurs im Endanflug einer Landerichtung (BER 25: 249°, MUC 26: 263°), und `CURFEW_HOURS` für das Nachtflugverbot. Für einen Flughafen, der nicht in der Liste steht, `AIRPORT_LAT`, `AIRPORT_LON`, `AIRPORT_ALT_M` und `METAR_STATION` setzen.
 
-**4. Karten und Ruhe.** Jede Leerlauf-Karte lässt sich abschalten: `CARD_<ID>=0`, z. B. `CARD_JOKE=0`. `CALM=1` ist der ruhige Modus: nichts blinkt außer einem Notfall, Infoseiten wechseln alle 10 s statt 4 s, unten stehen nur Landezeit und Höhe/Tempo. Jede dieser Einzelheiten ist auch einzeln einstellbar (`PAGE_SECONDS`, `FLIGHT_SECONDS`, `INFO_PAGES`, `BLINK`, `IDLE_SECONDS`).
+**4. Karten und Ruhe.** Jede Leerlauf-Karte lässt sich abschalten: `CARD_<ID>=0`, z. B. `CARD_PIGEON=0`. `CALM=1` ist der ruhige Modus: nichts blinkt außer einem Notfall, Infoseiten wechseln alle 10 s statt 4 s, unten stehen nur Landezeit und Höhe/Tempo. Jede dieser Einzelheiten ist auch einzeln einstellbar (`PAGE_SECONDS`, `FLIGHT_SECONDS`, `INFO_PAGES`, `BLINK`, `IDLE_SECONDS`).
 
 Dann `docker compose up -d --build` und einmal die Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`. Unsinnige Werte (`PAGE_SECONDS=0`, `POLL_INTERVAL=oft`) brechen den Start mit dem Namen der Variablen ab; Verdächtiges, etwa Koordinaten, die nicht zum Flughafen passen, steht als Warnung im Log. Falsch geschriebene Namen fallen nicht auf: Die Werte unter `/health` zeigen, was wirklich gilt.
 
@@ -75,7 +75,7 @@ Bis zu `MAX_FLIGHTS` Flüge wechseln sich ab, jeder mit allen Infoseiten, mindes
 
 **Grundsätze:** Nichts steht doppelt (das Rufzeichen fällt aus dem Wechsel, wenn es oben schon steht). Text wird nie so gekürzt, dass sich der Sinn ändert: erst kleinere Schrift, dann eine kürzere Fassung. Alle Pixel werden genutzt; Text am Rand sitzt auf der ersten oder letzten Spalte. Privatflieger heißen nach ihrem Kennzeichen (D-EHGB), Rettungshubschrauber nach ihrer Nummer (Christoph 31); Halternamen kommen nie aufs Panel. Lieber ein ehrliches `?` als eine falsche Herkunft.
 
-**Leerlauf:** Ohne Airline im Sichtfeld wechseln Karten alle `IDLE_SECONDS` in festen Stufen: Verkehr am Platz (Abflüge, Landungen, nächster Flieger, Privatflieger) vor Informationen (Radar, Landerichtung, Wetter, Statistik, ISS, Sonne) vor Spielereien, die nur kommen, wenn am Flughafen seit 15 min nichts los war. Ein Notfall-Squawk (7700, 7600, 7500) geht allem vor. Gezeichnet wird nur die Karte, die gerade dran ist, bei jedem Abruf des ESP32 neu.
+**Leerlauf:** Ohne Airline im Sichtfeld wechseln Karten alle `IDLE_SECONDS` in festen Stufen: Verkehr am Platz (Abflüge, Landungen, nächster Flieger, Privatflieger) vor Informationen (Radar, Landerichtung, Wetter, Statistik, ISS, Sonne) vor Spielereien, die nur kommen, wenn am Flughafen seit 15 min nichts los war. Ein Notfall-Squawk (7700, 7600, 7500) geht allem vor. Um Mitternacht an Neujahr gehört das Panel fünf Minuten dem Feuerwerk, auch vor Flügen und in der Ruhezeit. Gezeichnet wird nur die Karte, die gerade dran ist, bei jedem Abruf des ESP32 neu.
 
 | | |
 |---|---|
@@ -212,7 +212,7 @@ server/tests/    pytest
 firmware/        ESP32: platformio.ini, src/main.cpp, include/config.h, secrets.h.example
 tools/           make_logo.py, make_airports.py, screenshots.py, check_firmware.sh,
                  escrow.py/.sh (Abhängigkeiten mit Wartezeit), update.sh (Server aktualisieren)
-data/            airlines.json, airports.json, rare.json, jokes.json;
+data/            airlines.json, airports.json, rare.json;
                  im Betrieb logos/, cache.json, issues.json, stats.json, tle.txt
 docs/            bauanleitung.md (Hardware), screens.md (alle Bildschirme), images/
 ```
