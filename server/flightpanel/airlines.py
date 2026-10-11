@@ -82,5 +82,6 @@ def note_operator(issues: Issues, s: State, route: dict, names: dict[str, dict],
         issues.note("unknown_operator", code, s.callsign, adsbdb=route.get("airline", ""),
                     category=s.category, type=s.actype, counted_as="airline" if airline else "other")
     elif (route.get("airline") and route.get("airline_icao") == code
+          and route["airline"] != names[code].get("adsbdb")       # geprüft, siehe data.load_airlines
           and not names_match(names[code]["name"], route["airline"])):
         issues.note("name_mismatch", code, s.callsign, ours=names[code]["name"], adsbdb=route["airline"])

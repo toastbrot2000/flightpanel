@@ -124,9 +124,9 @@ class LogoStore:
 
     def missing(self) -> list[str]:
         """Codes (IATA, sonst ICAO), für die keine Quelle ein quadratisches Logo
-        geliefert hat (Kandidaten für Handarbeit)."""
+        geliefert hat und bis heute keins da ist (Kandidaten für Handarbeit)."""
         now = time.time()
-        return [k for k, t in self._missing.items() if now - t < MISSING_TTL]
+        return [k for k, t in self._missing.items() if now - t < MISSING_TTL and not self.path_for(k)]
 
     # ------------------------------------------------------------- Abruf --
     def _load_missing(self) -> dict[str, float]:

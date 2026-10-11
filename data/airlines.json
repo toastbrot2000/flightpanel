@@ -1,5 +1,5 @@
 {
-  "_comment": "ICAO-Code -> Anzeigename und IATA-Code (für den Logo-Abruf). Reihenfolge: häufig in Berlin zuerst. Wird auch vom Seed-Skript benutzt: python3 -m flightpanel.fetch_logos. \"airline\": false markiert Betreiber, die keine Airline sind (Rettung, Polizei, Militär): Die haben beim Anzeigen keinen Vorrang.",
+  "_comment": "ICAO-Code -> Anzeigename und IATA-Code (für den Logo-Abruf). Reihenfolge: häufig in Berlin zuerst. Wird auch vom Seed-Skript benutzt: python3 -m flightpanel.fetch_logos. \"airline\": false markiert Betreiber, die keine Airline sind (Rettung, Polizei, Militär): Die haben beim Anzeigen keinen Vorrang. \"adsbdb\": geprüfter abweichender Name bei adsbdb (veraltet), wird nicht mehr als name_mismatch gemeldet.",
 
   "EZY": {"name": "easyJet", "iata": "U2"},
   "EJU": {"name": "easyJet", "iata": "U2"},
@@ -98,7 +98,7 @@
   "LZB": {"name": "Bulgaria Air", "iata": "FB"},
   "ROT": {"name": "TAROM", "iata": "RO"},
   "TVS": {"name": "Smartwings", "iata": "QS"},
-  "SDR": {"name": "Sundair", "iata": "SR"},
+  "SDR": {"name": "Sundair", "iata": "SR", "adsbdb": "City Airline"},
   "SVI": {"name": "Sky Vision", "iata": ""},
   "EIN": {"name": "Aer Lingus", "iata": "EI"},
   "LGL": {"name": "Luxair", "iata": "LG"},
@@ -106,8 +106,10 @@
   "SEH": {"name": "Sky Express", "iata": "GQ"},
   "MBU": {"name": "Marabu", "iata": "DI"},
   "OAW": {"name": "Helvetic", "iata": "2L"},
-  "ENT": {"name": "Enter Air", "iata": "E4"},
+  "ENT": {"name": "Enter Air", "iata": "E4", "adsbdb": "DAT Enterprise Limited"},
   "FHY": {"name": "Freebird", "iata": "FH"},
+  "FHM": {"name": "Freebird", "iata": "FH"},
+  "CAT": {"name": "CPH AirTaxi", "iata": "", "adsbdb": "Copenhagen Airtaxi"},
   "CAI": {"name": "Corendon", "iata": "XC"},
   "CND": {"name": "Corendon", "iata": "CD"},
   "GWI": {"name": "Germanwings", "iata": "4U"},

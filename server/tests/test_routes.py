@@ -108,3 +108,20 @@ def test_operator_names_match():
     assert names_match("Norwegian", "Norwegian Air Sweden AOC")
     assert names_match("SAS", "Scandinavian Airlines System")
     assert not names_match("Sundair", "City Airline")
+
+
+def test_checked_adsbdb_names_are_not_reported_again(tmp_path):
+    """Sundair heißt bei adsbdb noch City Airline. Einmal geprüft und in airlines.json
+    vermerkt ("adsbdb"), meldet /issues das nicht bei jedem Flug wieder."""
+    from flightpanel.airlines import note_operator
+    from flightpanel.issues import Issues
+    s = state(cs="SDR17RA")
+    route = {"airline": "City Airline", "airline_icao": "SDR"}
+    names = {"SDR": {"name": "Sundair", "iata": "SR", "airline": True, "label": "", "number": False}}
+    issues = Issues(str(tmp_path / "i.json"))
+    note_operator(issues, s, route, names, True)
+    assert "name_mismatch" in issues.report()["counts"]                   # ungeprüft: gemeldet
+    issues.clear()
+    names["SDR"]["adsbdb"] = "City Airline"
+    note_operator(issues, s, route, names, True)
+    assert issues.report()["counts"] == {}

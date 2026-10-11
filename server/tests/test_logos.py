@@ -2,6 +2,8 @@
 eine weiße Bildmarke von ihrer farbigen Kachel lösen (tools/make_logo.py --mark)."""
 
 import asyncio
+import json
+import time
 
 from PIL import Image
 
@@ -36,6 +38,16 @@ def test_fetching_leaves_own_logos_alone(tmp_path, monkeypatch):
     asyncio.run(fetch_logos.run(make_cfg(data_dir=str(tmp_path)), [("U2", "EZY")], force=True))
     assert urls == []                                       # nicht einmal versucht
     assert own.exists()
+
+
+def test_missing_lists_only_codes_still_without_a_logo(tmp_path):
+    """LY war vermerkt und wurde später doch geholt, AY bekommt ein eigenes: beide
+    gehören nicht mehr nach /health -> logos_missing."""
+    now = time.time()
+    (tmp_path / ".missing.json").write_text(json.dumps({"LY": now, "AY": now, "FX": now}))
+    _logo(tmp_path / "LY.png", (0, 0, 255))
+    _logo(tmp_path / "own" / "AY.png", (0, 0, 255))
+    assert LogoStore(str(tmp_path), 32, fetch=False).missing() == ["FX"]
 
 
 def test_white_mark_comes_off_its_tile():

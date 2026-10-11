@@ -140,7 +140,7 @@ Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Updates: `git pul
 | Art | Bedeutung | Was tun |
 |---|---|---|
 | `unknown_operator` | Betreibercode nicht in `airlines.json` | eintragen (Name, Logo-Code), `"airline": false` für Rettung, Polizei, Militär |
-| `name_mismatch` | unser Name passt nicht zu adsbdb | meist alte Daten bei adsbdb, sonst Fehler bei uns |
+| `name_mismatch` | unser Name passt nicht zu adsbdb | meist alte Daten bei adsbdb (Sundair heißt dort City Airline): geprüft mit `"adsbdb": "Name dort"` eintragen, dann kommt er nicht wieder; sonst Fehler bei uns |
 | `route_implausible` | Route passt nicht zur Position, verworfen | nichts, zur Kontrolle |
 | `route_unknown` | gezeigter Airline-Flug ohne Route | nichts, keine Quelle kennt ihn |
 | `source_error`, `rate_limit`, `fallback` | Fehler, HTTP 429, OpenSky eingesprungen | bei Häufung `POLL_INTERVAL` erhöhen |
@@ -216,7 +216,7 @@ docs/            bauanleitung.md (Hardware), screens.md (alle Bildschirme), imag
 
 ### Eine Airline nachtragen
 
-In `data/airlines.json`: `"ICAO": {"name": "Kurzname", "iata": "XY"}`. Für Rettung, Polizei, Militär `"airline": false` und `"label": "Polizei"`; mit `"number": true` wird aus CHX31 "Christoph 31". Danach das Logo holen (`fetch_logos XY`) oder von Hand machen (`tools/make_logo.py`). Kandidaten sammelt `/issues` unter `unknown_operator`.
+In `data/airlines.json`: `"ICAO": {"name": "Kurzname", "iata": "XY"}`. Für Rettung, Polizei, Militär `"airline": false` und `"label": "Polizei"`; mit `"number": true` wird aus CHX31 "Christoph 31". Danach das Logo holen (`fetch_logos XY`) oder von Hand machen (`tools/make_logo.py`). Kandidaten sammelt `/issues` unter `unknown_operator`. Der Name steht neben dem Logo in 94 px; ist er zu lang, eine kurze Fassung wählen ("CPH AirTaxi" statt "Copenhagen Airtaxi").
 
 ## Lizenz und Rechte
 

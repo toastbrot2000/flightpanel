@@ -28,11 +28,12 @@ def load_airlines(data_dir: str) -> dict[str, dict]:
     Lufthansa AG"). iata: Logo-Code, die Marke statt des Tochterbetriebs (Malta Air
     -> FR); leer, wenn der IATA-Code doppelt vergeben ist, dann Logo per ICAO.
     airline false: Rettung, Polizei, Militär, mit label (Luftrettung) und number
-    (CHX31 -> Christoph 31)."""
+    (CHX31 -> Christoph 31). adsbdb: der Name, unter dem adsbdb den Code führt, wenn
+    er veraltet ist oder anders lautet; geprüft, /issues meldet ihn nicht mehr."""
     raw = read_json(os.path.join(data_dir, "airlines.json")) or {}
     return {code.upper(): {"name": v.get("name", ""), "iata": (v.get("iata") or "").upper(),
                            "airline": bool(v.get("airline", True)), "label": v.get("label", ""),
-                           "number": bool(v.get("number", False))}
+                           "number": bool(v.get("number", False)), "adsbdb": v.get("adsbdb", "")}
             for code, v in raw.items() if not code.startswith("_")}
 
 
