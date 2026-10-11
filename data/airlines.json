@@ -17,7 +17,7 @@
   "WMT": {"name": "Wizz Air", "iata": "W4"},
   "WUK": {"name": "Wizz Air UK", "iata": "W9"},
   "KLM": {"name": "KLM", "iata": "KL"},
-  "KLC": {"name": "KLM Cityhopper", "iata": "WA"},
+  "KLC": {"name": "KLM Cityhopper", "iata": "KL"},
   "AFR": {"name": "Air France", "iata": "AF"},
   "HOP": {"name": "Air France Hop", "iata": "A5"},
   "BAW": {"name": "British Air", "iata": "BA"},

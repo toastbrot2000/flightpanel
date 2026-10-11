@@ -48,7 +48,8 @@ async def run(cfg: Config, codes: list[tuple[str, str]], force: bool) -> int:
     if failed:
         print("fehlgeschlagen:", " ".join(failed))
         print("-> Kein quadratisches Logo (nur Schriftzug) oder Netzfehler. Von Hand ablegen:")
-        print("   data/logos/<IATA>.png, tools/make_logo.py hilft. Bis dahin: Layout A ohne Logo.")
+        print("   data/logos/<IATA>.png, tools/make_logo.py hilft. Bis dahin: Platzhalter (graues Flugzeug).")
+        print("   Tochterbetrieb? Logo-Code der Marke in data/airlines.json (KLM Cityhopper -> KL).")
     return 0
 
 

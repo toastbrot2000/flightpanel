@@ -5,10 +5,15 @@ Leerlauf-Karten (idle.py, cards/), zu denen auch Privatflieger, Hubschrauber und
 Militär im Sichtfeld gehören.
 
 Layouts für Flüge (LAYOUT in .env):
-  C    Logo links (32 x 32), rechts drei Zeilen: Airline, Route + Typ, wechselnde Info
+  C    Logo links (32 x 32), rechts drei Zeilen: Airline, Route + Typ, wechselnde Info.
+       Hat eine Airline kein Logo, steht dort ein graues Flugzeug: Text und
+       Himmelspunkte bleiben im Wechsel mit Flügen mit Logo, wo sie sind.
   A    ohne Logo, drei Zeilen über die ganze Breite (Airline + Callsign, Route, Info)
   B    zwei Flüge, je eine Zeile
-  AUTO C, wenn für den Flug ein Logo da ist, sonst A
+
+Privatflieger, Hubschrauber und Polizei ohne Logo stehen auch in C wie in A: Sie
+wechseln sich nur untereinander ab (Karte "private"), und Kennzeichen und
+Bezeichnung brauchen die Breite.
 
 Bei mehreren Flügen wechseln A und C nach jedem Durchlauf der Infozeilen zum
 nächsten Flug, Landende in Landefolge zuerst. Sind mindestens zwei im Sichtfeld,
@@ -28,6 +33,7 @@ from .draw import ROW1, ROW2, ROW3, STATUS_COLORS, headline, line, right, status
 from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from .geo import kompass
 from .idle import IdleScreen
+from .logo_image import placeholder_logo
 from .logos import LogoStore
 from .model import DisplayModel, Flight
 
@@ -120,16 +126,14 @@ class Renderer:
         return img
 
     def draw_flight(self, img: Image.Image, model: DisplayModel, fl: Flight, page: int, f: float) -> None:
-        """Ein Flug in Layout C (mit Logo) oder A; B zeigt einzelne Flüge wie AUTO."""
-        logo = self.logos.get(fl.airline_iata, fl.airline_icao)
+        """Ein Flug in Layout C oder A; B zeigt einzelne Flüge wie C."""
         dots = self._sky_dots(model, fl)
-        layout = self.cfg.layout
-        if layout in ("AUTO", "B"):
-            layout = "C" if logo is not None else "A"
-        if layout == "C" and logo is not None:
-            self._layout_c(img, fl, page, logo, f, dots)
-        else:
+        logo = None if self.cfg.layout == "A" else self.logos.get(fl.airline_iata, fl.airline_icao)
+        # Airline ohne Logo: Platzhalter in C; Privatflieger ohne Logo: ganze Breite
+        if self.cfg.layout == "A" or (logo is None and fl.kind != "airline"):
             self._layout_a(img, fl, page, f, dots)
+        else:
+            self._layout_c(img, fl, page, logo, f, dots)
 
     def frame_bytes(self, img: Image.Image, brightness: int) -> bytes:
         """Für den ESP32: [Version, Helligkeit, Breite, Höhe] + RGB, zeilenweise."""
@@ -199,19 +203,19 @@ class Renderer:
         return len(dots) * DOT_PITCH - (DOT_PITCH - DOT) if dots else 0
 
     # ------------------------------------------------------------ Layouts --
-    def _layout_c(self, img: Image.Image, fl: Flight, page: int, logo: Image.Image, f: float,
+    def _layout_c(self, img: Image.Image, fl: Flight, page: int, logo: Image.Image | None, f: float,
                   dots=()) -> None:
+        """logo None: der Platzhalter."""
+        side = LOGO_WITH_DOTS if dots else LOGO_COL     # mit Himmelspunkten darunter kleiner
+        if logo is None:
+            logo = placeholder_logo(side)
         if f < 1.0:
             logo = Image.eval(logo, lambda v: int(v * f))
-        if logo.size != (LOGO_COL, LOGO_COL):
-            logo = logo.resize((LOGO_COL, LOGO_COL), Image.LANCZOS)
+        if logo.size != (side, side):
+            logo = logo.resize((side, side), Image.LANCZOS)
+        img.paste(logo, ((LOGO_COL - side) // 2, 0))
         if dots:
-            # Logo kleiner, darunter die Himmelspunkte auf der letzten Zeile
-            logo = logo.resize((LOGO_WITH_DOTS, LOGO_WITH_DOTS), Image.LANCZOS)
-            img.paste(logo, ((LOGO_COL - logo.width) // 2, 0))
             self._draw_dots(img, (LOGO_COL - self._dots_width(dots)) // 2, img.height - DOT, dots, f)
-        else:
-            img.paste(logo, (0, 0))
         x0 = LOGO_COL + 2               # Text beginnt immer gleich weit rechts
         avail = img.width - x0
 

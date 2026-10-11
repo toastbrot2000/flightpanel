@@ -45,6 +45,19 @@ def _hours(s: str) -> tuple[int, int]:
     return _hhmm(a), _hhmm(b)
 
 
+LAYOUTS = ("A", "B", "C")                           # Fluglayouts, siehe render.py
+
+
+def parse_layout(s: str) -> str:
+    """"c" -> "C". auto aus älteren .env-Dateien ist C: Das hieß "C mit Logo, sonst
+    A", seit dem Platzhalter für fehlende Logos ist es dasselbe."""
+    v = s.strip().upper()
+    v = "C" if v == "AUTO" else v
+    if v not in LAYOUTS:
+        raise ValueError(f"möglich: {', '.join(LAYOUTS)}")
+    return v
+
+
 INFO_PAGES = ("eta", "alt", "dist", "callsign")    # mögliche Infoseiten, siehe render.info_pages
 
 
@@ -135,7 +148,7 @@ class Config:
     # --- Anzeige
     width: int = _env("WIDTH", 128)
     height: int = _env("HEIGHT", 32)
-    layout: str = _env("LAYOUT", "AUTO", str.upper)         # AUTO | A | B | C, siehe render.py
+    layout: str = _env("LAYOUT", "C", parse_layout)         # C | A | B, siehe render.py
     max_flights: int = _env("MAX_FLIGHTS", 3, _int(1))
     calm: bool = _env("CALM", False)                        # ruhiger Modus, setzt CALM_PRESET
     page_seconds: int = _env("PAGE_SECONDS", 4, _int(1))    # so lange steht eine Infoseite

@@ -28,6 +28,15 @@ def test_scan_radius_defaults_to_radius():
 def test_bad_value_names_the_variable():
     with pytest.raises(ValueError, match="POLL_INTERVAL"):
         Config.from_env(env(POLL_INTERVAL="oft"))
+    with pytest.raises(ValueError, match="LAYOUT"):
+        Config.from_env(env(LAYOUT="D"))
+
+
+def test_layout_auto_is_c():
+    """Früher hieß C ohne Logo Layout A; jetzt bekommt es einen Platzhalter. auto aus
+    älteren .env-Dateien ist dasselbe wie C."""
+    assert Config.from_env(env(LAYOUT="auto")).layout == "C"
+    assert Config.from_env(env()).layout == "C"
 
 
 def test_cards_switched_off_one_by_one():

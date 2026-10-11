@@ -211,7 +211,7 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 | Flackern, Farbrauschen nach Monaten | Dupont-Kabel gelockert | nachstecken; bei Dauerproblem Pegelwandler (3.4) |
 | Anzeige eingefroren | ESP32 hängt | startet nach 10 min selbst neu |
 | Keine Flüge, obwohl welche da sind | Quelle ausgefallen oder Filter zu eng | `/health`, `/issues`, `/display.json` → `nearby` |
-| Airline ohne Logo (Layout A) | kein quadratisches Logo gefunden | `/health` → `logos_missing`, Logo von Hand (README, "Airline-Logos") |
+| Graues Flugzeug statt Airline-Logo | kein quadratisches Logo gefunden | `/health` → `logos_missing`; Tochterbetrieb: Logo-Code der Marke in `data/airlines.json`; sonst Logo von Hand (README, "Airline-Logos") |
 
 **Updates:** Server mit `git pull && docker compose up -d --build`; Cache, Logos und Statistik bleiben in `data/`. Aussehen ändern heißt Python ändern und neu bauen, nie flashen. Die Firmware braucht nur neue Pins, ein neues WLAN oder eine neue Server-URL (`pio run -e esp32dev_ota -t upload`).
 

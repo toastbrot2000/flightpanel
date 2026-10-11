@@ -17,7 +17,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | | |
 |---|---|
 | ![Flug mit Logo, landet in ~4 min, drei Himmelspunkte](images/flight-logo.png)<br>Flug, Layout C: Landezeit, Himmelspunkte in Landefolge | ![Derselbe Flug, nächste Infoseite](images/flight-alt.png)<br>nächste Infoseite: Höhe, sinkend, Tempo |
-| ![Flug ohne Logo](images/flight-nologo.png)<br>Layout A ohne Logo, ein Start | ![Luftrettung](images/private.png)<br>`private`: Rettungshubschrauber im Sichtfeld |
+| ![Flug ohne Logo, graues Flugzeug als Platzhalter](images/flight-nologo.png)<br>im selben Wechsel ein Start ohne Logo: Platzhalter, die Punkte bleiben stehen | ![Luftrettung](images/private.png)<br>`private`: Rettungshubschrauber im Sichtfeld |
 | ![Abflüge am BER](images/departures.png)<br>`departures` | ![Landungen am BER](images/arrivals.png)<br>`arrivals` |
 | ![Nächster Flieger](images/next.png)<br>`next`: Zeit bis zum Sichtfeld und Seite des Fensters | ![Radar](images/radar.png)<br>`radar`: Sichtfeld als Band in der Mitte |
 | ![Landerichtung](images/runway.png)<br>`runway` | ![Wetter](images/weather.png)<br>`weather` |

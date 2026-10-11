@@ -21,8 +21,8 @@ def test_every_endpoint_answers(tmp_path):
         client = TestClient(TestServer(make_web_app(app)))
         await client.start_server()
         try:
-            for path in ("/", "/?layout=C&card=radar", "/frame.png", "/frame.png?card=joke&scale=x",
-                         "/display.json", "/health", "/issues", "/stats", "/idle"):
+            for path in ("/", "/?layout=C&card=radar", "/?layout=auto", "/frame.png", "/frame.png?layout=x",
+                         "/frame.png?card=joke&scale=x", "/display.json", "/health", "/issues", "/stats", "/idle"):
                 r = await client.get(path)
                 assert r.status == 200, path
             frame = await (await client.get("/frame")).read()

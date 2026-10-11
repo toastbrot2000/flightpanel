@@ -1,5 +1,6 @@
 """Bedingungen der Karten (wann sie etwas zu sagen haben) und das Rendern."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -10,10 +11,10 @@ from flightpanel.astro import Pass, sun_day
 from flightpanel.cards import CARDS, album, fun, runway, sky, traffic
 from flightpanel.data import load_fun
 from flightpanel.idle import Ctx, IdleScreen
-from flightpanel.logos import make_logo_store
+from flightpanel.logos import LogoStore, make_logo_store
 from flightpanel.metar import MetarSource, parse
 from flightpanel.model import DisplayModel, Flight
-from flightpanel.render import Renderer
+from flightpanel.render import LOGO_COL, Renderer
 from flightpanel.stats import Stats
 
 
@@ -201,6 +202,52 @@ def test_render_priorities():
              "az": 120, "alt_ft": 3000, "in_view": False}
     r.render(DisplayModel(source="test", flights=[fl()], alert=alert), now)
     assert r.idle.last_pick == "alert"                      # Notfall vor allem
+
+
+def _lit(img, box):
+    """Welche Pixel im Ausschnitt leuchten."""
+    crop = img.crop(box)
+    return {(x, y) for x in range(crop.width) for y in range(crop.height) if crop.getpixel((x, y)) != (0, 0, 0)}
+
+
+def test_flight_without_logo_keeps_the_layout(tmp_path):
+    """Im Wechsel mit einem Flug mit Logo: Text und Himmelspunkte bleiben, wo sie sind;
+    in der Logospalte steht ein Platzhalter."""
+    Image.new("RGB", (32, 32), (200, 30, 30)).save(tmp_path / "LH.png")
+    cfg = make_cfg()
+    logos = LogoStore(str(tmp_path), cfg.logo_size, fetch=False)
+    r = Renderer(cfg, logos, idle=IdleScreen(cfg, CARDS, logos=logos, names=NAMES))
+    lh = Flight(icao24="f1", callsign="DLH1", status="ARR", dist_km=12, bearing=150, alt_ft=4200, speed_kt=210,
+                track=249, vrate_fpm=-800, origin="FRA", dest="BER", airline="Lufthansa", airline_icao="DLH",
+                airline_iata="LH", actype="A320", seq=1, land_eta_s=420)
+    nologo = replace(lh, icao24="f2", seq=2, airline_icao="KLC", airline_iata="WA")   # kein WA.png
+
+    def draw(flights, shown):
+        img = Image.new("RGB", (cfg.width, cfg.height))
+        r.draw_flight(img, DisplayModel(source="test", flights=flights), shown, 0, 1.0)
+        return img
+
+    text_area, logo_area = (LOGO_COL, 0, cfg.width, cfg.height), (0, 0, LOGO_COL, cfg.height)
+    dots = (0, cfg.height - 3, LOGO_COL, cfg.height)
+    a, b = draw([lh, nologo], lh), draw([lh, nologo], nologo)               # im Wechsel, mit Himmelspunkten
+    assert a.crop(text_area).tobytes() == b.crop(text_area).tobytes()
+    assert _lit(a, dots) == _lit(b, dots)                                   # Punkte an derselben Stelle
+    a, b = draw([lh], lh), draw([nologo], nologo)                           # allein
+    assert a.crop(text_area).tobytes() == b.crop(text_area).tobytes()
+    assert _lit(b, logo_area), "Platzhalter in der Logospalte"
+    assert a.crop(logo_area).tobytes() != b.crop(logo_area).tobytes()
+
+
+def test_private_planes_without_logo_use_the_whole_width():
+    """Privatflieger, Hubschrauber, Polizei: kein Airline-Platzhalter, sondern Layout A."""
+    other = fl("other")
+    m = DisplayModel(source="test", flights=[other])
+    imgs = []
+    for layout in ("C", "A"):
+        img = Image.new("RGB", (128, 32))
+        _renderer(make_cfg(layout=layout)).draw_flight(img, m, other, 0, 1.0)
+        imgs.append(img.tobytes())
+    assert imgs[0] == imgs[1]
 
 
 # ------------------------------------------------------------ ruhiger Modus --

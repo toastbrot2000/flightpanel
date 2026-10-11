@@ -3,7 +3,8 @@ einmalig von Logo-CDNs holen, aufbereiten (logo_image.py) und ablegen.
 
 Quellen (LOGO_URLS) werden der Reihe nach probiert. Genommen werden nur
 annähernd quadratische Bildmarken (Seitenverhältnis bis LOGO_MAX_ASPECT):
-Schriftzüge werden bei 32 x 32 Pixeln unlesbar, dann lieber Layout A ohne Logo.
+Schriftzüge werden bei 32 x 32 Pixeln unlesbar, dann lieber der Platzhalter
+(logo_image.placeholder_logo, ein graues Flugzeug).
 
 Negative Treffer werden in data/logos/.missing.json gemerkt (Retry nach 7 Tagen).
 Neue Dateien werden im Betrieb erkannt, man kann also jederzeit handgemachte

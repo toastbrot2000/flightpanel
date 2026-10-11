@@ -2,7 +2,7 @@
 
   GET  /              Vorschauseite (lädt /frame.png alle 2 s neu)
   GET  /frame         Binär für den ESP32: [1, Helligkeit, Breite, Höhe] + RGB
-  GET  /frame.png     Vorschau; ?layout=AUTO|A|B|C, ?card=<id> erzwingt eine Leerlauf-Karte
+  GET  /frame.png     Vorschau; ?layout=A|B|C, ?card=<id> erzwingt eine Leerlauf-Karte
                       (mit Beispieldaten, wenn sie gerade nichts zu sagen hat), ?scale=N, ?gap=0
   GET  /display.json  aktuelles Display-Modell, mit allen Flugzeugen im Radius (nearby)
   GET  /health        Zustand der Quellen, Logos, letzter ESP32-Abruf
@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 from PIL import Image
 
+from .config import LAYOUTS, parse_layout
 from .render import Renderer
 
 if TYPE_CHECKING:
     from .main import App
 
 ESP32_GAP_S = 30        # so lange ohne /frame: als Lücke in /issues
-LAYOUTS = ("AUTO", "A", "B", "C")
 
 PREVIEW_HTML = """<!doctype html><meta charset="utf-8"><title>flightpanel</title>
 <style>body{background:#111;color:#ccc;font:14px system-ui;margin:24px}
@@ -34,7 +34,7 @@ a{color:#8ab;margin-right:14px}</style>
 <h2>flightpanel</h2>
 <img id="f" src="/frame.png?layout=%(layout)s&card=%(card)s" alt="frame">
 <div>Layout:
-<a href="/?layout=AUTO">auto</a><a href="/?layout=A">A</a><a href="/?layout=B">B</a><a href="/?layout=C">C</a>
+%(layouts)s
 | <a href="/display.json">display.json</a><a href="/health">health</a><a href="/issues">issues</a>
 <a href="/stats">stats</a><a href="/idle">idle</a></div>
 <p id="s" style="color:#d9a33a"></p>
@@ -81,8 +81,16 @@ class _Handlers:
 
     def _render(self, layout: str | None = None, card: str | None = None) -> Image.Image:
         p = self.panel
-        r = Renderer(replace(p.cfg, layout=layout.upper()), p.logos, idle=p.idle) if layout else p.renderer
+        r = Renderer(replace(p.cfg, layout=layout), p.logos, idle=p.idle) if layout else p.renderer
         return r.render(p.model, time.time(), card=card or None)
+
+    @staticmethod
+    def _layout(req: web.Request) -> str | None:
+        """?layout=, wie LAYOUT in .env; Unbekanntes zählt wie nicht angegeben."""
+        try:
+            return parse_layout(req.query["layout"])
+        except (KeyError, ValueError):
+            return None
 
     async def frame(self, req: web.Request) -> web.Response:
         p = self.panel
@@ -95,7 +103,7 @@ class _Handlers:
         return web.Response(body=body, content_type="application/octet-stream", headers={"Cache-Control": "no-store"})
 
     async def frame_png(self, req: web.Request) -> web.Response:
-        img = self._render(req.query.get("layout"), req.query.get("card"))
+        img = self._render(self._layout(req), req.query.get("card"))
         try:
             scale = max(1, min(40, int(req.query.get("scale", "6"))))
         except ValueError:
@@ -106,15 +114,14 @@ class _Handlers:
 
     async def index(self, req: web.Request) -> web.Response:
         p = self.panel
-        layout = req.query.get("layout", p.cfg.layout).upper()
-        if layout not in LAYOUTS:
-            layout = "AUTO"
+        layout = self._layout(req) or p.cfg.layout
         card = req.query.get("card", "")
         if card not in p.idle.cards:
             card = ""
         links = "".join(f'<a href="/?layout={layout}&card={c}">{c}</a>' for c in p.idle.cards)
-        return web.Response(text=PREVIEW_HTML % {"layout": layout, "card": card, "cards": links},
-                            content_type="text/html")
+        layouts = "".join(f'<a href="/?layout={x}">{x}</a>' for x in LAYOUTS)
+        return web.Response(text=PREVIEW_HTML % {"layout": layout, "card": card, "cards": links,
+                                                 "layouts": layouts}, content_type="text/html")
 
     async def display(self, req: web.Request) -> web.Response:
         return web.Response(text=self.panel.model.to_json(), content_type="application/json")

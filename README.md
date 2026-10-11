@@ -9,7 +9,7 @@
 >
 > *Fully vibe-coded weekend project: every line of code and documentation was written by an AI (Claude). No support, no warranty. Rebuilding, borrowing and building on it is explicitly welcome, at your own risk.*
 
-![Sechs Beispiele vom Panel: Landung mit Logo und Himmelspunkten, Abflüge am BER, nächster Flieger, Radar, Abflug ohne Logo, Verspätungsgrund](docs/images/overview.png)
+![Sechs Beispiele vom Panel: Landung mit Logo und Himmelspunkten, Abflüge am BER, nächster Flieger, Radar, Abflug ohne Logo mit Platzhalter, Verspätungsgrund](docs/images/overview.png)
 
 Zwei HUB75-Panels P2.5 (64 × 32) nebeneinander ergeben 128 × 32 Pixel auf 32 × 8 cm. Ein ESP32 steuert sie an, ein kleiner Server (Docker, etwa im Homelab) macht den Rest. Teile, Verdrahtung und Zusammenbau: [docs/bauanleitung.md](docs/bauanleitung.md). Alle Bildschirme mit Bildern und Rangfolge: [docs/screens.md](docs/screens.md).
 
@@ -67,9 +67,9 @@ Bis zu `MAX_FLIGHTS` Flüge wechseln sich ab, jeder mit allen Infoseiten, mindes
 
 ![Landung mit Logo: Pfeil und Airline, Route und Typ, "landet in ~4 min"; darunter drei Himmelspunkte](docs/images/flight-logo.png)
 
-**Layouts** (`LAYOUT`): **C** mit Logo links (32 × 32), rechts drei Zeilen; **A** ohne Logo über die ganze Breite; **B** zwei Flüge, je eine Zeile; **auto** C mit Logo, sonst A. Zeile 1: Pfeil (↓ Landung, ↑ Start, → Überflug) und Airline. Zeile 2: Route, sonst was der Flug ist (Luftrettung, Polizei, Kleinflugzeug: aus `airlines.json`, ADS-B-Kategorie oder Kennzeichen), sonst `?→BER` oder `BER→?`; rechts der Typ. Zeile 3 wechselt (`INFO_PAGES`): "landet in ~7 min", Höhe und Tempo, Entfernung und Kurs, Rufzeichen. Farben: Landung amber, Start grün, Überflug blau, kein Weiß.
+**Layouts** (`LAYOUT`): **C** mit Logo links (32 × 32), rechts drei Zeilen; **A** ohne Logo über die ganze Breite; **B** zwei Flüge, je eine Zeile. Hat eine Airline kein Logo, steht in C ein graues Flugzeug an seiner Stelle, damit Text und Himmelspunkte im Wechsel mit Flügen mit Logo stehen bleiben. Privatflieger und Hubschrauber ohne Logo nutzen die ganze Breite wie in A. Zeile 1: Pfeil (↓ Landung, ↑ Start, → Überflug) und Airline. Zeile 2: Route, sonst was der Flug ist (Luftrettung, Polizei, Kleinflugzeug: aus `airlines.json`, ADS-B-Kategorie oder Kennzeichen), sonst `?→BER` oder `BER→?`; rechts der Typ. Zeile 3 wechselt (`INFO_PAGES`): "landet in ~7 min", Höhe und Tempo, Entfernung und Kurs, Rufzeichen. Farben: Landung amber, Start grün, Überflug blau, kein Weiß.
 
-![Abflug ohne Logo in Layout A: Eurowings, BER→PMI, A319, 3200ft steigend](docs/images/flight-nologo.png)
+![Abflug ohne Logo: graues Flugzeug als Platzhalter, Eurowings, BER→PMI, A319; die Himmelspunkte stehen wie beim Flug mit Logo](docs/images/flight-nologo.png)
 
 **Himmelspunkte:** Sind mindestens zwei gezeigte Flugzeuge im Sichtfeld, steht unter dem (dann 28 × 28 kleinen) Logo eine Punktreihe, ein Punkt pro Flug in Lesereihenfolge: links der, der zuerst landet. Der Punkt des gezeigten Flugs leuchtet.
 
@@ -102,11 +102,11 @@ Fällt eine Quelle aus, fehlen nur ihre Teile: ohne Routen keine Herkunft, ohne 
 
 ## Airline-Logos
 
-Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dann zeigt das Panel Layout A ohne Logo. Der Server probiert die Quellen der Reihe nach, nimmt das erste Bild mit Seitenverhältnis bis `LOGO_MAX_ASPECT`, entfernt weißen Hintergrund, schneidet zu und legt `data/logos/<IATA>.png` ab (ohne IATA-Code `<ICAO>.png`). Platzhalterbilder der Quellen erkennt er. Fehlschläge stehen in `/health` → `logos_missing` und werden nach 7 Tagen erneut probiert.
+Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dann steht dort der Platzhalter (graues Flugzeug). Der Server probiert die Quellen der Reihe nach, nimmt das erste Bild mit Seitenverhältnis bis `LOGO_MAX_ASPECT`, entfernt weißen Hintergrund, schneidet zu und legt `data/logos/<IATA>.png` ab (ohne IATA-Code `<ICAO>.png`). Platzhalterbilder der Quellen erkennt er. Fehlschläge stehen in `/health` → `logos_missing` und werden nach 7 Tagen erneut probiert.
 
 - Alle auf einmal: `python3 -m flightpanel.fetch_logos` (im Container: `docker compose exec flightpanel …`), gezielt `… fetch_logos LH U2 FR`, `--force` überschreibt.
 - Eigene Logos haben Vorrang: `tools/make_logo.py bild.svg LH` macht aus PNG, JPG oder SVG das passende Format, mit Vorschau. Sie bleiben wie die abgerufenen lokal in `data/logos/` (Logos sind Marken der Airlines und gehören nicht ins Repo); beim Umzug auf einen anderen Rechner `data/logos/` mitnehmen.
-- `data/airlines.json` bildet ICAO-Codes auf kurze Namen und den Logo-Code ab: die Marke, nicht unbedingt der Tochterbetrieb (Malta Air → `FR`). Leer heißt Logo per ICAO, wenn der IATA-Code doppelt vergeben ist.
+- `data/airlines.json` bildet ICAO-Codes auf kurze Namen und den Logo-Code ab: die Marke, nicht unbedingt der Tochterbetrieb (Malta Air → `FR`, KLM Cityhopper → `KL`). So bekommt ein Tochterbetrieb ohne eigenes quadratisches Logo das der Marke. Leer heißt Logo per ICAO, wenn der IATA-Code doppelt vergeben ist.
 
 ## Endpunkte
 
@@ -132,7 +132,7 @@ docker compose exec flightpanel python3 -m flightpanel.fetch_logos
 
 Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Updates: `git pull && docker compose up -d --build`. Cache, Logos, Statistik und Auffälligkeiten liegen in `data/` und bleiben. In den `QUIET_HOURS` ist das Panel schwarz und der Server ruft nichts ab.
 
-**Ältere `.env`:** `IDLE_OFF` heißt jetzt `CARD_<ID>=0` je Karte, `LOGO_URL` heißt `LOGO_URLS`. Ausdrücklich gesetzte Werte gehen dem ruhigen Modus vor: Mit `CALM=1` die alte Zeile `PAGE_SECONDS=4` löschen. `AIRPORT_LAT`, `AIRPORT_LON`, `METAR_STATION` nur noch setzen, wenn der Flughafen nicht in `data/airports.json` steht. Der Server sagt beim Start im Log, was davon er gefunden hat.
+**Ältere `.env`:** `IDLE_OFF` heißt jetzt `CARD_<ID>=0` je Karte, `LOGO_URL` heißt `LOGO_URLS`. `LAYOUT=auto` ist jetzt dasselbe wie `C`. Ausdrücklich gesetzte Werte gehen dem ruhigen Modus vor: Mit `CALM=1` die alte Zeile `PAGE_SECONDS=4` löschen. `AIRPORT_LAT`, `AIRPORT_LON`, `METAR_STATION` nur noch setzen, wenn der Flughafen nicht in `data/airports.json` steht. Der Server sagt beim Start im Log, was davon er gefunden hat.
 
 **Auffälligkeiten (`/issues`)** sammelt der Server im Betrieb, mit Zähler, erstem und letztem Auftreten, Callsigns und einem Beispiel:
 

@@ -1,12 +1,24 @@
 """Logo-Bilder fürs Panel aufbereiten: weißen Hintergrund entfernen, auf den
 Inhalt zuschneiden, Schriftzüge erkennen, quadratisch auf LOGO_SIZE einpassen und
-auf Schwarz legen. Für den automatischen Abruf (logos.py) und tools/make_logo.py."""
+auf Schwarz legen. Für den automatischen Abruf (logos.py) und tools/make_logo.py.
+Dazu der Platzhalter für Airlines ohne Logo."""
 
+import functools
 import io
+import math
 
-from PIL import Image
+from PIL import Image, ImageDraw
+
+from .colors import MUTED, dim
 
 MAX_SOURCE_PX = 512            # größere Bilder vor dem Flood-Fill verkleinern
+
+# Platzhalter: Flugzeug von oben, Nase oben, in Einheiten 0..100 (rechte Hälfte,
+# die linke ist gespiegelt). Grau und dunkler als Text, damit es nicht nach Airline aussieht.
+_PLANE_HALF = [(50, 2), (53.5, 6), (55, 12), (55, 36), (95, 58), (95, 64), (55, 54), (54, 78), (70, 88),
+               (70, 93), (52, 89), (50, 92)]
+_PLANE = _PLANE_HALF + [(100 - x, y) for x, y in reversed(_PLANE_HALF[1:-1])]
+PLACEHOLDER_COLOR = dim(MUTED, 0.65)
 
 # Schutz vor Dekompressionsbomben aus dem Netz: Logos haben selten mehr als 1000 x 1000,
 # Pillow bricht ab dem Doppelten ab.
@@ -104,3 +116,20 @@ def prepare_logo(data: bytes, size: int, strip_white: bool = True,
     bg = Image.new("RGBA", (size, size), (0, 0, 0, 255))
     bg.alpha_composite(small)
     return bg.convert("RGB")
+
+
+@functools.cache
+def placeholder_logo(size: int) -> Image.Image:
+    """size x size RGB: graues Flugzeug, Nase nach rechts oben. Hält im Layout C die
+    Logospalte besetzt, wenn eine Airline kein Logo hat."""
+    big = size * 8                              # groß zeichnen, dann glatt verkleinern wie ein Logo
+    c = s = math.sqrt(0.5)                      # 45 Grad gedreht
+    pts = [((x - 50) * c - (y - 50) * s, (x - 50) * s + (y - 50) * c) for x, y in _PLANE]
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    k = big * 0.86 / max(max(xs) - min(xs), max(ys) - min(ys))
+    mx, my = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
+    mask = Image.new("L", (big, big))
+    ImageDraw.Draw(mask).polygon([((x - mx) * k + big / 2, (y - my) * k + big / 2) for x, y in pts], fill=255)
+    img = Image.new("RGB", (size, size))
+    img.paste(PLACEHOLDER_COLOR, (0, 0, size, size), mask.resize((size, size), Image.LANCZOS))
+    return img

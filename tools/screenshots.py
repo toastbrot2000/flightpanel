@@ -15,7 +15,6 @@ import io
 import os
 import sys
 import tempfile
-from dataclasses import replace
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
@@ -110,12 +109,12 @@ def overview(images: list[Image.Image], cols: int = 2) -> Image.Image:
 def main() -> None:
     os.makedirs(OUT, exist_ok=True)
     r = renderer(CFG)
-    a = renderer(replace(CFG, layout="A"))
+    rotation = [ARRIVING, SECOND, DEPARTING]        # Eurowings ohne Logo: Platzhalter
     shots = {
-        "flight-logo": flight_image(r, [ARRIVING, SECOND, DEPARTING], ARRIVING, 0),
-        "flight-alt": flight_image(r, [ARRIVING, SECOND, DEPARTING], ARRIVING, 1),
-        "flight-nologo": flight_image(a, [DEPARTING], DEPARTING, 0),
-        "private": flight_image(a, [RESCUE], RESCUE, 0),
+        "flight-logo": flight_image(r, rotation, ARRIVING, 0),
+        "flight-alt": flight_image(r, rotation, ARRIVING, 1),
+        "flight-nologo": flight_image(r, rotation, DEPARTING, 0),
+        "private": flight_image(r, [RESCUE], RESCUE, 0),
     }
     for cid in ("departures", "arrivals", "next", "radar", "runway", "weather", "iss", "scoreboard",
                 "pokedex", "clock", "delay", "txl"):
