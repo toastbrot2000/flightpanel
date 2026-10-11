@@ -69,6 +69,37 @@ def test_weather_only_when_it_explains_an_empty_sky():
     assert runway.weather_cond(ctx(t, near, metar=None)) is None
 
 
+def test_weather_does_not_claim_hidden_planes_that_are_not_there():
+    """Wolken und Nebel verstecken nur, was fliegt: Fliegt keiner darüber (oder sind
+    die Flugdaten alt), sagt die Karte nichts. Gewitter erklärt den leeren Himmel auch so."""
+    t = ts(2026, 10, 10, 15, 0)
+    stamp = datetime.fromtimestamp(t, UTC).strftime("%d%H%MZ")
+    clouds = metar_src(f"EDDB {stamp} 25007KT 9999 OVC049 09/08 Q1011", t)
+    fog = metar_src(f"EDDB {stamp} 00000KT 0400 FG VV002 03/03 Q1021", t)
+    storm = metar_src(f"EDDB {stamp} 27012KT 9999 TSRA BKN030CB 21/15 Q1008", t)
+    nobody = DisplayModel(source="test")
+    below = DisplayModel(source="test", nearby=[{"alt_ft": 3000}])          # unter den Wolken, zu sehen
+    stale = DisplayModel(source="test", stale=True, nearby=[{"alt_ft": 38000}])
+    assert runway.weather_cond(ctx(t, nobody, metar=clouds)) is None
+    assert runway.weather_cond(ctx(t, below, metar=clouds)) is None
+    assert runway.weather_cond(ctx(t, stale, metar=clouds)) is None
+    assert runway.weather_cond(ctx(t, nobody, metar=fog)) is None
+    assert runway.weather_cond(ctx(t, below, metar=fog)).data["kind"] == "fog"
+    assert runway.weather_cond(ctx(t, nobody, metar=storm)).data["kind"] == "ts"
+
+
+def test_weather_headline_fits_for_every_ceiling():
+    """"Wolken auf 1500 m" passt in großer Schrift aufs Panel, für jede Wolkenhöhe, die
+    die Karte zeigt: Auf doppelt so breiter Fläche gezeichnet, bleibt rechts alles frei."""
+    t = ts(2026, 10, 10, 15, 0)
+    stamp = datetime.fromtimestamp(t, UTC).strftime("%d%H%MZ")
+    for hundreds_ft in range(1, 50):                        # BKN001 bis BKN049, knapp unter 1500 m
+        m = parse(f"EDDB {stamp} 21007KT 9999 BKN{hundreds_ft:03d} 13/05 Q1007", t)
+        wide = Image.new("RGB", (256, 32))
+        runway.weather_draw(wide, ctx(t), {"kind": "cloud", "m": m, "above": 12}, 0, 1.0)
+        assert wide.crop((128, 0, 256, 32)).getbbox() is None, f"Wolken auf {m.ceiling_m} m"
+
+
 def _stats(tmp_path, course=249, since_min=60, seen_min=5, prev=None, now=None):
     st = Stats(str(tmp_path / "s.json"), make_cfg(), NAMES, {"types": {}, "callsigns": {}})
     st.course, st.prev_course = course, prev

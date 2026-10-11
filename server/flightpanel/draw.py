@@ -36,8 +36,8 @@ def line(img: Image.Image, x: int, y: int, s: str, c: Color, f: float, max_w: in
 
 
 def headline(img: Image.Image, x: int, y: int, s: str, c: Color, f: float, max_w: int) -> int:
-    """Zeile 1 eines Flugs: fett, passt der Name nicht, in FONT_MID, dann FONT_SMALL
-    (bündig mit der Unterkante der Großbuchstaben), erst dann gekürzt ("Germanwin")."""
+    """Zeile 1 eines Flugs oder einer Karte: fett, passt sie nicht, in FONT_MID, dann
+    FONT_SMALL (bündig mit der Unterkante der Großbuchstaben), erst dann gekürzt ("Germanwin")."""
     for font in (FONT_BIG, FONT_MID):
         if font.text_width(s) <= max_w:
             return font.draw(img, x, y + FONT_BIG.cap_height - font.cap_height, s, dim(c, f))

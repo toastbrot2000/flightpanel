@@ -8,7 +8,7 @@ from .. import sprites
 from ..airport import path_in_view, runway_name
 from ..colors import ARR_C, CYAN, DEP_C, GOLD, INFO, MUTED, OVF_C, dim
 from ..config import in_hours
-from ..draw import ROW1, ROW2, ROW3, km, line, right, text
+from ..draw import ROW1, ROW2, ROW3, headline, line, right, text
 from ..fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from ..geo import M_PER_FT, kompass
 from ..idle import Ctx, Hit
@@ -95,18 +95,19 @@ def runway_change_draw(img, ctx, d, t_in, f):
 
 # ------------------------------------------------------------------ Wetter --
 def weather_cond(ctx: Ctx):
-    """Nur wenn das Wetter erklärt, warum am Himmel nichts zu sehen ist."""
+    """Nur wenn das Wetter erklärt, warum am Himmel nichts zu sehen ist. Nebel und
+    Wolken verstecken nur, was fliegt: Nebel nur, wenn einer in der Luft ist, Wolken
+    nur, wenn einer darüber fliegt, nach frischen Flugdaten."""
     m = ctx.metar.fresh(ctx.now) if ctx.metar else None
     if m is None:
         return None
-    above = None
-    if m.ceiling_m is not None:
-        above = sum(1 for n in ctx.model.nearby if n.get("alt_ft") and n["alt_ft"] * M_PER_FT > m.ceiling_m)
+    aloft = [n["alt_ft"] * M_PER_FT for n in ctx.model.nearby if n.get("alt_ft")] if ctx.live else []
+    above = sum(1 for alt_m in aloft if alt_m > m.ceiling_m) if m.ceiling_m is not None else None
     if m.has("TS"):
         return Hit({"kind": "ts", "m": m, "above": above}, weight=3)
-    if (m.vis_m is not None and m.vis_m < 2000) or m.has("FG"):
+    if aloft and ((m.vis_m is not None and m.vis_m < 2000) or m.has("FG")):
         return Hit({"kind": "fog", "m": m, "above": above}, weight=3)
-    if m.ceiling_m is not None and m.ceiling_m < 1500:
+    if above and m.ceiling_m < 1500:
         return Hit({"kind": "cloud", "m": m, "above": above}, weight=2.5)
     if m.has("SN"):
         return Hit({"kind": "snow", "m": m, "above": above}, weight=2)
@@ -139,7 +140,8 @@ def weather_draw(img, ctx, d, t_in, f):
         FONT_BIG.draw(img, 0, ROW1, f"Schnee am {iata}", dim(CYAN, f))
         text(img, FONT_MID, 0, ROW2, "Enteisen dauert", INFO, f, W)
     else:
-        FONT_BIG.draw(img, 0, ROW1, f"Wolken auf {km(round(m.ceiling_m, -2))} m", dim(MUTED, f))
+        # "1500 m" ohne Tausendertrennung: passt mit genau 128 px in großer Schrift
+        headline(img, 0, ROW1, f"Wolken auf {round(m.ceiling_m, -2):.0f} m", MUTED, f, W)
         text(img, FONT_MID, 0, ROW2, "Flieger versteckt", INFO, f, W)
     if above:
         text(img, FONT_MID, 0, ROW3, f"{above} Flieger darüber", OVF_C, f, W)

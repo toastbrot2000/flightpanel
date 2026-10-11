@@ -40,7 +40,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | | `runway_change` | Pistenwechsel, was er fürs Fenster heißt | bis 1 h nach einem Wechsel (drei Abrufe in Folge bestätigt) |
 | **3 Wenig los** | `radar` | Rundumblick, Sichtfeld als Band, Punkte nach Richtung und Höhenwinkel; der nächste blinkt | Flugzeuge im Radius |
 | | `runway` | "BER landet auf 25", Wind, ob Landungen oder Starts durchs Sichtfeld kommen | Landerichtung seit 30 min stabil, in den letzten 2 h bestätigt, laut METAR kein Rückenwind |
-| | `weather` | warum der Himmel leer ist: Gewitter, Nebel, tiefe Wolken, Schnee; wie viele darüber fliegen | METAR erklärt es (Sicht unter 2 km, Wolken unter 1500 m) |
+| | `weather` | warum der Himmel leer ist: Gewitter, Nebel, tiefe Wolken, Schnee; wie viele darüber fliegen | METAR erklärt es: Gewitter, Schnee; Nebel (Sicht unter 2 km), wenn jemand fliegt; Wolken unter 1500 m, wenn jemand darüber fliegt |
 | | `curfew` | Nachtflugverbot bis … | `CURFEW_HOURS` (BER 0 bis 5 Uhr), wenn `QUIET_HOURS` das Panel dann nicht abschaltet |
 | | `scoreboard` | Tagesstatistik: Flugzeuge, Airlines, wie viele im Sichtfeld, das höchste | ab 10 Flugzeugen am Tag |
 | | `pokedex` | Sammelalbum: gesehene Marken aus `airlines.json`, dazu Exoten | ab der ersten Airline |
