@@ -91,6 +91,27 @@ def test_course_needs_three_polls_to_flip(tmp_path):
     assert st.course == 69
 
 
+def test_extras_join_their_brand_once_listed(tmp_path):
+    """Ein Exot, der inzwischen in airlines.json steht, zählt beim nächsten Start zur
+    Marke statt doppelt (CXI: adsbdb sagte "Shanxi Airlines", es ist Corendon)."""
+    corendon = {"name": "Corendon", "iata": "XC", "airline": True}
+    t = ts(2026, 10, 11, 23, 0)
+    path = str(tmp_path / "stats.json")
+    st = Stats(path, make_cfg(), {"CAI": corendon}, RARE)
+    st.observe([state(icao="a", cs="CAI98GP"), state(icao="b", cs="CXI97DR"), state(icao="c", cs="ABC123")],
+               DisplayModel(), t)
+    assert st.dex_count()[2] == 2                                   # CXI und ABC als Exoten
+    st.save()
+    again = Stats(path, make_cfg(), {"CAI": corendon, "CXI": corendon}, RARE)
+    assert set(again.dex) == {"Corendon", "ABC"} and again.dex_count()[2] == 1
+    solo = str(tmp_path / "solo.json")                              # Marke noch nicht im Album
+    st = Stats(solo, make_cfg(), {}, RARE)
+    st.observe([state(icao="b", cs="CXI97DR")], DisplayModel(), t)
+    st.save()
+    later = Stats(solo, make_cfg(), {"CXI": corendon}, RARE)
+    assert later.dex["Corendon"]["known"] and later.dex["Corendon"]["first"] == t
+
+
 def test_save_load_roundtrip_and_broken_file(tmp_path):
     st = mk(tmp_path)
     t = ts(2026, 10, 10, 12, 0)

@@ -71,6 +71,7 @@ class Stats:
         try:
             self.since = raw.get("since", self.since)
             self.dex = raw.get("dex", {})
+            self._merge_listed()
             d = raw.get("day") or {}
             if d.get("date"):
                 self.day = {**_new_day(d["date"]), **d,
@@ -86,6 +87,17 @@ class Stats:
             self.course_seen = c.get("seen", 0.0)
         except Exception as e:
             log.warning("stats.json unvollständig (%s), lese nur einen Teil", e)
+
+    def _merge_listed(self) -> None:
+        """Exoten, die inzwischen in airlines.json stehen, zählen zur Marke (oder fallen
+        raus, wenn sie keine Airline sind); sonst stünden sie doppelt im Album. Das erste
+        Sichtungsdatum bleibt, außer die Marke hat schon einen Eintrag."""
+        for code in [k for k, e in self.dex.items() if not e.get("known") and k in self.names]:
+            e = self.dex.pop(code)
+            b = self.brand(code)
+            if b is not None:
+                self.dex.setdefault(b[0], {**e, "name": b[1], "known": True})
+            self.dirty = True
 
     def to_dict(self) -> dict:
         d = {**self.day, **{k: sorted(self.day[k]) for k in ("aircraft", "airlines", "shown")}}
