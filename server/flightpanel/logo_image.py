@@ -189,18 +189,62 @@ def prepare_logo(data: bytes, size: int, strip_white: bool = True,
     return bg.convert("RGB")
 
 
+def _icon(shapes: list[list[tuple[float, float]]], size: int) -> Image.Image:
+    """Umrisse in Einheiten 0..100 (Nase oben) -> size x size RGB, grau, um 45 Grad
+    gedreht (Nase nach rechts oben), groß gezeichnet und glatt verkleinert wie ein Logo."""
+    big = size * 8
+    c = s = math.sqrt(0.5)
+    rot = [[((x - 50) * c - (y - 50) * s, (x - 50) * s + (y - 50) * c) for x, y in shape] for shape in shapes]
+    xs, ys = [p[0] for shape in rot for p in shape], [p[1] for shape in rot for p in shape]
+    k = big * 0.86 / max(max(xs) - min(xs), max(ys) - min(ys))
+    mx, my = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
+    mask = Image.new("L", (big, big))
+    draw = ImageDraw.Draw(mask)
+    for shape in rot:
+        draw.polygon([((x - mx) * k + big / 2, (y - my) * k + big / 2) for x, y in shape], fill=255)
+    img = Image.new("RGB", (size, size))
+    img.paste(PLACEHOLDER_COLOR, (0, 0, size, size), mask.resize((size, size), Image.LANCZOS))
+    return img
+
+
+def _blade(cx: float, cy: float, deg: float, half: float, width: float) -> list[tuple[float, float]]:
+    """Rotorblatt: Rechteck durch die Nabe."""
+    a = math.radians(deg)
+    dx, dy, nx, ny = math.cos(a) * half, math.sin(a) * half, -math.sin(a) * width / 2, math.cos(a) * width / 2
+    return [(cx - dx + nx, cy - dy + ny), (cx + dx + nx, cy + dy + ny), (cx + dx - nx, cy + dy - ny),
+            (cx - dx - nx, cy - dy - ny)]
+
+
+# Kleinflugzeug von oben, Nase oben: gerade Flügel weit vorn, schlanker Rumpf, Leitwerk
+_SMALL_PLANE = [
+    [(47, 6), (53, 6), (55.5, 22), (55, 70), (52.5, 93), (47.5, 93), (45, 70), (44.5, 22)],
+    [(3, 27), (97, 27), (97, 40), (3, 40)],
+    [(29, 78), (71, 78), (71, 88), (29, 88)],
+]
+# Hubschrauber von oben, Nase oben: Kabine, Heckausleger mit Heckrotor, Rotor als X
+_HELI = [
+    [(50 + 13 * math.sin(math.radians(a)), 40 - 19 * math.cos(math.radians(a))) for a in range(0, 360, 15)],
+    [(48, 56), (52, 56), (51.2, 92), (48.8, 92)],
+    [(41, 88), (59, 88), (59, 93), (41, 93)],
+    _blade(50, 40, 45, 44, 5),
+    _blade(50, 40, -45, 44, 5),
+]
+
+
 @functools.cache
 def placeholder_logo(size: int) -> Image.Image:
     """size x size RGB: graues Flugzeug, Nase nach rechts oben. Hält im Layout C die
     Logospalte besetzt, wenn eine Airline kein Logo hat."""
-    big = size * 8                              # groß zeichnen, dann glatt verkleinern wie ein Logo
-    c = s = math.sqrt(0.5)                      # 45 Grad gedreht
-    pts = [((x - 50) * c - (y - 50) * s, (x - 50) * s + (y - 50) * c) for x, y in _PLANE]
-    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-    k = big * 0.86 / max(max(xs) - min(xs), max(ys) - min(ys))
-    mx, my = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
-    mask = Image.new("L", (big, big))
-    ImageDraw.Draw(mask).polygon([((x - mx) * k + big / 2, (y - my) * k + big / 2) for x, y in pts], fill=255)
-    img = Image.new("RGB", (size, size))
-    img.paste(PLACEHOLDER_COLOR, (0, 0, size, size), mask.resize((size, size), Image.LANCZOS))
-    return img
+    return _icon([_PLANE], size)
+
+
+@functools.cache
+def small_plane_logo(size: int) -> Image.Image:
+    """Symbol für Privatflieger ohne Logo, außer Hubschraubern: Kleinflugzeug von oben."""
+    return _icon(_SMALL_PLANE, size)
+
+
+@functools.cache
+def helicopter_logo(size: int) -> Image.Image:
+    """Symbol für Hubschrauber ohne Logo (Luftrettung, Polizei ...): von oben, Rotor als X."""
+    return _icon(_HELI, size)

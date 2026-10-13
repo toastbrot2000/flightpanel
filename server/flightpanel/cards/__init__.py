@@ -11,7 +11,7 @@ ctx (idle.Ctx) bringt Einstellungen, Display-Modell, Statistik, Wetter, ISS und
 Logos mit. Stufen (tier) und Auswahl: idle.py und docs/screens.md. Jede Karte lässt
 sich mit CARD_<ID>=0 abschalten.
 
-  traffic.py  Notfall, Privatflieger, nächster Flieger, Abflug, Landung, Radar
+  traffic.py  Notfall, nächster Flieger, Abflug, Landung, Radar
   runway.py   Landerichtung, Pistenwechsel, Wetter, Nachtflugverbot
   album.py    Tagesstatistik, Sammelalbum, neue und seltene Flugzeuge, Flaute
   sky.py      Uhr, ISS, Sonnenauf- und -untergang
@@ -27,8 +27,6 @@ ALERT = Card("alert", traffic.alert_cond, traffic.alert_draw, demo=traffic.alert
 CARDS = [
     ALERT,
     # Stufe 2: Verkehr am Platz
-    Card("private", traffic.private_cond, traffic.private_draw, weight=2.0, tier=2, group="nützlich", live=True,
-         demo=traffic.private_demo),
     Card("departures", traffic.departures_cond, traffic.departures_draw, weight=3.0, tier=2, group="nützlich",
          live=True, demo=traffic.departures_demo),
     Card("arrivals", traffic.arrivals_cond, traffic.arrivals_draw, weight=2.5, tier=2, group="nützlich", live=True,

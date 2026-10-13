@@ -4,17 +4,17 @@
    Airline-Namen und -Codes). Routen, die nicht zur Position passen, fliegen raus;
    ohne Route kommt der Abflughafen aus der Flugspur (origins.py).
 2. Kandidaten: in der Luft, im Radius, unter MAX_ALT_M, mit Sichtbarkeit (view.py).
-3. Reihenfolge: Sichtbares vor dem Rest; Airlines vor Privatfliegern, Hubschraubern,
-   Polizei und Militär, die nur kommen, wenn keine Airline zu sehen ist; wer hier
-   landet oder startet vor Überflügen; dann die kürzeste Sichtlinie. Die ersten
-   MAX_FLIGHTS werden gezeigt, Landende in Landefolge.
+3. Reihenfolge: Sichtbares vor dem Rest; dann Airlines, die hier landen oder starten,
+   Privatflieger (auch Hubschrauber, Polizei, Militär), die das tun, Airline-Überflüge,
+   Privat-Überflüge; darin die kürzeste Sichtlinie. Die ersten MAX_FLIGHTS werden
+   gezeigt, Landende in Landefolge.
 4. Für den Leerlauf: Landerichtung, Landefolge, Abflüge, wer als nächstes ins
    Sichtfeld kommt, Notfall-Squawks und alle Flugzeuge im Radius (nearby)."""
 
 import logging
 
 from .adsbim import leg_route
-from .aircraft import describe
+from .aircraft import aircraft_class, describe, registration
 from .airlines import AIRLINER_CATEGORIES, callsign_airline, is_airline, note_operator, route_plausible, short_airline
 from .airport import (
     APPROACH_AREA_KM,
@@ -218,15 +218,11 @@ class _Builder:
             airline = self.note(s, route)
             if airline or self.cfg.show_other:
                 ranked.append((s, v, vis, route, airline))
-        # Sichtbar vor unsichtbar, Airline vor Sonstigen, wer hier landet oder startet vor
-        # Überflügen (reicht MAX_FLIGHTS nicht für alle), jetzt vor gleich, dann die Sichtlinie
-        ranked.sort(key=lambda r: (r[2] == 0, not r[4], not self.here(r[0], r[3], r[4]), -r[2], r[1].slant_km))
-        # Sonstige nur, wenn keine Airline dran ist: Ist eine im Sichtfeld (oder, ohne
-        # Sichtbares, überhaupt eine da), fliegen Privatjets und Hubschrauber raus.
-        tier = [r for r in ranked if r[2] > 0] or ranked
-        if any(r[4] for r in tier):
-            tier = [r for r in tier if r[4]]
-        return tier
+        # Reicht MAX_FLIGHTS nicht für alle: sichtbar vor unsichtbar; Airlines, die hier landen
+        # oder starten; Privatflieger, die das tun; Airline-Überflüge; Privat-Überflüge; darin
+        # jetzt vor gleich und die kürzere Sichtlinie
+        ranked.sort(key=lambda r: (r[2] == 0, not self.here(r[0], r[3], r[4]), not r[4], -r[2], r[1].slant_km))
+        return [r for r in ranked if r[2] > 0] or ranked
 
     def here(self, s: State, route: dict, airline: bool) -> bool:
         """Landet oder startet am Heimatflughafen: in der Landefolge, laut Route oder,
@@ -327,6 +323,7 @@ class _Builder:
             elev_deg=round(v.elev, 1),
             seq=self.seq.get(s.icao24),
             label=label,
+            rotorcraft=aircraft_class(s.category, s.registration or registration(s.callsign)) == "Hubschrauber",
             land_eta_s=round(self.etas[s.icao24]) if s.icao24 in self.etas else None,
         )
         if f.seq is not None and f.status != ARR:

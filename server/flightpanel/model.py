@@ -59,6 +59,7 @@ class Flight:
     seq: int | None = None      # Platz in der Landefolge (1 = landet als nächstes)
     label: str = ""             # ohne Airline: was es ist (Luftrettung, Kleinflugzeug ...)
     land_eta_s: int | None = None  # Landende: geschätzte Sekunden bis zum Aufsetzen
+    rotorcraft: bool = False    # Hubschrauber: ohne Logo das Hubschrauber-Symbol
 
     @property
     def other_airport(self) -> str:

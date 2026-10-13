@@ -52,8 +52,8 @@ DEPARTING = flight(icao24="000003", callsign="EWG7PL", status=DEP, airline="Euro
                    airline_iata="", origin="BER", dest="PMI", actype="A319", alt_ft=3200, speed_kt=220,
                    vrate_fpm=1800, track=69, seq=None, land_eta_s=None, bearing=176)
 RESCUE = flight(icao24="000004", callsign="CHX31", kind="other", status=OVF, airline="Christoph 31",
-                airline_icao="CHX", label="Luftrettung", origin="", dest="", actype="EC35", alt_ft=1100,
-                speed_kt=120, vrate_fpm=0, track=200, seq=None, land_eta_s=None, dist_km=4.2)
+                airline_icao="CHX", label="Luftrettung", rotorcraft=True, origin="", dest="", actype="EC35",
+                alt_ft=1100, speed_kt=120, vrate_fpm=0, track=200, seq=None, land_eta_s=None, dist_km=4.2)
 
 
 def demo_logo(directory: str) -> None:

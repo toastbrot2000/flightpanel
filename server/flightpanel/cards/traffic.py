@@ -1,4 +1,4 @@
-"""Verkehr: Notfall-Squawk, Privatflieger im Sichtfeld, der nächste Flieger,
+"""Verkehr: Notfall-Squawk, der nächste Flieger,
 Abflüge und Landungen am Platz, Radar."""
 
 import math
@@ -43,27 +43,6 @@ def alert_draw(img, ctx, d, t_in, f):
     if d.get("in_view"):
         where = f"im Blick {side_arrow(ctx, d['az'])} {where}".replace("  ", " ")
     text(img, FONT_MID, 3, ROW3 - 1, where, INFO, f, W - 6)
-
-
-# ----------------------------------------------------------- Privatflieger --
-def private_cond(ctx: Ctx):
-    """Privatflieger, Hubschrauber, Polizei, Militär im Sichtfeld: ohne Airline daneben
-    eine Karte wie jede andere, gezeichnet wie ein Flug."""
-    others = [fl for fl in ctx.model.flights if fl.kind != "airline"]
-    return Hit(others) if others and ctx.draw_flight else None
-
-
-def private_demo(ctx: Ctx):
-    return [Flight(icao24="demo", callsign="DEFGH", status=OVF, dist_km=6.2, bearing=160, alt_ft=2500,
-                   speed_kt=95, track=250, vrate_fpm=0, actype="C172", kind="other",
-                   airline="D-EFGH", label="Kleinflugzeug")]
-
-
-def private_draw(img, ctx, data, t_in, f):
-    slot = int(ctx.now // max(1, ctx.cfg.idle_seconds))
-    fl = data[slot % len(data)]
-    page = int(t_in // max(1, ctx.cfg.page_seconds)) % 3
-    ctx.draw_flight(img, ctx.model, fl, page, f)
 
 
 # -------------------------------------------------------- Nächster Flieger --

@@ -186,13 +186,6 @@ def test_new_airline_text_stays_off_the_frame(monkeypatch):
         assert [p for p in border if img.getpixel(p) != (0, 0, 0)] == []
 
 
-def test_private_planes_are_a_card_not_a_takeover():
-    m = DisplayModel(source="test", flights=[fl("other")])
-    assert traffic.private_cond(ctx(model=m, draw_flight=lambda *a: None)).data[0].callsign == "DEFGH"
-    airline_only = DisplayModel(source="test", flights=[fl()])
-    assert traffic.private_cond(ctx(model=airline_only, draw_flight=lambda *a: None)) is None
-
-
 def test_quiet_rare_new(tmp_path):
     t = ts(2026, 10, 10, 15, 0)
     st = Stats(str(tmp_path / "s.json"), make_cfg(), NAMES, {"types": {"A388": "A380"}, "callsigns": {}})
@@ -256,7 +249,7 @@ def test_render_priorities():
     r = _renderer(cfg)
     now = ts(2026, 10, 10, 15, 0)
     r.render(DisplayModel(source="test", flights=[fl("other")]), now)
-    assert r.idle.last_pick is not None                     # Privatflieger: Leerlauf mit Karten
+    assert r.idle.last_pick is None                         # Privatflieger: in der Rotation wie ein Flug
     r.idle.last_pick = None
     r.render(DisplayModel(source="test", flights=[fl()]), now)
     assert r.idle.last_pick is None                         # Airline: normales Layout
@@ -328,16 +321,20 @@ def test_flight_without_logo_keeps_the_layout(tmp_path):
     assert a.crop(logo_area).tobytes() != b.crop(logo_area).tobytes()
 
 
-def test_private_planes_without_logo_use_the_whole_width():
-    """Privatflieger, Hubschrauber, Polizei: kein Airline-Platzhalter, sondern Layout A."""
-    other = fl("other")
-    m = DisplayModel(source="test", flights=[other])
-    imgs = []
-    for layout in ("C", "A"):
+def test_private_planes_keep_layout_c_with_a_type_icon():
+    """Privatflieger stehen in der Rotation wie Airlines, im selben Layout: Statt des
+    Logos ein Symbol, Hubschrauber oder Kleinflugzeug. Text und Himmelspunkte bleiben,
+    wo sie sind."""
+    from flightpanel.logo_image import helicopter_logo, small_plane_logo
+
+    heli = replace(fl("other", icao="h"), rotorcraft=True, label="Luftrettung")
+    small = replace(fl("other", icao="s"), label="Kleinflugzeug")
+    r = _renderer(make_cfg(layout="C"))
+    for plane, icon in ((heli, helicopter_logo(LOGO_COL)), (small, small_plane_logo(LOGO_COL))):
         img = Image.new("RGB", (128, 32))
-        _renderer(make_cfg(layout=layout)).draw_flight(img, m, other, 0, 1.0)
-        imgs.append(img.tobytes())
-    assert imgs[0] == imgs[1]
+        r.draw_flight(img, DisplayModel(source="test", flights=[plane]), plane, 0, 1.0)
+        assert img.crop((0, 0, LOGO_COL, 32)).tobytes() == icon.tobytes()
+    assert helicopter_logo(LOGO_COL).tobytes() != small_plane_logo(LOGO_COL).tobytes()
 
 
 # ------------------------------------------------------------ ruhiger Modus --

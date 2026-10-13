@@ -60,7 +60,6 @@ class Ctx:
     astro: Any = None                             # astro.Iss
     logos: Any = None                             # logos.LogoStore
     names: dict = field(default_factory=dict)     # data/airlines.json
-    draw_flight: Any = None                       # Renderer: Flug wie im Normalbetrieb zeichnen
 
     @property
     def quiet(self) -> bool:

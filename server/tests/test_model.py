@@ -114,6 +114,28 @@ def test_flights_landing_or_starting_here_go_first():
     assert len(roomy.flights) == 4
 
 
+def test_private_planes_join_the_rotation_in_four_ranks():
+    """Reicht MAX_FLIGHTS nicht: Airlines, die hier landen oder starten; dann Privatflieger,
+    die das tun; dann Airline-Überflüge; dann Privat-Überflüge. Mit Platz sind alle dabei,
+    Privatflieger auch neben Airlines."""
+    def at(bearing, km, **kw):
+        lat, lon = destination(52.52, 13.40, bearing, km)
+        return state(lat=lat, lon=lon, **kw)
+
+    states = [at(200, 14, icao="arr", cs="DLH4AB", alt=1000, vrate=-4),              # Airline, landet hier
+              at(160, 12, icao="biz", cs="BFX1073", alt=1200, vrate=-4, category="A2", actype="C25B"),
+              at(0, 4, icao="ovf", cs="UAE45", alt=5000),                              # Airline, Überflug
+              at(90, 2, icao="heli", cs="CHX31", alt=300, category="A7", actype="EC35")]   # Privat, Überflug
+    adsb = FakeAdsb({"DLH4AB": {"origin": "MUC", "dest": "BER"}, "BFX1073": {"origin": "ZRH", "dest": "BER"}})
+    picked = [{f.callsign for f in asyncio.run(build_model(make_cfg(max_flights=n), states, adsb, NAMES,
+                                                            horizon_s=20)).flights} for n in (1, 2, 3, 4)]
+    assert picked == [{"DLH4AB"}, {"DLH4AB", "BFX1073"}, {"DLH4AB", "BFX1073", "UAE45"},
+                      {"DLH4AB", "BFX1073", "UAE45", "CHX31"}]
+    heli = next(f for f in asyncio.run(build_model(make_cfg(max_flights=4), states, adsb, NAMES)).flights
+                if f.callsign == "CHX31")
+    assert heli.kind == "other" and heli.rotorcraft
+
+
 def test_build_model_idle_fields():
     cfg = make_cfg(view_from=250, view_to=290, view_min_elev=5, view_max_km=40)
     lat, lon = destination(52.52, 13.40, 90, 20)

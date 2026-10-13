@@ -1,27 +1,23 @@
 """Display-Modell -> 128x32-Bild -> Frame-Bytes für den ESP32 / PNG für den Browser.
 
 Was gezeigt wird (render): Notfall-Squawk vor allem, dann um Mitternacht an
-Neujahr ein paar Minuten Feuerwerk, auch in der Ruhezeit, dann Airline-Flüge, sonst
-Leerlauf-Karten (idle.py, cards/), zu denen auch Privatflieger, Hubschrauber und
-Militär im Sichtfeld gehören.
+Neujahr ein paar Minuten Feuerwerk, auch in der Ruhezeit, dann Flüge im Sichtfeld
+(Airlines und Privatflieger, Hubschrauber, Polizei, Militär), sonst Leerlauf-Karten
+(idle.py, cards/).
 
 Layouts für Flüge (LAYOUT in .env):
-  C    Logo links (32 x 32), rechts drei Zeilen: Airline, Route + Typ, wechselnde Info.
-       Hat eine Airline kein Logo, steht dort ein graues Flugzeug: Text und
-       Himmelspunkte bleiben im Wechsel mit Flügen mit Logo, wo sie sind.
-  A    ohne Logo, drei Zeilen über die ganze Breite (Airline + Callsign, Route, Info)
+  C    Logo links (32 x 32), rechts drei Zeilen: Name, Route + Typ, wechselnde Info.
+       Ohne Logo steht dort ein graues Symbol: Flugzeug bei Airlines, Kleinflugzeug
+       oder Hubschrauber bei Privatfliegern. Text und Himmelspunkte bleiben im
+       Wechsel, wo sie sind.
+  A    ohne Logo, drei Zeilen über die ganze Breite (Name + Callsign, Route, Info)
   B    zwei Flüge, je eine Zeile
-
-Privatflieger, Hubschrauber und Polizei ohne Logo stehen auch in C wie in A: Sie
-wechseln sich nur untereinander ab (Karte "private"), und Kennzeichen und
-Bezeichnung brauchen die Breite.
 
 Bei mehreren Flügen wechseln A und C nach jedem Durchlauf der Infozeilen zum
 nächsten Flug, Landende in Landefolge zuerst. Sind mindestens zwei im Sichtfeld,
 zeigen Himmelspunkte, welcher gerade dran ist."""
 
 import io
-from dataclasses import replace
 from datetime import datetime
 
 from PIL import Image
@@ -34,7 +30,7 @@ from .draw import ROW1, ROW2, ROW3, STATUS_COLORS, headline, line, right, status
 from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from .geo import kompass
 from .idle import IdleScreen
-from .logo_image import placeholder_logo
+from .logo_image import helicopter_logo, placeholder_logo, small_plane_logo
 from .logos import LogoStore
 from .model import DisplayModel, Flight
 
@@ -80,6 +76,13 @@ def info_pages(f: Flight, hide_callsign: bool = False, which: tuple[str, ...] = 
     return pages or [""]
 
 
+def type_icon(fl: Flight, side: int) -> Image.Image:
+    """Statt Logo: bei Airlines das graue Flugzeug, sonst Kleinflugzeug oder Hubschrauber."""
+    if fl.kind == "airline":
+        return placeholder_logo(side)
+    return helicopter_logo(side) if fl.rotorcraft else small_plane_logo(side)
+
+
 def type_width(fl: Flight, line2: str, avail: int) -> int:
     """Platz für den Typ rechts in Zeile 2, oder 0, wenn er nicht neben die Zeile passt."""
     if not fl.actype:
@@ -93,16 +96,12 @@ class Renderer:
         self.cfg = cfg
         self.logos = logos
         self._grid_cache: dict[int, Image.Image] = {}
-        if idle is None:
-            idle = IdleScreen(cfg, CARDS, logos=logos)
-        if idle.providers.get("draw_flight") is None:
-            idle.providers["draw_flight"] = self.draw_flight
-        self.idle = idle
+        self.idle = idle if idle is not None else IdleScreen(cfg, CARDS, logos=logos)
 
     # ---------------------------------------------------------------- API --
     def render(self, model: DisplayModel, now: float, card: str | None = None) -> Image.Image:
         """Notfall-Squawk vor allem; dann das Feuerwerk in den ersten Minuten des Jahres;
-        dann Airline-Flüge; sonst Leerlauf-Karten. card erzwingt eine Leerlauf-Karte (Vorschau)."""
+        dann Flüge; sonst Leerlauf-Karten. card erzwingt eine Leerlauf-Karte (Vorschau)."""
         img = Image.new("RGB", (self.cfg.width, self.cfg.height), (0, 0, 0))
         f = STALE_FACTOR if model.stale else 1.0
 
@@ -115,12 +114,9 @@ class Renderer:
         if self.new_year(now):
             self.idle.draw(img, model, now, 1.0, force="fireworks")     # braucht keine Flugdaten
             return img
-        airline = [fl for fl in model.flights if fl.kind == "airline"]
-        if model.empty or not airline:
+        if model.empty or not model.flights:
             self.idle.draw(img, model, now, f)
             return img
-        if len(airline) != len(model.flights):
-            model = replace(model, flights=airline)
 
         if self.cfg.layout == "B":
             self._layout_b(img, model, now, f)
@@ -132,12 +128,10 @@ class Renderer:
     def draw_flight(self, img: Image.Image, model: DisplayModel, fl: Flight, page: int, f: float) -> None:
         """Ein Flug in Layout C oder A; B zeigt einzelne Flüge wie C."""
         dots = self._sky_dots(model, fl)
-        logo = None if self.cfg.layout == "A" else self.logos.get(fl.airline_iata, fl.airline_icao)
-        # Airline ohne Logo: Platzhalter in C; Privatflieger ohne Logo: ganze Breite
-        if self.cfg.layout == "A" or (logo is None and fl.kind != "airline"):
+        if self.cfg.layout == "A":
             self._layout_a(img, fl, page, f, dots)
         else:
-            self._layout_c(img, fl, page, logo, f, dots)
+            self._layout_c(img, fl, page, self.logos.get(fl.airline_iata, fl.airline_icao), f, dots)
 
     def new_year(self, now: float) -> bool:
         """Mitternacht an Neujahr: ein paar Minuten Feuerwerk, vor Flügen und in der Ruhezeit."""
@@ -219,10 +213,10 @@ class Renderer:
     # ------------------------------------------------------------ Layouts --
     def _layout_c(self, img: Image.Image, fl: Flight, page: int, logo: Image.Image | None, f: float,
                   dots=()) -> None:
-        """logo None: der Platzhalter."""
+        """logo None: ein graues Symbol, Flugzeug bei Airlines, sonst Kleinflugzeug oder Hubschrauber."""
         side = LOGO_WITH_DOTS if dots else LOGO_COL     # mit Himmelspunkten darunter kleiner
         if logo is None:
-            logo = placeholder_logo(side)
+            logo = type_icon(fl, side)
         if f < 1.0:
             logo = Image.eval(logo, lambda v: int(v * f))
         if logo.size != (side, side):

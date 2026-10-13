@@ -19,7 +19,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | | |
 |---|---|
 | ![Flug mit Logo, landet in ~4 min, drei Himmelspunkte](images/flight-logo.png)<br>Flug, Layout C: Landezeit, Himmelspunkte in Landefolge | ![Derselbe Flug, nächste Infoseite](images/flight-alt.png)<br>nächste Infoseite: Höhe, sinkend, Tempo |
-| ![Flug ohne Logo, graues Flugzeug als Platzhalter](images/flight-nologo.png)<br>im selben Wechsel ein Start ohne Logo: Platzhalter, die Punkte bleiben stehen | ![Luftrettung](images/private.png)<br>`private`: Rettungshubschrauber im Sichtfeld |
+| ![Flug ohne Logo, graues Flugzeug als Platzhalter](images/flight-nologo.png)<br>im selben Wechsel ein Start ohne Logo: Platzhalter, die Punkte bleiben stehen | ![Rettungshubschrauber mit Hubschrauber-Symbol statt Logo](images/private.png)<br>Privatflieger in der Rotation: Hubschrauber-Symbol statt Logo |
 | ![Abflüge am BER](images/departures.png)<br>`departures` | ![Landungen am BER](images/arrivals.png)<br>`arrivals` |
 | ![Nächster Flieger](images/next.png)<br>`next`: Zeit bis zum Sichtfeld und Seite des Fensters | ![Radar](images/radar.png)<br>`radar`: Sichtfeld als Band in der Mitte |
 | ![Landerichtung](images/runway.png)<br>`runway` | ![Wetter](images/weather.png)<br>`weather` |
@@ -32,11 +32,10 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | Stufe | Karte | zeigt | wann |
 |---|---|---|---|
 | **0 Notfall** | `alert` | Squawk und Bedeutung, Callsign, Typ, wo, ob im Blick | Squawk 7700/7600/7500 im Abrufradius, vor allem anderen, auch vor Flügen |
-| **1 Im Sichtfeld** | Flug (Layout C/A/B) | Airline, Route, Typ, wechselnd Landezeit, Höhe und Tempo, Entfernung und Kurs, Rufzeichen; Himmelspunkte in Landefolge | Airline im Sichtfeld oder fliegt bis zum nächsten Abruf hinein |
+| **1 Im Sichtfeld** | Flug (Layout C/A/B) | Airline oder Privatflieger (ohne Logo ein graues Symbol: Flugzeug, Kleinflugzeug, Hubschrauber), Route, Typ, wechselnd Landezeit, Höhe und Tempo, Entfernung und Kurs, Rufzeichen; Himmelspunkte in Landefolge | im Sichtfeld oder fliegt bis zum nächsten Abruf hinein. Reicht `MAX_FLIGHTS` nicht: Landungen und Starts hier vor Überflügen, jeweils Airlines zuerst |
 | **2 Verkehr am Platz** | `departures` | "↑ Abflug BER", Piste; bis zu zwei Flüge mit Ziel und "rollt" / "startet" / "vor 2 min" | am Boden mit Route ab hier (rollt ab 5 kt, startet ab 40 kt), oder in der Luft unter 3000 m, steigend, vom Platz weg, vor höchstens ~5 min gestartet |
 | | `arrivals` | "↓ Landung BER", Piste; die nächsten zwei mit Herkunft und "~4 min" | in der Landefolge, landet in den nächsten 15 min |
 | | `next` | nächster Flieger: "Sichtbar in ~3 min" (Zeit bis zum Sichtfeld, nicht bis zur Landung), Seite des Fensters (← →) | kommt in 15 s bis 10 min ins Sichtfeld, unter 3 min dringend; Landende über den Endanflug gerechnet |
-| | `private` | Privatflieger, Hubschrauber, Polizei, Militär wie ein Flug | im Sichtfeld und keine Airline zu sehen |
 | | `runway_change` | Pistenwechsel, was er fürs Fenster heißt | bis 1 h nach einem Wechsel (drei Abrufe in Folge bestätigt) |
 | **3 Wenig los** | `radar` | Rundumblick, Sichtfeld als Band, Punkte nach Richtung und Höhenwinkel; der nächste blinkt | Flugzeuge im Radius |
 | | `runway` | "BER landet auf 25", Wind, ob Landungen oder Starts durchs Sichtfeld kommen | Landerichtung seit 30 min stabil, in den letzten 2 h bestätigt, laut METAR kein Rückenwind |
@@ -60,7 +59,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 
 1. **Gar nichts los**: seit 15 Minuten kein Start und keine Landung am Platz, und in den nächsten 10 Minuten landet keiner. Erst dann kommen Spielereien. Start = ein Flug in der Abflug-Liste, Landung = Landezeit unter 90 s; der Server merkt sich die letzte Bewegung (`last_airport_move`).
 2. **Abflug und Landung** als eigene Karten in Stufe 2. Am Boden zählt als Abflug nur, wer laut Route hier abfliegt: Rollen nach der Landung sähe sonst genauso aus.
-3. **Privatflieger, Hubschrauber, Polizei, Militär** als Karte in Stufe 2, nicht als Flug in Stufe 1.
+3. **Privatflieger, Hubschrauber, Polizei, Militär** als Karte in Stufe 2, nicht als Flug in Stufe 1 (seit 13. Oktober anders, siehe 10.).
 4. **Saison-Karten** in Stufe 3: an ihren Tagen auch, wenn etwas los ist, aber nach Flügen und Verkehr am Platz.
 5. **Radar** in Stufe 3 statt 2: Es hat fast immer etwas zu zeigen und hätte Stufe 3 sonst tagsüber nie drangelassen.
 6. **Alles abschaltbar** (`CARD_<ID>=0`), und der **ruhige Modus** (`CALM=1`) für weniger Unruhe: kein Blinken außer beim Notfall, seltener Wechsel, nur Landezeit und Höhe/Tempo.
@@ -70,3 +69,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 
 8. **Keine Witze und keine Berlin-Spielereien** (Verspätungsgründe des BER, Tegel, BER-Eröffnung): Sie passen nicht zum Panel. Mit `data/jokes.json` sind auch die Jahrestage darin weg. Als Spielereien bleiben Flugzeug und Taube.
 9. **Feuerwerk nur an Neujahr**: um 0 Uhr fünf Minuten vor allem außer einem Notfall, auch vor Flügen und in der Ruhezeit; danach den Tag über in der Rotation. An Silvester nicht.
+
+13. Oktober 2026:
+
+10. **Privatflieger in die Rotation**, im selben Layout wie Airlines, ohne Logo mit grauem Symbol: Kleinflugzeug oder Hubschrauber. Reicht `MAX_FLIGHTS` nicht: Airlines, die hier landen oder starten; Privatflieger, die das tun; Airline-Überflüge; Privat-Überflüge. Die Karte `private` entfällt. Anlass: Eine Citation von Aerowest im Anflug auf den BER lief nur in der Leerlauf-Karte mit.
