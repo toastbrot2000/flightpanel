@@ -61,7 +61,8 @@ Bei jedem Abruf ordnet der Server alle Flugzeuge im Radius:
 
 1. **Sichtfeld zuerst.** Zählt auch, wer bis zum nächsten Abruf hineinfliegt (aus Tempo, Kurs und Steigrate weitergerechnet), sonst wären Anflüge schon durch, bevor sie auf dem Panel stehen.
 2. **Airlines vor dem Rest.** Linien-, Charter- und Frachtflüge zählen als Airline. Privatflieger, Hubschrauber, Polizei und Militär (`"airline": false` in `data/airlines.json`) kommen nur dran, wenn keine Airline zu sehen ist, dann als Leerlauf-Karte; `SHOW_OTHER=0` blendet sie aus.
-3. **Landefolge, dann kürzeste Sichtlinie.** Wer als nächstes landet, kommt zuerst. Die Landefolge schätzt der Server aus der Reststrecke bis zur Piste: im Endanflug die Entfernung, im Gegenanflug weiter bis zum Eindrehen und den ganzen Endanflug zurück, im Queranflug quer zur Achse plus Rest. Die Landerichtung erkennt er am Verkehr in Platznähe.
+3. **Wer hier landet oder startet, vor Überflügen.** Sind mehr im Sichtfeld, als `MAX_FLIGHTS` zulässt, fallen zuerst die Überflüge weg. Landen und Starten erkennt der Server an der Landefolge, an der Route oder, ohne Route, an Höhe und Steigrate.
+4. **Landefolge, dann kürzeste Sichtlinie.** Wer als nächstes landet, kommt zuerst. Die Landefolge schätzt der Server aus der Reststrecke bis zur Piste: im Endanflug die Entfernung, im Gegenanflug weiter bis zum Eindrehen und den ganzen Endanflug zurück, im Queranflug quer zur Achse plus Rest. Die Landerichtung erkennt er am Verkehr in Platznähe.
 
 Bis zu `MAX_FLIGHTS` Flüge wechseln sich ab, jeder mit allen Infoseiten, mindestens `FLIGHT_SECONDS`.
 

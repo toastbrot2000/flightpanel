@@ -97,6 +97,23 @@ def test_find_alert():
     assert find_alert(cfg, states[2:], NAMES) is None
 
 
+def test_flights_landing_or_starting_here_go_first():
+    """Mehr im Sichtfeld als MAX_FLIGHTS: Wer hier landet oder startet, geht vor
+    Überflügen, auch wenn die näher sind. Mit Platz bleiben die Überflüge dabei."""
+    def at(bearing, km, **kw):
+        lat, lon = destination(52.52, 13.40, bearing, km)
+        return state(lat=lat, lon=lon, **kw)
+
+    states = [at(0, 3, icao="o1", cs="UAE45", alt=5000), at(270, 4, icao="o2", cs="UAE46", alt=5000),
+              at(160, 12, icao="dep", cs="EZY1234", alt=1500, vrate=10),
+              at(200, 14, icao="arr", cs="DLH4AB", alt=1000, vrate=-4)]
+    adsb = FakeAdsb({"EZY1234": {"origin": "BER", "dest": "LGW"}, "DLH4AB": {"origin": "MUC", "dest": "BER"}})
+    m = asyncio.run(build_model(make_cfg(max_flights=2), states, adsb, NAMES, horizon_s=20))
+    assert {f.callsign for f in m.flights} == {"EZY1234", "DLH4AB"}
+    roomy = asyncio.run(build_model(make_cfg(max_flights=4), states, adsb, NAMES, horizon_s=20))
+    assert len(roomy.flights) == 4
+
+
 def test_build_model_idle_fields():
     cfg = make_cfg(view_from=250, view_to=290, view_min_elev=5, view_max_km=40)
     lat, lon = destination(52.52, 13.40, 90, 20)
