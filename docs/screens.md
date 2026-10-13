@@ -42,7 +42,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | | `weather` | warum der Himmel leer ist: Gewitter, Nebel, tiefe Wolken, Schnee; wie viele darüber fliegen | METAR erklärt es: Gewitter, Schnee; Nebel (Sicht unter 2 km), wenn jemand fliegt; Wolken unter 1500 m, wenn jemand darüber fliegt |
 | | `curfew` | Nachtflugverbot bis … | `CURFEW_HOURS` (BER 0 bis 5 Uhr), wenn `QUIET_HOURS` das Panel dann nicht abschaltet |
 | | `scoreboard` | Tagesstatistik: Flieger im Umkreis, "davon 38 im Fenster" (durchs Sichtfeld); unten im Takt der Infoseiten Airlines und der höchste | ab 10 Flugzeugen am Tag |
-| | `pokedex` | Sammelalbum: gesehene Marken aus `airlines.json`, dazu Exoten | ab der ersten Airline |
+| | `pokedex` | Sammelalbum: gesehene Marken aus `airlines.json` (ohne Kleinbetriebe mit `"album": false`), dazu Exoten | ab der ersten Airline |
 | | `new` | "NEU!" mit Logo | Airline zum ersten Mal gesehen, nicht in den ersten 6 h nach dem ersten Start |
 | | `rare` | "Weit weg, aber selten: A380 Emirates, 70 km SO", "Hoher Besuch: Katar" | Typ aus `data/rare.json` oder Regierung/Militär (`airlines.json`, label Militär oder Regierungsflug, dazu AF1, SAM, NATO aus `rare.json`) im Abrufradius |
 | | `quiet` | Flaute und Tagesrekord | ab 10 min ohne Flugzeug im Sichtfeld; nach einer Abruflücke beginnt die Uhr neu |

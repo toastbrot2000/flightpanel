@@ -88,7 +88,7 @@ def new_draw(img, ctx, d, t_in, f):
     innerhalb wie beim Notfall: 3 px vom Rand links und rechts, oben und unten frei."""
     W = img.width
     logo = None
-    if ctx.logos is not None and d.get("known"):
+    if ctx.logos is not None and d.get("code", "") in ctx.names:          # auch Kleinbetriebe mit eigenem Logo
         n = ctx.names.get(d.get("code", ""), {})
         logo = ctx.logos.get(n.get("iata", ""), d.get("code", ""))
     if logo is not None:

@@ -28,11 +28,13 @@ def load_airlines(data_dir: str) -> dict[str, dict]:
     -> FR); leer, wenn der IATA-Code doppelt vergeben ist, dann Logo per ICAO.
     airline false: Rettung, Polizei, Militär, mit label (Luftrettung) und number
     (CHX31 -> Christoph 31). adsbdb: der Name, unter dem adsbdb den Code führt, wenn
-    er veraltet ist oder anders lautet; geprüft, /issues meldet ihn nicht mehr."""
+    er veraltet ist oder anders lautet; geprüft, /issues meldet ihn nicht mehr. album false:
+    Kleinbetrieb (CPH AirTaxi), Name und Logo ja, im Sammelalbum aber nur ein Exot."""
     raw = read_json(os.path.join(data_dir, "airlines.json")) or {}
     return {code.upper(): {"name": v.get("name", ""), "iata": (v.get("iata") or "").upper(),
                            "airline": bool(v.get("airline", True)), "label": v.get("label", ""),
-                           "number": bool(v.get("number", False)), "adsbdb": v.get("adsbdb", "")}
+                           "number": bool(v.get("number", False)), "adsbdb": v.get("adsbdb", ""),
+                           "album": bool(v.get("album", True))}
             for code, v in raw.items() if not code.startswith("_")}
 
 

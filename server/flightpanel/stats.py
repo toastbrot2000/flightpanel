@@ -97,8 +97,14 @@ class Stats:
             e = self.dex.pop(code)
             b = self.brand(code)
             if b is not None:
-                self.dex.setdefault(b[0], {**e, "name": b[1], "known": True})
+                self.dex.setdefault(b[0], {**e, "name": b[1], "known": b[2]})
             self.dirty = True
+        # Marken, die nicht mehr im Album stehen (album false), zählen ab jetzt als Exot
+        small = {n["name"] for n in self.names.values() if n["airline"] and not n.get("album", True)}
+        for e in self.dex.values():
+            if e.get("known") and e["name"] in small:
+                e["known"] = False
+                self.dirty = True
 
     def to_dict(self) -> dict:
         d = {**self.day, **{k: sorted(self.day[k]) for k in ("aircraft", "airlines", "shown")}}
@@ -120,7 +126,7 @@ class Stats:
             if not n["airline"]:
                 return None
             name = n["name"] or code
-            return name, name, True
+            return name, name, n.get("album", True)        # album false: Kleinbetrieb, zählt als Exot
         return code, code, False
 
     def observe(self, states: list[State], model: DisplayModel, now: float) -> list[str]:
@@ -228,7 +234,7 @@ class Stats:
                 "max_alt_callsign": d["max_alt_callsign"], "quiet_record_s": d["quiet_record_s"]}
 
     def dex_total(self) -> int:
-        return len({n["name"] for n in self.names.values() if n["airline"] and n["name"]})
+        return len({n["name"] for n in self.names.values() if n["airline"] and n.get("album", True) and n["name"]})
 
     def dex_count(self) -> tuple[int, int, int]:
         """(gesehene Marken aus airlines.json, Marken in airlines.json, unbekannte Extras)"""

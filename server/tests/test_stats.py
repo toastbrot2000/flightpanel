@@ -138,3 +138,22 @@ def test_high_visits_come_from_airlines_json():
     assert rare_match(rare, "QAF1", "A319") == ("Katar", "gov")
     assert rare_match(rare, "UAE45", "A388") == ("A380", "type")
     assert rare_match(rare, "DLH4AB", "A320") == ("", "")
+
+
+def test_small_operators_are_exotics_not_album(tmp_path):
+    """album false (CPH AirTaxi): Name ja, aber nicht in "Nr. x von y"; nur mit großem
+    Flugzeug ein Exot. Ein alter Album-Eintrag wird beim Laden zum Exoten."""
+    names = {**NAMES, "CAT": {"name": "CPH AirTaxi", "iata": "", "airline": True, "album": False}}
+    st = Stats(str(tmp_path / "stats.json"), make_cfg(), names, RARE)
+    t = ts(2026, 10, 10, 12, 0)
+    st.since = t - 7 * 3600
+    assert st.observe([state(icao="s", cs="CAT12", category="A1")], DisplayModel(), t) == []    # klein: gar nicht
+    assert st.observe([state(icao="b", cs="CAT13", category="A3")], DisplayModel(), t + 60) == ["CAT"]
+    e = st.newest(t + 70, 120)
+    assert e["name"] == "CPH AirTaxi" and not e["known"]
+    assert st.dex_count() == (0, 3, 1)
+    st.dex["CPH AirTaxi"]["known"] = True                  # Stand von vorher
+    st.dex["Lufthansa"] = {"first": t, "code": "DLH", "name": "Lufthansa", "known": True}
+    st.save()
+    again = Stats(str(tmp_path / "stats.json"), make_cfg(), names, RARE)
+    assert again.dex_count() == (1, 3, 1)
