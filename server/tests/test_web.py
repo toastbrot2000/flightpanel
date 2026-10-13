@@ -12,6 +12,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from conftest import FakeAdsb, make_cfg, state
 from flightpanel.main import App
 from flightpanel.mock import mock_model
+from flightpanel.model import DisplayModel, Flight
 from flightpanel.web import make_web_app
 
 
@@ -107,6 +108,29 @@ def test_new_year_midnight_lights_up_the_panel(tmp_path, monkeypatch):
             await app.session.close()
 
     asyncio.run(run())
+
+
+def test_preview_with_another_layout_shows_the_panels_flight(tmp_path, monkeypatch):
+    """Die Vorschau mit ?layout= zeigt denselben Flug wie das Panel, statt von vorn zu zählen."""
+    async def run():
+        cfg = make_cfg(data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False, quiet_hours=(0, 0),
+                       page_seconds=4, flight_seconds=0, info_pages=("alt", "dist"))     # 8 s pro Flug
+        app = App(cfg)
+        a = Flight(icao24="a", callsign="EZY1", status="OVF", dist_km=5, bearing=150, alt_ft=2500, speed_kt=100,
+                   track=250, vrate_fpm=0)
+        app.model = DisplayModel(source="test", flights=[a, replace(a, icao24="b", callsign="EZY2", bearing=160)])
+        client = TestClient(TestServer(make_web_app(app)))
+        await client.start_server()
+        try:
+            for when in (1000.0, 1009.0):                                  # dann ist der zweite dran
+                monkeypatch.setattr("flightpanel.web.time", SimpleNamespace(time=lambda w=when: w))
+                panel = await (await client.get("/frame.png")).read()
+            return panel == await (await client.get("/frame.png?layout=C")).read()
+        finally:
+            await client.close()
+            await app.session.close()
+
+    assert asyncio.run(run())
 
 
 def test_unknown_operators_in_the_album_get_their_operator_name(tmp_path):

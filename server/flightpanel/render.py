@@ -14,10 +14,11 @@ Layouts für Flüge (LAYOUT in .env):
   B    zwei Flüge, je eine Zeile
 
 Bei mehreren Flügen wechseln A und C nach jedem Durchlauf der Infozeilen zum
-nächsten Flug, Landende in Landefolge zuerst. Sind mindestens zwei im Sichtfeld,
-zeigen Himmelspunkte, welcher gerade dran ist."""
+nächsten Flug, in der Reihenfolge der Himmelspunkte: Landende in Landefolge zuerst.
+Sind mindestens zwei im Sichtfeld, zeigen die Punkte, welcher gerade dran ist."""
 
 import io
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from PIL import Image
@@ -91,12 +92,23 @@ def type_width(fl: Flight, line2: str, avail: int) -> int:
     return tw if FONT_MID.text_width(line2) + tw <= avail else 0
 
 
+@dataclass
+class Rotation:
+    """Welcher Flug im Wechsel gerade dran ist, seit wann und in welcher Reihenfolge.
+    Panel und Vorschau mit anderem Layout teilen sich eine und zeigen denselben Flug."""
+    shown: str = ""                                        # icao24
+    since: float = 0.0
+    order: list[str] = field(default_factory=list)
+
+
 class Renderer:
-    def __init__(self, cfg: Config, logos: LogoStore, idle: IdleScreen | None = None):
+    def __init__(self, cfg: Config, logos: LogoStore, idle: IdleScreen | None = None,
+                 rotation: Rotation | None = None):
         self.cfg = cfg
         self.logos = logos
         self._grid_cache: dict[int, Image.Image] = {}
         self.idle = idle if idle is not None else IdleScreen(cfg, CARDS, logos=logos)
+        self.rotation = rotation if rotation is not None else Rotation()
 
     # ---------------------------------------------------------------- API --
     def render(self, model: DisplayModel, now: float, card: str | None = None) -> Image.Image:
@@ -175,14 +187,30 @@ class Renderer:
     def _pick(self, model: DisplayModel, now: float) -> tuple[Flight, int]:
         """Welcher Flug und welche Infoseite gerade dran ist: Jeder Flug zeigt jede
         Infoseite einmal (die Landezeit nur, wenn einer landet), mindestens aber
-        FLIGHT_SECONDS lang."""
+        FLIGHT_SECONDS lang, dann kommt der nächste in der Reihenfolge der
+        Himmelspunkte. Ändert sich die Liste (der vordere landet), behält der gezeigte
+        trotzdem seine volle Zeit; ist er selbst weg, kommt gleich sein Nachfolger."""
         which = self.cfg.info_pages
         landing = any(fl.land_eta_s is not None for fl in model.flights)
         n_pages = max(1, len(which) - ("eta" in which and not landing))
         ps = self.cfg.page_seconds
         per_flight = max(n_pages * ps, self.cfg.flight_seconds)
-        idx = int(now // per_flight) % len(model.flights)
-        return model.flights[idx], int(now % per_flight // ps) % n_pages
+        flights = sorted(model.flights, key=self._reading_order)
+        keys = [fl.icao24 for fl in flights]
+        rot = self.rotation
+        if rot.shown in keys:
+            i = keys.index(rot.shown)
+            if now >= rot.since + per_flight:                       # Zeit um: der nächste
+                i, rot.since = (i + 1) % len(keys), now
+        else:                                                       # neu, oder er ist weg
+            later = rot.order[rot.order.index(rot.shown) + 1:] if rot.shown in rot.order else []
+            i, rot.since = next((keys.index(k) for k in later if k in keys), 0), now
+        rot.shown, rot.order = keys[i], keys
+        return flights[i], int(max(0.0, now - rot.since) // ps) % n_pages
+
+    def _reading_order(self, f: Flight) -> tuple:
+        """Reihenfolge der Himmelspunkte und des Wechsels, siehe _sky_dots."""
+        return f.seq is None, f.seq or 0, (f.bearing - self.cfg.view_from) % 360
 
     def _sky_dots(self, model: DisplayModel, fl: Flight) -> list[tuple[tuple[int, int, int], bool]]:
         """(Statusfarbe, ist der gezeigte Flug) für jeden Flug im Wechsel, der im
@@ -192,8 +220,7 @@ class Renderer:
         dieser Geometrie zu sortieren war nicht intuitiv.) Nur Flüge, die das Panel
         auch zeigt: Jeder Punkt leuchtet irgendwann. Leer bei weniger als zwei oder
         wenn der gezeigte Flug nicht im Sichtfeld ist."""
-        seen = sorted((f for f in model.flights if f.visible),
-                      key=lambda f: (f.seq is None, f.seq or 0, (f.bearing - self.cfg.view_from) % 360))
+        seen = sorted((f for f in model.flights if f.visible), key=self._reading_order)
         idx = next((i for i, f in enumerate(seen) if f is fl), None)
         if len(seen) < 2 or idx is None:
             return []

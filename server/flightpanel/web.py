@@ -83,7 +83,8 @@ class _Handlers:
 
     def _render(self, layout: str | None = None, card: str | None = None) -> Image.Image:
         p = self.panel
-        r = Renderer(replace(p.cfg, layout=layout), p.logos, idle=p.idle) if layout else p.renderer
+        r = (Renderer(replace(p.cfg, layout=layout), p.logos, idle=p.idle, rotation=p.renderer.rotation)
+             if layout else p.renderer)
         return r.render(p.model, time.time(), card=card or None)
 
     @staticmethod

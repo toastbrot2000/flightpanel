@@ -359,6 +359,58 @@ def test_calm_info_pages_and_rotation():
     assert {r._pick(only_over, t0 + s)[1] for s in range(0, 40, 5)} == {0}   # eine Seite, steht still
 
 
+def _landings(n):
+    return [replace(fl(icao=f"f{k}"), callsign=f"EZY{k}", status="ARR", seq=k, land_eta_s=60 * k)
+            for k in range(1, n + 1)]
+
+
+def _shown(r, lists, t0, until, step=2):
+    """(Callsign, Seite) alle step Sekunden bis until; lists: [(ab Sekunde, Flüge), ...]."""
+    out = []
+    for s in range(0, until, step):
+        flights = next(f for start, f in reversed(lists) if s >= start)
+        shown, page = r._pick(DisplayModel(source="test", flights=flights), t0 + s)
+        out.append((shown.callsign, page))
+    return out
+
+
+def test_rotation_keeps_the_shown_flight_when_the_list_moves_up():
+    """Landet der vordere Flug oder verschwindet er hinter dem Gebäude, rückt der gezeigte
+    in der Liste nach vorn. Er behält trotzdem seine volle Zeit, danach kommt der nächste
+    (13.10.2026: das Panel sprang mitten drin zum übernächsten)."""
+    a, b, c = _landings(3)
+    r = _renderer(make_cfg(page_seconds=4, flight_seconds=0, info_pages=("eta", "alt")))     # 8 s pro Flug
+    t0 = ts(2026, 10, 10, 15, 0) // 48 * 48
+    shown = _shown(r, [(0, [a, b, c]), (10, [b, c])], t0, until=24)         # bei 10 s ist a weg
+    assert shown == [(cs, p) for cs in ("EZY1", "EZY2", "EZY3") for p in (0, 0, 1, 1)]
+
+
+def test_rotation_moves_on_when_the_shown_flight_leaves():
+    """Verschwindet der gezeigte Flug selbst, kommt gleich der, der auf ihn folgte, mit
+    voller Zeit."""
+    a, b, c = _landings(3)
+    r = _renderer(make_cfg(page_seconds=4, flight_seconds=0, info_pages=("eta", "alt")))
+    t0 = ts(2026, 10, 10, 15, 0) // 48 * 48
+    shown = [cs for cs, _ in _shown(r, [(0, [a, b, c]), (10, [a, c])], t0, until=26)]   # bei 10 s ist b weg
+    assert shown == ["EZY1"] * 4 + ["EZY2"] + ["EZY3"] * 4 + ["EZY1"] * 4
+
+
+def test_rotation_follows_the_dots():
+    """Starts und Überflüge kommen in der Reihenfolge der Punkte dran (nach Richtung im
+    Sichtfeld), nicht nach Rang: Der leuchtende Punkt wandert von links nach rechts."""
+    cfg = make_cfg(view_from=110, view_to=179, page_seconds=4, flight_seconds=0, info_pages=("alt", "dist"))
+    by_rank = [replace(fl(icao=i), callsign=f"EZY{i}", bearing=b, dist_km=d)
+               for i, b, d in (("1", 170, 5), ("2", 150, 10), ("3", 120, 20))]     # nächster zuerst
+    m = DisplayModel(source="test", flights=by_rank)
+    r = _renderer(cfg)
+    t0 = ts(2026, 10, 10, 15, 0) // 24 * 24
+    lit = []
+    for s in range(0, 24, 8):                                                  # 8 s pro Flug
+        shown, _ = r._pick(m, t0 + s)
+        lit.append([on for _, on in r._sky_dots(m, shown)].index(True))
+    assert lit == [0, 1, 2]
+
+
 def test_calm_mode_does_not_blink_except_emergencies():
     t = ts(2026, 10, 10, 15, 0)
     m = DisplayModel(source="test", generated_at=t, upcoming=fl(), upcoming_eta_s=40, upcoming_az=150)
