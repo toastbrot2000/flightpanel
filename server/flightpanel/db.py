@@ -15,9 +15,11 @@ Server und panels.py, die gleichzeitig eine neue Datei öffnen, nichts doppelt.
 WAL, damit panels.py schreiben kann, während der Server läuft; geht das nicht
 (Netzlaufwerk), tut es das normale Journal auch. Nur eine Datei, die SQLite für keine
 Datenbank hält oder die beschädigt ist, wird als .broken beiseitegelegt, der Server startet
-dann leer statt gar nicht. Bei allem anderen (gesperrt, Ein-/Ausgabefehler, scheiternde
-Migration) bleibt die Datei liegen und der Start schlägt laut fehl: lieber kein Server als
-ein stillschweigend leeres Album."""
+dann leer statt gar nicht. Das tut nur der Server (put_aside=True). Werkzeuge, die neben ihm
+laufen (panels.py, fetch_logos.py), übergeben put_aside=False und brechen mit dem Fehler ab:
+Der Server hat die Datei noch offen und schriebe sonst in die umbenannte weiter. Bei allem
+anderen (gesperrt, Ein-/Ausgabefehler, scheiternde Migration) bleibt die Datei liegen und
+der Start schlägt laut fehl: lieber kein Server als ein stillschweigend leeres Album."""
 
 import json
 import logging
@@ -96,14 +98,15 @@ PANEL_SELECT = ("SELECT id, name, settings, fw_channel, created, updated, stats_
 
 
 class Db:
-    def __init__(self, path: str):
+    def __init__(self, path: str, put_aside: bool = True):
         self.path = path
         try:
             self.conn = self._connect()
         except sqlite3.DatabaseError as e:
-            # Nur eine Datei, die keine Datenbank oder beschädigt ist, kommt beiseite. Gesperrt, Ein-/Ausgabefehler
-            # oder eine scheiternde Migration sagen nichts über die Datei: laut scheitern, nichts verschieben.
-            if _code(e) not in (sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CORRUPT):
+            # Nur der Server (put_aside) legt eine Datei beiseite, und nur eine, die keine Datenbank oder beschädigt
+            # ist. Gesperrt, Ein-/Ausgabefehler oder eine scheiternde Migration sagen nichts über die Datei: laut
+            # scheitern, nichts verschieben. Ein Werkzeug daneben würde dem Server die offene Datei umbenennen.
+            if not put_aside or _code(e) not in (sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CORRUPT):
                 raise
             broken = self.path + ".broken"
             log.error("%s ist keine lesbare Datenbank (%s): liegt jetzt als %s beiseite, starte leer",

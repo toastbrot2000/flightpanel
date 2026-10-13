@@ -40,6 +40,18 @@ def test_broken_file_is_put_aside(tmp_path, caplog):
     assert db.state_get("k") == 1
 
 
+def test_tools_leave_a_broken_file_alone(tmp_path):
+    """panels.py und fetch_logos.py laufen neben dem Server, der die Datei noch offen hat: Sie legen nichts beiseite,
+    sondern brechen mit dem Fehler ab. Sonst schriebe der Server in die umbenannte Datei, das Werkzeug in eine neue."""
+    path = tmp_path / "f.db"
+    text = "das ist keine Datenbank, nur Text " * 100
+    path.write_text(text)
+    with pytest.raises(Exception, match="not a database"):
+        Db(str(path), put_aside=False)
+    assert path.read_text() == text
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["f.db"]          # kein .broken, keine Reste daneben
+
+
 def test_a_failing_migration_leaves_the_file_alone(tmp_path, monkeypatch):
     """Scheitert eine Migration, bleibt die Datei liegen und der Start schlägt laut fehl, statt leer zu starten."""
     path = str(tmp_path / "f.db")
