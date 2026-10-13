@@ -25,7 +25,7 @@ from PIL import Image
 
 from .aircraft import second_line, shown_elsewhere
 from .cards import CARDS, fun
-from .colors import CLOCK, INFO, MUTED, dim
+from .colors import CLOCK, GOLD, INFO, MUTED, dim
 from .config import INFO_PAGES, Config
 from .draw import ROW1, ROW2, ROW3, STATUS_COLORS, headline, line, right, status_glyph
 from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
@@ -43,6 +43,7 @@ STALE_FACTOR = 0.4      # so hell bei alten Daten
 # Dann wird das Logo kleiner.
 DOT, DOT_PITCH, MAX_DOTS = 3, 5, 6
 DOT_DIM = 0.3
+RARE_DOT_DIM = 0.6          # goldener Punkt (selten) heller, sonst abgedunkelt wie Amber
 LOGO_COL = 32           # Logospalte, Logo bündig in der Ecke
 LOGO_WITH_DOTS = 28     # mit Himmelspunkten darunter (3 px Punkte, 1 px Abstand)
 
@@ -219,18 +220,18 @@ class Renderer:
         Sichtfeld. (Vom Fenster aus gesehen landet oft der rechteste zuerst; nach
         dieser Geometrie zu sortieren war nicht intuitiv.) Nur Flüge, die das Panel
         auch zeigt: Jeder Punkt leuchtet irgendwann. Leer bei weniger als zwei oder
-        wenn der gezeigte Flug nicht im Sichtfeld ist."""
+        wenn der gezeigte Flug nicht im Sichtfeld ist. Seltene (Flight.rare) in Gold."""
         seen = sorted((f for f in model.flights if f.visible), key=self._reading_order)
         idx = next((i for i, f in enumerate(seen) if f is fl), None)
         if len(seen) < 2 or idx is None:
             return []
         lo = max(0, min(idx - MAX_DOTS // 2, len(seen) - MAX_DOTS))   # Fenster um den gezeigten
-        return [(STATUS_COLORS[f.status], f is fl) for f in seen[lo:lo + MAX_DOTS]]
+        return [(GOLD if f.rare else STATUS_COLORS[f.status], f is fl) for f in seen[lo:lo + MAX_DOTS]]
 
     @staticmethod
     def _draw_dots(img: Image.Image, x: int, y: int, dots, f: float) -> None:
         for i, (col, lit) in enumerate(dots):
-            c = dim(col, f if lit else f * DOT_DIM)
+            c = dim(col, f if lit else f * (RARE_DOT_DIM if col == GOLD else DOT_DIM))
             img.paste(c, (x + i * DOT_PITCH, y, x + i * DOT_PITCH + DOT, y + DOT))
 
     @staticmethod

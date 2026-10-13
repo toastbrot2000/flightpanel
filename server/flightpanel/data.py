@@ -48,8 +48,27 @@ def load_airports(data_dir: str) -> list[Airport]:
     return out
 
 
-def load_rare(data_dir: str) -> dict[str, dict[str, str]]:
-    """{"types": {"A388": "A380"}, "callsigns": {"GAF": "Luftwaffe"}}."""
+GOV_LABELS = ("Militär", "Regierungsflug")      # Betreiber aus airlines.json, die als "Hoher Besuch" gelten
+
+
+def load_rare(data_dir: str, names: dict[str, dict] | None = None) -> dict[str, dict[str, str]]:
+    """{"types": {"A388": "A380"}, "callsigns": {"GAF": "Luftwaffe"}}. Callsigns: jeder
+    Betreiber aus airlines.json mit label Militär oder Regierungsflug (unter seinem
+    Namen), dazu die Callsign-Anfänge aus rare.json ohne eigenen Eintrag dort (AF1, SAM)."""
     raw = read_json(os.path.join(data_dir, "rare.json")) or {}
-    return {part: {k.upper(): v for k, v in raw.get(part, {}).items() if not k.startswith("_")}
-            for part in ("types", "callsigns")}
+    out = {part: {k.upper(): v for k, v in raw.get(part, {}).items() if not k.startswith("_")}
+           for part in ("types", "callsigns")}
+    gov = {code: v["name"] for code, v in (names or {}).items() if not v["airline"] and v["label"] in GOV_LABELS}
+    out["callsigns"] = gov | out["callsigns"]
+    return out
+
+
+def rare_match(rare: dict[str, dict[str, str]], callsign: str, actype: str) -> tuple[str, str]:
+    """(Bezeichnung, "type" | "gov") für einen seltenen Typ oder Betreiber, sonst ("", "")."""
+    if actype and actype in rare["types"]:
+        return rare["types"][actype], "type"
+    cs = callsign or ""
+    for prefix, label in rare["callsigns"].items():
+        if cs.startswith(prefix):
+            return label, "gov"
+    return "", ""

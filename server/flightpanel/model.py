@@ -60,6 +60,7 @@ class Flight:
     label: str = ""             # ohne Airline: was es ist (Luftrettung, Kleinflugzeug ...)
     land_eta_s: int | None = None  # Landende: geschätzte Sekunden bis zum Aufsetzen
     rotorcraft: bool = False    # Hubschrauber: ohne Logo das Hubschrauber-Symbol
+    rare: bool = False          # seltener Typ oder Betreiber (data.load_rare): goldener Himmelspunkt
 
     @property
     def other_airport(self) -> str:

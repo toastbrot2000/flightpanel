@@ -9,7 +9,8 @@ from PIL import Image
 from conftest import NAMES, make_cfg, state
 from flightpanel.astro import Pass, sun_day
 from flightpanel.cards import CARDS, album, fun, runway, sky, traffic
-from flightpanel.draw import ROW2, ROW3
+from flightpanel.colors import GOLD
+from flightpanel.draw import ROW2, ROW3, STATUS_COLORS
 from flightpanel.idle import Ctx, IdleScreen
 from flightpanel.logos import LogoStore, make_logo_store
 from flightpanel.metar import MetarSource, parse
@@ -439,3 +440,19 @@ def test_radar_counts_only_planes_landing_here():
                                             {"az": 120, "elev": 2, "status": "ARR", "seq": 1},
                                             {"az": 140, "elev": 9, "status": "OVF", "seq": None}])
     assert traffic.radar_cond(ctx(model=m)).data == {"n": 3, "arr": 1}
+
+
+def test_high_visit_is_as_urgent_as_a_rare_type(tmp_path):
+    t = ts(2026, 10, 10, 15, 0)
+    st = Stats(str(tmp_path / "s.json"), make_cfg(), NAMES, {"types": {}, "callsigns": {"KRH": "UK Royal VIP"}})
+    st.observe([state(icao="vip", cs="KRH01", actype="A321", lat=52.0, lon=14.2, alt=9000)], DisplayModel(), t)
+    h = album.rare_cond(ctx(t + 10, stats=st))
+    assert h.urgent and h.data["kind"] == "gov"
+    assert album.rare_cond(ctx(t + 200, stats=st)).urgent is False
+
+
+def test_rare_flight_gets_a_gold_dot():
+    cfg = make_cfg()
+    plain, vip = fl(icao="a"), replace(fl(icao="b"), callsign="KRH01", rare=True, bearing=200)
+    dots = _renderer(cfg)._sky_dots(DisplayModel(source="test", flights=[plain, vip]), plain)
+    assert sorted(col for col, _ in dots) == sorted([GOLD, STATUS_COLORS[plain.status]])

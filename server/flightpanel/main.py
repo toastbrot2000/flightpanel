@@ -85,7 +85,8 @@ class App:
 
         # Anzeige
         self.logos = make_logo_store(cfg, self.session)
-        self.stats = Stats(os.path.join(data, "stats.json"), cfg, self.names, load_rare(data))
+        self.rare = load_rare(data, self.names)
+        self.stats = Stats(os.path.join(data, "stats.json"), cfg, self.names, self.rare)
         self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=self.metar, astro=self.iss, logos=self.logos,
                                names=self.names)
         self.renderer = Renderer(cfg, self.logos, idle=self.idle)
@@ -196,7 +197,7 @@ class App:
             self.model = await build_model(self.cfg, states, self.adsb, self.names,
                                            horizon_s=self.refresh_period(), prev_course=self.model.landing_course,
                                            issues=self.issues, adsbim=self.adsbim, origins=self.origins,
-                                           source=self.active_source, recent=self.recent)
+                                           source=self.active_source, recent=self.recent, rare=self.rare)
             self.counters[self.active_source] += 1
             if self.model.departures or any(a["eta_s"] <= LANDED_S for a in self.model.arrivals):
                 self.last_airport_move = t0

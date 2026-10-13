@@ -154,3 +154,11 @@ def test_build_model_idle_fields():
     assert near["in"]["eta_s"] == m.upcoming_eta_s and near["in"]["status"] in (ARR, "DEP", "OVF")
     assert m.course_votes == 0 and m.landing_course == 249
     assert math.isfinite(m.upcoming_az)
+
+
+def test_rare_flights_are_marked():
+    rare = {"types": {"A388": "A380"}, "callsigns": {"KRH": "UK Royal VIP"}}
+    states = [state(icao="vip", cs="KRH01", actype="A321"), state(icao="big", cs="UAE45", actype="A388", lat=52.62),
+              state(icao="ezy", cs="EZY1234", lat=52.58)]
+    m = asyncio.run(build_model(make_cfg(max_flights=4), states, FakeAdsb(), NAMES, rare=rare))
+    assert {f.icao24: f.rare for f in m.flights} == {"vip": True, "big": True, "ezy": False}

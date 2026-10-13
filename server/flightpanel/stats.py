@@ -6,8 +6,8 @@
               Unbekannte Betreiber zählen extra, wenn das Flugzeug groß ist.
   Flaute      seit wann kein Flug im Sichtfeld war. Eine Lücke im Abruf (Quiet
               Hours, Ausfall) startet die Uhr neu: Nachts ist keine Flaute.
-  Selten      Typen und Betreiber aus data/rare.json (A380, Antonov, Beluga,
-              Regierung, Militär), solange sie in der Nähe sind
+  Selten      Typen aus data/rare.json (A380, Antonov, Beluga), Regierung und
+              Militär (data.load_rare), solange sie in der Nähe sind
   Piste       Landerichtung und seit wann sie gilt, für die Pistenkarte und als
               Startwert nach einem Neustart
 
@@ -18,6 +18,7 @@ import time
 
 from .airlines import AIRLINER_CATEGORIES, callsign_airline
 from .config import Config
+from .data import rare_match
 from .geo import angle_diff
 from .model import DisplayModel, State
 from .storage import read_json, write_json
@@ -186,15 +187,7 @@ class Stats:
         self.day = _new_day(date)
 
     def _rare(self, s: State, now: float) -> None:
-        label, kind = "", ""
-        if s.actype and s.actype in self.rare_cfg["types"]:
-            label, kind = self.rare_cfg["types"][s.actype], "type"
-        else:
-            cs = s.callsign or ""
-            for prefix, lab in self.rare_cfg["callsigns"].items():
-                if cs.startswith(prefix):
-                    label, kind = lab, "gov"
-                    break
+        label, kind = rare_match(self.rare_cfg, s.callsign, s.actype)
         if not label:
             return
         alt = s.alt_m

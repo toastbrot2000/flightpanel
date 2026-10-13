@@ -13,7 +13,7 @@ from ..idle import Ctx, Hit
 from .common import in_cone
 
 NEW_URGENT_S = 120      # neue Airline: so lange dringend
-RARE_URGENT_S = 120     # seltener Typ: so lange dringend
+RARE_URGENT_S = 120     # seltener Typ oder hoher Besuch: so lange dringend
 QUIET_MIN_S = 600       # Flaute ab so vielen Sekunden ohne Flieger im Blick
 
 
@@ -118,7 +118,7 @@ def rare_cond(ctx: Ctx):
     if not hits:
         return None
     e = hits[0]
-    urgent = e["kind"] == "type" and ctx.now - e["first"] < RARE_URGENT_S
+    urgent = ctx.now - e["first"] < RARE_URGENT_S
     return Hit(e, urgent=urgent, weight=3)
 
 

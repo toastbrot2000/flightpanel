@@ -29,6 +29,7 @@ from .airport import (
     returning,
 )
 from .config import Config
+from .data import rare_match
 from .geo import FPM_PER_MS, FT_PER_M, KT_PER_MS, haversine_km
 from .issues import Issues
 from .model import ARR, DEP, OVF, DisplayModel, Flight, State
@@ -44,13 +45,15 @@ Candidate = tuple[State, Sighting, int]          # Flugzeug, Sichtung, Sichtbark
 
 async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, dict],
                       horizon_s: float = 0, prev_course: float | None = None, issues: Issues | None = None,
-                      adsbim=None, origins=None, source: str = "live", recent: Recent | None = None) -> DisplayModel:
+                      adsbim=None, origins=None, source: str = "live", recent: Recent | None = None,
+                      rare: dict | None = None) -> DisplayModel:
     """adsb: adsbdb.AdsbDb (Routen, Flugzeugtypen). names: data/airlines.json.
     horizon_s: Zeit bis zum nächsten Abruf, für die Sichtfeld-Vorschau.
     prev_course: Landerichtung vom letzten Abruf, falls gerade niemand landet.
     issues: sammelt Auffälligkeiten. adsbim, origins: weitere Routenquellen, optional.
-    recent: wer zuletzt hier landete oder startete, über Abrufe hinweg (airport.Recent)."""
-    b = _Builder(cfg, adsb, names, issues, origins, recent)
+    recent: wer zuletzt hier landete oder startete, über Abrufe hinweg (airport.Recent).
+    rare: seltene Typen und Betreiber (data.load_rare), für Flight.rare."""
+    b = _Builder(cfg, adsb, names, issues, origins, recent, rare)
     if adsbim is not None:
         # nur, wer eine Route brauchen kann, nicht der ganze Statistik-Abruf (SCAN_RADIUS_KM)
         b.im = await adsbim.routes([s for s in states if callsign_airline(s.callsign) and needs_route(cfg, s)])
@@ -183,13 +186,14 @@ class _Builder:
     """Was alle Schritte eines Abrufs brauchen: Quellen, Routen von adsb.im, Landefolge."""
 
     def __init__(self, cfg: Config, adsb, names: dict[str, dict], issues: Issues | None, origins,
-                 recent: Recent | None = None):
+                 recent: Recent | None = None, rare: dict | None = None):
         self.cfg = cfg
         self.adsb = adsb
         self.names = names
         self.issues = issues
         self.origins = origins
         self.recent = recent
+        self.rare = rare or {"types": {}, "callsigns": {}}
         self.im: dict[str, list] = {}        # Stationen von adsb.im, pro Callsign
         self.seq: dict[str, int] = {}        # icao24 -> Platz in der Landefolge
         self.etas: dict[str, float] = {}     # icao24 -> Sekunden bis zum Aufsetzen
@@ -334,6 +338,7 @@ class _Builder:
             label=label,
             rotorcraft=aircraft_class(s.category, s.registration or registration(s.callsign)) == "Hubschrauber",
             land_eta_s=round(self.etas[s.icao24]) if s.icao24 in self.etas else None,
+            rare=bool(rare_match(self.rare, s.callsign, s.actype or ac.get("type", ""))[0]),
         )
         if f.seq is not None and f.status != ARR:
             f.status = ARR          # in der Landefolge, auch wenn die Route nichts sagt

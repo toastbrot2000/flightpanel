@@ -2,7 +2,8 @@
 
 from datetime import datetime
 
-from conftest import NAMES, make_cfg, state
+from conftest import DATA, NAMES, make_cfg, state
+from flightpanel.data import load_airlines, load_rare, rare_match
 from flightpanel.model import DisplayModel, Flight
 from flightpanel.stats import Stats
 
@@ -124,3 +125,16 @@ def test_save_load_roundtrip_and_broken_file(tmp_path):
     (tmp_path / "stats.json").write_text("{kaputt", encoding="utf-8")
     broken = mk(tmp_path)
     assert broken.dex == {} and broken.course is None
+
+
+def test_high_visits_come_from_airlines_json():
+    """Hoher Besuch: Militär und Regierungsflug aus airlines.json, dazu die Sonderfälle
+    aus rare.json; Polizei und Rettung nicht."""
+    rare = load_rare(DATA, load_airlines(DATA))
+    cs = rare["callsigns"]
+    assert cs["GAF"] == "Luftwaffe" and cs["KRH"] == "UK Royal VIP" and cs["QAF"] == "Katar"
+    assert cs["AF1"] == "Air Force One" and cs["SAM"] == "US-Regierung"
+    assert "BPO" not in cs and "CHX" not in cs and "DLH" not in cs
+    assert rare_match(rare, "QAF1", "A319") == ("Katar", "gov")
+    assert rare_match(rare, "UAE45", "A388") == ("A380", "type")
+    assert rare_match(rare, "DLH4AB", "A320") == ("", "")

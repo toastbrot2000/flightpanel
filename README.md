@@ -71,7 +71,7 @@ Bis zu `MAX_FLIGHTS` Flüge wechseln sich ab, jeder mit allen Infoseiten, mindes
 
 ![Abflug ohne Logo: graues Flugzeug als Platzhalter, Eurowings, BER→PMI, A319; die Himmelspunkte stehen wie beim Flug mit Logo](docs/images/flight-nologo.png)
 
-**Himmelspunkte:** Sind mindestens zwei gezeigte Flugzeuge im Sichtfeld, steht unter dem (dann 28 × 28 kleinen) Logo eine Punktreihe, ein Punkt pro Flug in Lesereihenfolge: links der, der zuerst landet. Der Punkt des gezeigten Flugs leuchtet. In dieser Reihenfolge geht das Panel die Flüge durch, und jeder behält seine volle Zeit, auch wenn vor ihm einer landet oder das Sichtfeld verlässt.
+**Himmelspunkte:** Sind mindestens zwei gezeigte Flugzeuge im Sichtfeld, steht unter dem (dann 28 × 28 kleinen) Logo eine Punktreihe, ein Punkt pro Flug in Lesereihenfolge: links der, der zuerst landet. Der Punkt des gezeigten Flugs leuchtet. Seltene Typen und hoher Besuch (siehe Karte `rare`) haben einen goldenen Punkt statt der Statusfarbe. In dieser Reihenfolge geht das Panel die Flüge durch, und jeder behält seine volle Zeit, auch wenn vor ihm einer landet oder das Sichtfeld verlässt.
 
 **Grundsätze:** Nichts steht doppelt (das Rufzeichen fällt aus dem Wechsel, wenn es oben schon steht). Text wird nie so gekürzt, dass sich der Sinn ändert: erst kleinere Schrift, dann eine kürzere Fassung. Alle Pixel werden genutzt; Text am Rand sitzt auf der ersten oder letzten Spalte. Privatflieger heißen nach ihrem Kennzeichen (D-EHGB), Rettungshubschrauber nach ihrer Nummer (Christoph 31); Halternamen kommen nie aufs Panel. Lieber ein ehrliches `?` als eine falsche Herkunft.
 
