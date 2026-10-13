@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from aiohttp.test_utils import TestClient, TestServer
 
-from conftest import make_cfg
+from conftest import FakeAdsb, make_cfg, state
 from flightpanel.main import App
 from flightpanel.mock import mock_model
 from flightpanel.web import make_web_app
@@ -107,3 +107,19 @@ def test_new_year_midnight_lights_up_the_panel(tmp_path, monkeypatch):
             await app.session.close()
 
     asyncio.run(run())
+
+
+def test_unknown_operators_in_the_album_get_their_operator_name(tmp_path):
+    """Neue unbekannte Betreiber im Sammelalbum: Name wie auf dem Panel, notfalls aus
+    dem Betreiber-Code, nach ganzen Wörtern gekürzt."""
+    async def run():
+        cfg = make_cfg(data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+        app = App(cfg)
+        try:
+            app.adsb = FakeAdsb(airlines={"XYZ": "Example Air Charter Ltd"})
+            await app._observe([state(icao="x1", cs="XYZ123")], time.time())
+            return app.stats.dex["XYZ"]["name"]
+        finally:
+            await app.session.close()
+
+    assert asyncio.run(run()) == "Example Air"

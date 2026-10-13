@@ -198,8 +198,15 @@ class _Builder:
     async def route_for(self, s: State) -> dict:
         """Route von adsbdb, Teilstrecke von adsb.im, wenn sie zur Position passt. Eine
         Strecke ab hier für ein Flugzeug, das hier landet, ist der Hinflug: weg damit
-        (Herkunft dann aus der Flugspur)."""
+        (Herkunft dann aus der Flugspur). Kennt adsbdb das Callsign nicht, kommt der
+        Betreibername zum Code dazu (AWH91J -> Aerowest), nur als Name: Airline oder
+        nicht entscheidet weiter is_airline."""
         route = await self.adsb.route(s.callsign)
+        code = callsign_airline(s.callsign)
+        if code and code not in self.names and not route.get("airline"):
+            operator = await self.adsb.airline(code)
+            if operator:
+                route = {**route, "airline": operator}
         hint = self.recent.hint(s) if self.recent is not None else None
         leg = leg_route(self.im.get(s.callsign) or [], s, self.cfg.local_airport_iata, hint)
         if leg and route_plausible(leg, s.lat, s.lon):
@@ -303,6 +310,8 @@ class _Builder:
             name, label = short_airline(route.get("airline", "") or ac.get("operator", ""), airline_icao, names), ""
         else:
             name, label = describe(s.callsign, s.category, s.registration, names)
+            if name == s.callsign and route.get("airline"):
+                name = short_airline(route["airline"], airline_icao, names)   # Betreiber statt Rufzeichen
         f = Flight(
             icao24=s.icao24,
             callsign=s.callsign or s.icao24.upper(),

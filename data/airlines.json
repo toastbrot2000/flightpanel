@@ -114,6 +114,8 @@
   "CAI": {"name": "Corendon", "iata": "XC"},
   "CND": {"name": "Corendon", "iata": "CD"},
   "CXI": {"name": "Corendon", "iata": "XC", "adsbdb": "Shanxi Airlines"},
+  "AEG": {"name": "Airest", "iata": "", "adsbdb": "Aerofumigaciones Sam"},
+  "KRH": {"name": "UK Royal VIP", "iata": ""},
   "GWI": {"name": "Germanwings", "iata": "4U"},
   "BCS": {"name": "DHL", "iata": "D0"},
   "DHK": {"name": "DHL", "iata": "D0"},
@@ -142,6 +144,7 @@
   "ADB": {"name": "Antonov", "iata": ""},
   "GAF": {"name": "Luftwaffe", "iata": "", "airline": false, "label": "Militär"},
   "BPO": {"name": "Bundespolizei", "iata": "", "airline": false, "label": "Polizei"},
+  "PBB": {"name": "Landespolizei", "iata": "", "airline": false, "label": "Polizei"},
   "CHX": {"name": "Christoph", "iata": "", "airline": false, "label": "Luftrettung", "number": true},
   "RHH": {"name": "Redstar", "iata": "", "airline": false, "label": "Ambulanzjet", "adsbdb": "Redstar Aviation"},
   "FCK": {"name": "Flugvermessung", "iata": "", "airline": false, "label": "prüft Landehilfen"}

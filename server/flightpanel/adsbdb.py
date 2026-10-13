@@ -1,6 +1,6 @@
 """adsbdb.com, kostenlos und ohne Account: Route und Airline zum Callsign,
-Flugzeugtyp zur icao24. Antworten im Cache (cache.py), Routen 24 h, Flugzeuge 30
-Tage.
+Flugzeugtyp zur icao24, Betreibername zum ICAO-Code. Antworten im Cache (cache.py),
+Routen 24 h, Flugzeuge und Betreiber 30 Tage.
 
 Die Routen sind pro Callsign gespeichert und oft alt: Airlines verwenden Callsigns
 für andere Strecken weiter. build.py prüft sie gegen die Position und fragt
@@ -23,6 +23,7 @@ NEGATIVE_TTL = 6 * 3600
 # Werte kommen ungeprüft aus dem Netz und landen im URL-Pfad: nur gültige Formen durchlassen.
 CALLSIGN_RE = re.compile(r"^[A-Z0-9]{2,8}$")
 ICAO24_RE = re.compile(r"^[0-9a-f]{6}$")
+OPERATOR_RE = re.compile(r"^[A-Z]{3}$")
 
 
 def _pos(airport: dict) -> list[float] | None:
@@ -41,7 +42,8 @@ class AdsbDb:
         self.issues = issues
         self.last_error: str | None = None
 
-    async def _get(self, path: str) -> dict | None:
+    async def _get(self, path: str) -> dict | list | None:
+        """Das Feld "response": ein Objekt, bei /airline eine Liste; None bei 404."""
         try:
             async with self.session.get(f"{self.base}/{path}", timeout=aiohttp.ClientTimeout(total=10)) as r:
                 if r.status == 404:
@@ -50,7 +52,7 @@ class AdsbDb:
                 j = await r.json()
             self.last_error = None
             resp = j.get("response")
-            return resp if isinstance(resp, dict) else None
+            return resp if isinstance(resp, dict | list) else None
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
             log.warning("adsbdb %s: %s", path, self.last_error)
@@ -72,7 +74,7 @@ class AdsbDb:
         except Exception:
             return {}
         out: dict = {}
-        fr = (resp or {}).get("flightroute") or {}
+        fr = (resp if isinstance(resp, dict) else {}).get("flightroute") or {}
         if fr:
             o, d, al = fr.get("origin") or {}, fr.get("destination") or {}, fr.get("airline") or {}
             out = {
@@ -101,7 +103,7 @@ class AdsbDb:
         except Exception:
             return {}
         out: dict = {}
-        ac = (resp or {}).get("aircraft") or {}
+        ac = (resp if isinstance(resp, dict) else {}).get("aircraft") or {}
         if ac:
             out = {
                 "type": (ac.get("icao_type") or "").upper(),
@@ -111,3 +113,23 @@ class AdsbDb:
             }
         self.cache.set(key, out, AIRCRAFT_TTL if out else NEGATIVE_TTL)
         return out
+
+    async def airline(self, icao: str) -> str:
+        """Betreibername zum ICAO-Code ("AWH" -> "Aerowest GmbH") oder "": für Flüge, deren
+        Callsign adsbdb nicht kennt. Die ICAO vergibt die Codes an Firmen und Behörden, nie
+        an Privatleute; ein Halter kommt hier also nicht heraus."""
+        code = (icao or "").upper()
+        if not OPERATOR_RE.match(code):
+            return ""
+        key = f"operator:{code}"
+        hit = self.cache.get(key)
+        if hit is not None:
+            return hit
+        try:
+            resp = await self._get(f"airline/{code}")
+        except Exception:
+            return ""
+        rows = resp if isinstance(resp, list) else []
+        name = next((str(r["name"]).strip() for r in rows if isinstance(r, dict) and r.get("name")), "")
+        self.cache.set(key, name, AIRCRAFT_TTL if name else NEGATIVE_TTL)
+        return name

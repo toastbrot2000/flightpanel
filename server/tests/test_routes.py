@@ -150,3 +150,71 @@ def test_checked_adsbdb_names_are_not_reported_again(tmp_path):
     names["SDR"]["adsbdb"] = "City Airline"
     note_operator(issues, s, route, names, True)
     assert issues.report()["counts"] == {}
+
+
+def test_unknown_operator_gets_its_name_from_adsbdb():
+    """Kennt adsbdb die Flugnummer nicht, aber den Betreiber (AWH: Aerowest GmbH), heißt
+    der Flug nach dem Betreiber, auf dem Panel und in der Landefolge. Er bleibt ein
+    Privatflieger, und das Rufzeichen wandert in die wechselnde Zeile."""
+    lat, lon = destination(BER[0], BER[1], 69, 12)            # im Endanflug auf die 25
+    s = state(icao="3cc24f", cs="AWH91J", lat=lat, lon=lon, alt=650, track=249, vrate=-3.5, speed=75,
+              category="A2", actype="C560")
+    adsb = FakeAdsb(airlines={"AWH": "Aerowest GmbH"})
+    m = asyncio.run(build_model(make_cfg(), [s], adsb, NAMES))
+    fl = m.flights[0]
+    assert (fl.airline, fl.kind, fl.status) == ("Aerowest", "other", "ARR")
+    assert [a["airline"] for a in m.arrivals] == ["Aerowest"]
+    plain = asyncio.run(build_model(make_cfg(), [s], FakeAdsb(), NAMES))
+    assert plain.flights[0].airline == "AWH91J"                 # ohne Betreibernamen wie bisher
+
+
+def test_long_names_are_shortened_by_whole_words():
+    """Nie mitten im Wort kürzen ("Copenhagen A"): Wörter von hinten weg, bis es passt."""
+    from flightpanel.airlines import short_airline
+
+    assert short_airline("Aerowest GmbH", "AWH", NAMES) == "Aerowest"
+    assert short_airline("Copenhagen Airtaxi", "CAT", NAMES) == "Copenhagen"
+    assert short_airline("Norwegian Air Sweden AOC", "NSZ", NAMES) == "Norwegian"
+    assert short_airline("Redstar Aviation", "RHH", NAMES) == "Redstar"
+    assert short_airline("Deutsche Lufthansa AG", "XYZ", NAMES) == "Lufthansa"
+    assert short_airline("Scandinavian Airlines System", "XYZ", NAMES) == "Scandinavian"
+
+
+def test_adsbdb_operator_lookup(tmp_path):
+    """adsbdb /airline/<ICAO> antwortet mit einer Liste; unbekannt und Unsinn ergeben "".
+    Beides kommt in den Cache, damit nicht jeder Abruf neu fragt."""
+    from flightpanel.adsbdb import AdsbDb
+
+    asked = []
+
+    class Response:
+        def __init__(self, status, body):
+            self.status, self.body = status, body
+
+        def raise_for_status(self):
+            pass
+
+        async def json(self):
+            return self.body
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class Session:
+        def get(self, url, timeout=None):
+            asked.append(url)
+            if url.endswith("/airline/AWH"):
+                return Response(200, {"response": [{"name": "Aerowest GmbH", "icao": "AWH", "iata": None}]})
+            return Response(404, {"response": "unknown airline"})
+
+    db = AdsbDb(Session(), "https://api.adsbdb.com/v0", Cache(str(tmp_path / "cache.json")))
+
+    async def run():
+        return [await db.airline("AWH"), await db.airline("AWH"), await db.airline("ZZZ"), await db.airline("ZZZ"),
+                await db.airline("../x")]
+
+    assert asyncio.run(run()) == ["Aerowest GmbH", "Aerowest GmbH", "", "", ""]
+    assert len(asked) == 2                                       # je Code einmal, Unsinn gar nicht

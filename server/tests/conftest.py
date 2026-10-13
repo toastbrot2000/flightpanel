@@ -36,16 +36,20 @@ NAMES = {"EZY": {"name": "easyJet", "iata": "U2", "airline": True},
 
 
 class FakeAdsb:
-    """adsbdb ohne Netz: keine Routen, keine Flugzeugdaten."""
+    """adsbdb ohne Netz: Routen und Betreibernamen nur, wenn mitgegeben; keine Flugzeugdaten."""
 
-    def __init__(self, routes=None):
+    def __init__(self, routes=None, airlines=None):
         self.routes = routes or {}
+        self.airlines = airlines or {}
 
     async def route(self, cs):
         return self.routes.get(cs, {})
 
     async def aircraft(self, icao):
         return {}
+
+    async def airline(self, icao):
+        return self.airlines.get(icao, "")
 
 
 @pytest.fixture

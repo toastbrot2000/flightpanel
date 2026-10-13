@@ -20,6 +20,7 @@ from . import USER_AGENT
 from .adsbdb import AdsbDb
 from .adsbim import AdsbIm
 from .adsblol import AdsbLol, Paused
+from .airlines import short_airline
 from .airport import Recent
 from .astro import Iss
 from .build import build_model
@@ -235,7 +236,8 @@ class App:
                 else:
                     cs = next((s.callsign for s in states if s.callsign.startswith(code)), "")
                     route = await self.adsb.route(cs) if cs else {}
-                    self.stats.set_name(code, route.get("airline", ""))
+                    name = route.get("airline", "") or await self.adsb.airline(code)
+                    self.stats.set_name(code, short_airline(name, code, self.names))
         except Exception as e:
             self._note_poll_error(e)
 

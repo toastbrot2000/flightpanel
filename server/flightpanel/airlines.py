@@ -45,15 +45,21 @@ def is_airline(callsign: str, route: dict, names: dict[str, dict], category: str
     return bool(route.get("airline_icao")) or category in AIRLINER_CATEGORIES
 
 
+SHORT_NAME = 12   # Zeichen, die neben dem Logo in großer Schrift passen
+
+
 def short_airline(name: str, icao: str, names: dict[str, dict]) -> str:
-    """Anzeigename: aus airlines.json, sonst der eingedampfte Firmenname."""
+    """Anzeigename: aus airlines.json, sonst der eingedampfte Firmenname. Zu lang:
+    Wörter von hinten weg, nie mitten im Wort ("Copenhagen Airtaxi" -> "Copenhagen");
+    ein einzelnes langes Wort bleibt ganz, die Anzeige nimmt dann kleinere Schrift."""
     if icao in names and names[icao]["name"]:
         return names[icao]["name"]
     if not name:
         return ""
-    words = [w for w in name.replace(",", " ").split() if w.upper().strip(".") not in _LEGAL_WORDS]
-    short = " ".join(words) if words else name
-    return short[:12]
+    words = [w for w in name.replace(",", " ").split() if w.upper().strip(".") not in _LEGAL_WORDS] or name.split()
+    while len(words) > 1 and len(" ".join(words)) > SHORT_NAME:
+        words.pop()
+    return " ".join(words)
 
 
 def route_plausible(route: dict, lat: float, lon: float) -> bool:
