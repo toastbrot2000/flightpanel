@@ -2,7 +2,6 @@
 in /issues vergessen, Abgelaufenes aus dem Cache, volles /issues macht Platz."""
 
 import asyncio
-import json
 import time
 from datetime import datetime
 
@@ -10,6 +9,7 @@ from conftest import make_cfg
 from flightpanel import cache as cache_mod
 from flightpanel import issues as issues_mod
 from flightpanel.cache import Cache
+from flightpanel.db import Db
 from flightpanel.issues import Issues
 
 DAY = 24 * 3600
@@ -49,14 +49,62 @@ def test_full_issue_list_makes_room_for_news(tmp_path, monkeypatch):
 
 
 def test_cache_drops_expired_entries_when_saving(tmp_path, monkeypatch):
-    path = tmp_path / "c.json"
+    db = Db(str(tmp_path / "c.db"))
     now = clock(monkeypatch, cache_mod)
-    c = Cache(str(path))
+    c = Cache(db)
     c.set("route:EZY1", {"origin": "LGW"}, ttl=60)
     c.set("ac:3c0001", {"type": "A320"}, ttl=3600)
     now[0] += 120
     c.save()
-    assert len(c) == 1 and list(json.loads(path.read_text())) == ["ac:3c0001"]
+    assert len(c) == 1 and [r["key"] for r in db.query("SELECT key FROM cache")] == ["ac:3c0001"]
+    assert Cache(db).get("ac:3c0001") == {"type": "A320"}      # neu geladen: derselbe Inhalt
+
+
+def test_cache_takes_over_the_old_json(tmp_path, monkeypatch):
+    now = clock(monkeypatch, cache_mod)
+    db = Db(str(tmp_path / "c.db"))
+    c = Cache(db)
+    c.load_legacy({"route:A": [now[0] + 100, {"origin": "X"}], "route:B": [now[0] - 1, {}], "kaputt": "x"})
+    c.save()
+    assert Cache(db).get("route:A") == {"origin": "X"} and Cache(db).get("route:B") is None and len(c) == 1
+
+
+def test_cache_overwrites_a_saved_entry(tmp_path, monkeypatch):
+    db = Db(str(tmp_path / "c.db"))
+    now = clock(monkeypatch, cache_mod)
+    c = Cache(db)
+    c.set("route:EZY1", {}, ttl=60)                     # nichts gefunden: nur kurz merken
+    c.save()
+    c.set("route:EZY1", {"origin": "LGW"}, ttl=3600)    # später doch gefunden
+    c.save()
+    now[0] += 120                                       # die erste Frist wäre jetzt um
+    assert Cache(db).get("route:EZY1") == {"origin": "LGW"}
+
+
+def test_cache_forgets_saved_entries_once_they_expire(tmp_path, monkeypatch):
+    db = Db(str(tmp_path / "c.db"))
+    now = clock(monkeypatch, cache_mod)
+    c = Cache(db)
+    c.set("route:EZY1", {"origin": "LGW"}, ttl=60)
+    c.set("ac:3c0001", {"type": "A320"}, ttl=3600)
+    c.save()
+    now[0] += 120
+    assert len(Cache(db)) == 1                          # beim Laden fällt Abgelaufenes weg
+    assert c.prune() == 1 and [r["key"] for r in db.query("SELECT key FROM cache")] == ["ac:3c0001"]
+
+
+def test_cache_saves_after_an_unsaved_entry_expired_on_lookup(tmp_path, monkeypatch):
+    """get() wirft Abgelaufenes aus dem Speicher. War es noch ungespeichert, darf save() nicht darüber stolpern:
+    Sonst scheiterte jedes weitere Speichern, bis jemand denselben Schlüssel wieder setzt."""
+    db = Db(str(tmp_path / "c.db"))
+    now = clock(monkeypatch, cache_mod)
+    c = Cache(db)
+    c.set("route:EZY1", {"origin": "LGW"}, ttl=60)
+    c.set("ac:3c0001", {"type": "A320"}, ttl=3600)
+    now[0] += 120
+    assert c.get("route:EZY1") is None                  # abgelaufen, bevor es je gespeichert wurde
+    c.save()
+    assert [r["key"] for r in db.query("SELECT key FROM cache")] == ["ac:3c0001"]
 
 
 def test_dream_once_a_night_at_the_start_of_the_quiet_hours():

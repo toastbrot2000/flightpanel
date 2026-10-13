@@ -9,6 +9,7 @@ from flightpanel.airlines import route_plausible
 from flightpanel.airport import Recent, returning
 from flightpanel.build import build_model
 from flightpanel.cache import Cache
+from flightpanel.db import Db
 from flightpanel.geo import destination
 
 NCE = (43.6584, 7.2159)
@@ -47,7 +48,7 @@ def test_adsbim_skips_empty_entries(tmp_path):
         def post(self, url, json=None, timeout=None):
             return Response()
 
-    im = AdsbIm(Session(), Cache(str(tmp_path / "cache.json")))
+    im = AdsbIm(Session(), Cache(Db(str(tmp_path / "c.db"))))
     out = asyncio.run(im.routes([state(cs="EWG9SK"), state(icao="x", cs="DLH1")]))
     assert [stop.iata for stop in out["EWG9SK"]] == ["BER", "NCE"]
 
@@ -211,7 +212,7 @@ def test_adsbdb_operator_lookup(tmp_path):
                 return Response(200, {"response": [{"name": "Aerowest GmbH", "icao": "AWH", "iata": None}]})
             return Response(404, {"response": "unknown airline"})
 
-    db = AdsbDb(Session(), "https://api.adsbdb.com/v0", Cache(str(tmp_path / "cache.json")))
+    db = AdsbDb(Session(), "https://api.adsbdb.com/v0", Cache(Db(str(tmp_path / "c.db"))))
 
     async def run():
         return [await db.airline("AWH"), await db.airline("AWH"), await db.airline("ZZZ"), await db.airline("ZZZ"),
