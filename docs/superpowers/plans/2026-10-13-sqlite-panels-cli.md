@@ -1752,9 +1752,10 @@ Add before `class App`:
 
 ```python
 def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, logos, iss: Iss | None) -> list[str]:
-    """Zustand aus den JSON-Dateien früherer Fassungen (bis Oktober 2026) einmalig in die
-    Datenbank übernehmen. Die Dateien bleiben als *.imported liegen; eine unlesbare bleibt,
-    wie sie ist, und steht im Log. Gibt zurück, was übernommen wurde."""
+    """Zustand aus den JSON-Dateien früherer Fassungen (bis Oktober 2026) einmalig übernehmen.
+    Gibt die übernommenen Dateien zurück; App benennt sie in *.imported um, sobald das
+    Übernommene gespeichert ist. Eine unlesbare oder unbrauchbare Datei bleibt, wie sie ist,
+    und steht im Log; der Start geht weiter."""
     taken = []
     for name, store in (("cache.json", cache), ("issues.json", issues), ("stats.json", stats),
                         (os.path.join("logos", ".missing.json"), logos)):
@@ -1765,17 +1766,19 @@ def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, log
         if not isinstance(raw, dict):                   # unlesbar (read_json hat es geloggt) oder kein Objekt
             log.warning("%s nicht übernommen, bleibt liegen", name)
             continue
-        store.load_legacy(raw)
-        os.replace(path, path + ".imported")
-        taken.append(name)
+        try:
+            store.load_legacy(raw)
+        except Exception as e:                          # von Hand verändert: lieber ohne als gar nicht starten
+            log.warning("%s nicht übernommen (%s), bleibt liegen", name, e)
+            continue
+        taken.append(path)
     path = os.path.join(data_dir, "tle.txt")
     if iss is not None and os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             iss.set_tle_text(f.read(), os.path.getmtime(path))
-        os.replace(path, path + ".imported")
-        taken.append("tle.txt")
+        taken.append(path)
     if taken:
-        log.info("Aus früheren Fassungen übernommen: %s", ", ".join(taken))
+        log.info("Aus früheren Fassungen übernommen: %s", ", ".join(os.path.relpath(p, data_dir) for p in taken))
     return taken
 ```
 
@@ -1823,8 +1826,32 @@ Replace the beginning of `App.__init__` (up to and including the `# Anzeige` blo
 Keep the rest of `__init__` as it is, and append at its very end:
 
 ```python
-        if absorb_legacy(data, self.cache, self.issues, self.stats, self.logos, self.iss):
-            self.save()
+        taken = absorb_legacy(data, self.cache, self.issues, self.stats, self.logos, self.iss)
+        if taken:
+            self.save()                         # erst gespeichert, dann umbenannt: ein Absturz dazwischen verliert nichts
+            for path in taken:
+                os.replace(path, path + ".imported")
+```
+
+Add to `server/tests/test_app.py`:
+
+```python
+def test_a_damaged_old_file_is_left_alone_and_the_start_goes_on(tmp_path, caplog):
+    (tmp_path / "issues.json").write_text(json.dumps({"since": 1, "items": None}))     # von Hand verändert
+    (tmp_path / "cache.json").write_text("[1, 2]")                                        # kein Objekt
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+
+    async def run():
+        with caplog.at_level("WARNING"):
+            app = App(cfg, env={})
+        try:
+            assert app.issues.items == {} and len(app.cache) == 0
+            assert (tmp_path / "issues.json").exists() and (tmp_path / "cache.json").exists()
+            assert "issues.json nicht übernommen" in caplog.text and "cache.json nicht übernommen" in caplog.text
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
 ```
 
 Replace `save`:
@@ -2178,6 +2205,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    labels:                 # ein Traefik mit Docker-Provider soll den Port ohne Anmeldung nicht veröffentlichen
+      - traefik.enable=false
     logging:                # Docker-Log begrenzen (rund 1 MB am Tag), sonst wächst es ohne Ende
       driver: json-file
       options:
@@ -2278,7 +2307,7 @@ LOG_LEVEL=INFO
 
 Before writing it, diff the current file's "Heimatflughafen", "Datenquellen", "Logos" and "Betrieb" blocks against the text above and keep the current wording wherever it differs (only the panel sections are removed and the header, `ISS`, `TZ` and `LAN_PANEL` lines move or appear).
 
-- [ ] **Step 7: `README.md`** — replace the section from `## Einrichten` up to (not including) `## Was angezeigt wird` with:
+- [ ] **Step 7: `README.md`** — afterwards grep `README.md` and `docs/` for `stats.json`, `issues.json`, `cache.json`, `tle.txt` and `.missing.json`: where they are named as live state files, say `data/flightpanel.db` instead (older installs' files are imported once and kept as `*.imported`). Then replace the section from `## Einrichten` up to (not including) `## Was angezeigt wird` with:
 
 ~~~markdown
 ## Einrichten

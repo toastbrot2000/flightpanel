@@ -61,7 +61,7 @@ Defaults I chose (say if you want otherwise):
 - One set of route handlers. They differ only in how the panel is resolved: LAN → `LAN_PANEL`; public → verified identity.
 - One firmware build; its features switch on by configuration.
 
-**Deploy:** unchanged. `tools/update.sh` fast-forwards `main`; the escrow bot's lock updates land there too. (If the repo ever becomes public: GitHub disables scheduled workflows after 60 days without repository activity, so the escrow cron would need a keepalive.)
+**Deploy:** unchanged. `tools/update.sh` fast-forwards `main`; the escrow bot's lock updates land there too. (The repo is public: GitHub disables scheduled workflows after 60 days without repository activity, so the escrow cron needs a keepalive once the repo goes quiet.)
 
 ## Architecture
 
@@ -303,6 +303,18 @@ Each step gets its own German commits, tests and golden-frame check, is pushed t
 5. Firmware: signed updates, rescue mode, release tool, partition table, host-side tests. `/security-review`.
 6. `docs/freunde.md`, README and `.env.example`, the compose example. You set up Cloudflare following the guide.
 7. Follow-up: move the firmware to Arduino 3.x (IDF 5, maintained TLS stack).
+
+**Follow-ups from the owner's issue list (triaged 2026-10-14), by step:**
+- **Before step 4, firmware only, any time (one commit):**
+  - Quiet boot: the test pattern shows only on a cold power-on (`esp_reset_reason() == ESP_RST_POWERON`). Today every restart replays it, including the 10-minute no-data restart, so a server outage flashes the panel every 10 minutes all night.
+  - The panel no longer prints the Wi-Fi name.
+  - OTA hygiene: no password literal in tracked files (today `changeme` in `platformio.ini`), the example default is empty, and ArduinoOTA starts only with a non-empty password. Today an empty password means open OTA. The password comes from a gitignored local override. Check: `sh tools/check_firmware.sh`.
+- **Step 1:** label `traefik.enable=false` in the tracked `compose.yml`.
+- **Step 2:** strip request URLs from stored and logged error text. OpenSky error messages carry the request URL, whose bounding box is centred on home, into `/issues` and the log.
+- **Step 3:** `POST /issues/clear` gets the same `Origin` check as the settings writes.
+- **Step 4 bring-up:** a task watchdog on the loop task (60 s, fed during OTA progress); today the 10-minute restart cannot catch a hang inside `loop()`. Bench checks: reset reasons (pattern only on `POWERON`), OTA with and without a password, a deliberate 70 s hang resets the panel.
+- **Step 5:** the rollback relies on that watchdog; download and HTTPS loops feed it; TLS handshake timeout ≤ 15 s.
+- **Step 6:** a LAN-only warning for port 8080 in README and `.env.example` (no login; `/display.json` lets anyone on the LAN locate the window roughly); one sentence in `docs/freunde.md` that the logos are fetched from third-party CDNs for personal use and are not redistributed.
 
 ## Maintenance calendar (what still needs a human)
 | When | What | If missed |
