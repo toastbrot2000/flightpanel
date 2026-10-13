@@ -12,19 +12,21 @@
   exception          Fehler im Code, mit Datei und Zeile
 
 Pro Eintrag: wie oft gesehen (je Abruf), an wie vielen Tagen, erstes und letztes
-Mal, bis zu zehn Callsigns, ein Beispiel. Liegt in data/issues.json und übersteht
-Neustarts; POST /issues/clear fängt von vorn an.
+Mal, bis zu zehn Callsigns, ein Beispiel. Liegt in der Datenbank (Tabelle issues,
+Beginn in state; main.App.save() schreibt Geändertes) und übersteht Neustarts;
+POST /issues/clear fängt von vorn an.
 
 Nachts (main.App.dream) vergisst die Liste von selbst: Einmaliges (nur an einem Tag
 gesehen) nach ONE_OFF_DAYS, alles andere, wenn es FORGET_DAYS nicht mehr aufgetreten
 ist; Fehler im Code (exception) erst dann. Ist sie trotzdem voll, macht der am
 längsten nicht mehr gesehene Eintrag Platz, Neues geht nie verloren."""
 
+import json
 import logging
 import re
 import time
 
-from .storage import read_json, write_json
+from .db import Db
 
 log = logging.getLogger("issues")
 
@@ -62,15 +64,28 @@ def names_match(ours: str, theirs: str) -> bool:
 
 
 class Issues:
-    def __init__(self, path: str):
-        self.path = path
-        self.items: dict[str, dict] = {}
-        self.since = time.time()
-        self.dirty = False
-        raw = read_json(path)
-        if isinstance(raw, dict):
-            self.items = raw.get("items", {})
-            self.since = raw.get("since", self.since)
+    def __init__(self, db: Db):
+        self.db = db
+        self.items: dict[str, dict] = {r["key"]: json.loads(r["data"])
+                                       for r in db.query("SELECT key, data FROM issues")}
+        self.since = db.state_get("issues_since")
+        if self.since is None:
+            self.since = time.time()
+            db.state_set("issues_since", self.since)
+        self._dirty: set[str] = set()       # geänderte Einträge
+        self._gone: set[str] = set()        # gelöschte Einträge
+        self._reset = False                 # clear(): alle Zeilen weg
+        self._since_dirty = False
+
+    def load_legacy(self, raw: dict) -> None:
+        """Alte issues.json übernehmen (main.absorb_legacy, einmalig)."""
+        if not isinstance(raw, dict):
+            return
+        items = raw.get("items", {})
+        self.items.update(items)
+        self._dirty.update(items)
+        self.since = raw.get("since", self.since)
+        self._since_dirty = True
 
     def note(self, kind: str, key: str, callsign: str = "", **example) -> None:
         k = f"{kind}:{key}"
@@ -78,7 +93,10 @@ class Issues:
         it = self.items.get(k)
         if it is None:
             if len(self.items) >= MAX_KEYS:
-                del self.items[min(self.items, key=lambda i: self.items[i]["last"])]
+                oldest = min(self.items, key=lambda i: self.items[i]["last"])
+                del self.items[oldest]
+                self._gone.add(oldest)
+                self._dirty.discard(oldest)
             it = self.items[k] = {"kind": kind, "key": key, "seen": 0, "days": 1, "first": now, "callsigns": []}
             log.info("Auffällig: %s %s %s", k, callsign, example or "")
         elif _day(it["last"]) != _day(now):
@@ -89,21 +107,43 @@ class Issues:
             it["callsigns"] = (it["callsigns"] + [callsign])[-MAX_CALLSIGNS:]
         if example:
             it["example"] = example
-        self.dirty = True
+        self._dirty.add(k)
 
     def source_error(self, source: str, error: str, **example) -> None:
         """Fehler einer Quelle: HTTP 429 als rate_limit, alles andere als source_error."""
         self.note("rate_limit" if "429" in error else "source_error", source, error=error, **example)
 
     def save(self) -> None:
-        if self.dirty:
-            write_json(self.path, {"since": self.since, "items": self.items})
-            self.dirty = False
+        """Geändertes schreiben. Als gespeichert gilt es erst nach dem COMMIT (Db.after_commit);
+        scheitert die Transaktion, schreibt der nächste Lauf es noch einmal."""
+        reset, since, gone, dirty = self._reset, self._since_dirty, set(self._gone), set(self._dirty)
+        if reset:
+            self.db.execute("DELETE FROM issues")
+        if since:
+            self.db.state_set("issues_since", self.since)
+        for k in gone:
+            self.db.execute("DELETE FROM issues WHERE key = ?", (k,))
+        rows = [(k, json.dumps(self.items[k], ensure_ascii=False)) for k in dirty if k in self.items]
+        if rows:
+            self.db.executemany("INSERT INTO issues (key, data) VALUES (?, ?) "
+                                "ON CONFLICT(key) DO UPDATE SET data = excluded.data", rows)
+        self.db.after_commit(lambda: self._saved(reset, since, gone, dirty))
+
+    def _saved(self, reset: bool, since: bool, gone: set[str], dirty: set[str]) -> None:
+        """Nach dem COMMIT: das Geschriebene vergessen. Nur Speicher, darf nicht scheitern."""
+        if reset:
+            self._reset = False
+        if since:
+            self._since_dirty = False
+        self._gone -= gone
+        self._dirty -= dirty
 
     def clear(self) -> None:
         self.items = {}
         self.since = time.time()
-        self.dirty = True
+        self._reset = self._since_dirty = True
+        self._dirty.clear()
+        self._gone.clear()
 
     def forget(self, now: float) -> int:
         """Vergessen, was vorbei ist (siehe oben). Gibt zurück, wie viele Einträge."""
@@ -115,7 +155,8 @@ class Issues:
         old = [k for k, it in self.items.items() if gone(it)]
         for k in old:
             del self.items[k]
-        self.dirty = self.dirty or bool(old)
+            self._gone.add(k)
+            self._dirty.discard(k)
         return len(old)
 
     def report(self, **extra) -> dict:

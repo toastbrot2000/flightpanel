@@ -119,7 +119,7 @@ def test_calibration_aircraft_is_no_arrival_and_unknown_operators_are_noted(tmp_
     s = state(icao="3cce71", cs="FCK2FT", lat=52.3239, lon=12.8735, alt=690, track=43, vrate=0.3,
               category="A1", actype="B350")
     cfg = make_cfg()
-    unknown = Issues(str(tmp_path / "i.json"))
+    unknown = Issues(Db(str(tmp_path / "i.db")))
     m = asyncio.run(build_model(cfg, [s], FakeAdsb(), NAMES, issues=unknown))
     assert m.arrivals and m.arrivals[0]["callsign"] == "FCK2FT"            # unbekannt: geraten
     assert "unknown_operator" in unknown.report()["counts"]                # und gemeldet
@@ -145,7 +145,7 @@ def test_checked_adsbdb_names_are_not_reported_again(tmp_path):
     s = state(cs="SDR17RA")
     route = {"airline": "City Airline", "airline_icao": "SDR"}
     names = {"SDR": {"name": "Sundair", "iata": "SR", "airline": True, "label": "", "number": False}}
-    issues = Issues(str(tmp_path / "i.json"))
+    issues = Issues(Db(str(tmp_path / "i.db")))
     note_operator(issues, s, route, names, True)
     assert "name_mismatch" in issues.report()["counts"]                   # ungeprüft: gemeldet
     issues.clear()

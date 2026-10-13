@@ -25,7 +25,7 @@ def clock(monkeypatch, module, t0=1_800_000_000.0):
 
 def test_one_offs_go_after_a_week_recurring_after_a_month(tmp_path, monkeypatch):
     now = clock(monkeypatch, issues_mod)
-    iss = Issues(str(tmp_path / "i.json"))
+    iss = Issues(Db(str(tmp_path / "i.db")))
     iss.note("route_implausible", "EJU9047", "EJU9047")      # ein Flug an einem Abend
     iss.note("unknown_operator", "SFG", "SFG55D")
     iss.note("exception", "KeyError build.py:12")            # Fehler im Code: einmal, aber wichtig
@@ -36,18 +36,142 @@ def test_one_offs_go_after_a_week_recurring_after_a_month(tmp_path, monkeypatch)
     assert set(iss.report()["counts"]) == {"unknown_operator", "exception"}
     now[0] += 30 * DAY
     assert iss.forget(now[0]) == 2                            # 30 Tage nicht mehr aufgetreten
+    iss.save()
+    assert Issues(iss.db).items == {}                          # auch aus der Datenbank verschwunden
 
 
 def test_full_issue_list_makes_room_for_news(tmp_path, monkeypatch):
     monkeypatch.setattr(issues_mod, "MAX_KEYS", 3)
     now = clock(monkeypatch, issues_mod)
-    iss = Issues(str(tmp_path / "i.json"))
+    iss = Issues(Db(str(tmp_path / "i.db")))
     for i in range(3):
         iss.note("route_implausible", f"X{i}")
         now[0] += 60
     iss.note("exception", "ValueError main.py:1")
     keys = {it["key"] for items in iss.report()["issues"].values() for it in items}
     assert keys == {"X1", "X2", "ValueError main.py:1"}       # das am längsten Ungesehene ist raus
+
+
+def test_issues_survive_a_restart_and_clear_starts_over(tmp_path, monkeypatch):
+    now = clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    iss.note("unknown_operator", "SFG", "SFG55D", adsbdb="Sun Fly")
+    now[0] += 60
+    iss.note("unknown_operator", "SFG", "SFG12A")
+    iss.save()
+    again = Issues(db)
+    it = again.items["unknown_operator:SFG"]
+    assert it["seen"] == 2 and it["callsigns"] == ["SFG55D", "SFG12A"] and again.since == iss.since
+    again.clear()
+    again.save()
+    assert Issues(db).items == {} and Issues(db).since == now[0]
+
+
+def test_issues_take_over_the_old_json(tmp_path, monkeypatch):
+    now = clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    iss.load_legacy({"since": now[0] - 5 * DAY, "items": {"exception:x": {
+        "kind": "exception", "key": "x", "seen": 3, "days": 2, "first": now[0] - DAY, "last": now[0],
+        "callsigns": []}}})
+    iss.save()
+    again = Issues(db)
+    assert again.since == now[0] - 5 * DAY and again.items["exception:x"]["seen"] == 3
+
+
+def test_issues_keep_their_changes_when_the_save_fails(tmp_path, monkeypatch):
+    """App.save() schreibt alle Speicher in einer Transaktion; scheitert sie, bleibt alles
+    für den nächsten Lauf vorgemerkt (Db.after_commit)."""
+    clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    iss.note("exception", "x")
+    with pytest.raises(RuntimeError):
+        with db.transaction():
+            iss.save()
+            raise RuntimeError("Platte voll")
+    assert Issues(db).items == {}                             # nichts geschrieben
+    iss.save()
+    assert "exception:x" in Issues(db).items                  # beim nächsten Mal
+
+
+def test_forgotten_and_evicted_issues_leave_the_database(tmp_path, monkeypatch):
+    """Was schon in der Tabelle steht, muss beim Vergessen und beim Verdrängen auch dort verschwinden,
+    sonst käme es mit dem nächsten Start zurück."""
+    monkeypatch.setattr(issues_mod, "MAX_KEYS", 3)
+    now = clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    for i in range(3):
+        iss.note("route_implausible", f"X{i}")
+        now[0] += 60
+    iss.save()
+    iss.note("exception", "ValueError main.py:1")             # verdrängt X0, das am längsten Ungesehene
+    iss.save()
+    assert set(Issues(db).items) == {"route_implausible:X1", "route_implausible:X2", "exception:ValueError main.py:1"}
+    now[0] += 10 * DAY
+    assert iss.forget(now[0]) == 2                            # X1 und X2: einmalig, über eine Woche her
+    iss.note("route_implausible", "X1")                       # X1 taucht vor dem nächsten Speichern wieder auf
+    iss.save()
+    assert set(Issues(db).items) == {"exception:ValueError main.py:1", "route_implausible:X1"}
+
+
+def test_issues_noted_after_a_clear_are_kept_and_updated_by_later_saves(tmp_path, monkeypatch):
+    clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    iss.note("exception", "alt")
+    iss.save()
+    iss.clear()
+    iss.save()                                                # "alt" ist weg
+    iss.note("exception", "a")
+    iss.save()
+    iss.note("exception", "a")
+    iss.note("exception", "b")
+    iss.save()                                                # löscht "a" nicht wieder und schreibt es neu
+    again = Issues(db)
+    assert set(again.items) == {"exception:a", "exception:b"} and again.items["exception:a"]["seen"] == 2
+
+
+def test_issues_forget_what_they_wrote_once_the_transaction_committed(tmp_path, monkeypatch):
+    clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    iss.note("exception", "alt")
+    iss.save()
+    iss.clear()                                               # Tabelle leeren und den Beginn neu setzen
+    iss.note("exception", "x")
+    with db.transaction():
+        iss.save()
+    changes = db.conn.total_changes
+    iss.save()
+    assert db.conn.total_changes == changes                   # nichts mehr vorgemerkt, nichts geschrieben
+
+
+def test_issues_keep_what_changed_after_saving_but_before_the_commit(tmp_path, monkeypatch):
+    monkeypatch.setattr(issues_mod, "MAX_KEYS", 2)
+    now = clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    for key in ("a", "b"):
+        iss.note("exception", key)
+        now[0] += 60
+    iss.save()
+    iss.note("exception", "c")                                # verdrängt a
+    with db.transaction():
+        iss.save()
+        iss.note("exception", "d")                            # kommt erst nach dem Schreiben dazu, verdrängt b
+    iss.save()
+    assert set(Issues(db).items) == {"exception:c", "exception:d"}
+
+
+def test_issues_ignore_an_old_json_that_is_no_object(tmp_path, monkeypatch):
+    clock(monkeypatch, issues_mod)
+    iss = Issues(Db(str(tmp_path / "i.db")))
+    since = iss.since
+    iss.load_legacy(["kaputt"])
+    assert iss.items == {} and iss.since == since
 
 
 def test_cache_drops_expired_entries_when_saving(tmp_path, monkeypatch):
