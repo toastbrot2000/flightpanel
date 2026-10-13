@@ -1054,7 +1054,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Adapt the tests in `server/tests/test_logos.py`**
 
-Add `from flightpanel.db import Db`; drop `import json`. Replace `test_missing_lists_only_codes_still_without_a_logo` and add one test:
+Add `import pytest` and `from flightpanel.db import Db`; drop `import json`. Replace `test_missing_lists_only_codes_still_without_a_logo` and add two tests:
 
 ```python
 def test_missing_lists_only_codes_still_without_a_logo(tmp_path):
@@ -1079,6 +1079,16 @@ def test_no_logo_anywhere_is_remembered_in_the_database(tmp_path, monkeypatch):
     store = LogoStore(str(tmp_path), 32, urls=(("https://logos.example/{iata}.png", None),), db=db)
     assert not asyncio.run(store.fetch_now("XQ", "XQA"))
     assert db.one("SELECT code FROM logo_missing")["code"] == "XQ"
+
+
+def test_fetch_logos_leaves_a_broken_database_alone(tmp_path):
+    """fetch_logos läuft neben dem Server: eine kaputte Datenbank bleibt liegen, wie sie ist
+    (beiseitelegen darf nur der Server, der sie offen hat)."""
+    junk = "kaputt, keine Datenbank " * 100
+    (tmp_path / "flightpanel.db").write_text(junk)
+    with pytest.raises(Exception, match="not a database"):
+        asyncio.run(fetch_logos.run(make_cfg(data_dir=str(tmp_path)), [], force=True))
+    assert (tmp_path / "flightpanel.db").read_text() == junk and not list(tmp_path.glob("*.broken*"))
 ```
 
 - [ ] **Step 2: Run to verify failure** (`db` is not a known argument).
@@ -1144,7 +1154,7 @@ In `server/flightpanel/fetch_logos.py` import `from .db import Db` and change th
 
 ```python
     async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
-        db = Db(os.path.join(cfg.data_dir, "flightpanel.db"))
+        db = Db(os.path.join(cfg.data_dir, "flightpanel.db"), put_aside=False)   # neben dem Server: nichts beiseite
         store = make_logo_store(cfg, session, db)
 ```
 
@@ -1801,6 +1811,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `server/flightpanel/panels.py`
+- Modify: `server/flightpanel/db.py` (one line: re-export `DatabaseError`)
 - Test: `server/tests/test_panels.py`
 
 **Interfaces:**
@@ -1875,11 +1886,30 @@ def test_add_list_remove(run):
 
 def test_backup(run, tmp_path):
     assert run("backup", str(tmp_path / "copy.db"))[0] == 0 and (tmp_path / "copy.db").exists()
+
+
+def test_a_broken_database_is_reported_and_left_alone(tmp_path, monkeypatch, capsys):
+    """Der Befehl läuft neben dem Server: eine kaputte Datei nennt er und lässt sie liegen."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    junk = "kaputt, keine Datenbank " * 100
+    (tmp_path / "flightpanel.db").write_text(junk)
+    assert panels.main(["list"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("Fehler: ") and "flightpanel.db" in err and "Traceback" not in err
+    assert (tmp_path / "flightpanel.db").read_text() == junk and not list(tmp_path.glob("*.broken*"))
 ```
 
 - [ ] **Step 2: Run to verify failure** (no module `flightpanel.panels`).
 
-- [ ] **Step 3: Write `server/flightpanel/panels.py`**
+- [ ] **Step 3: Re-export the error in `server/flightpanel/db.py` and write `server/flightpanel/panels.py`**
+
+In `db.py`, below `log = logging.getLogger("db")`, add (panels.py must not import sqlite3; the only-db-imports-sqlite3 test checks that):
+
+```python
+DatabaseError = sqlite3.DatabaseError       # für Werkzeuge neben dem Server (panels.py), ohne sqlite3-Import
+```
+
+Then `panels.py`:
 
 ```python
 """Panels verwalten: python -m flightpanel.panels <Befehl> ...
@@ -1908,7 +1938,7 @@ import sys
 import time
 
 from .config import Config, default_text, panel_fields
-from .db import Db
+from .db import DatabaseError, Db
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
@@ -2012,8 +2042,17 @@ def main(argv: list[str] | None = None) -> int:
     add("remove", cmd_remove, ("id", {}), ("--yes", {"action": "store_true"}))
     add("backup", cmd_backup, ("file", {}))
     args = parser.parse_args(argv)
-    cfg = Config.from_env()
-    db = Db(os.path.join(cfg.data_dir, "flightpanel.db"))
+    try:
+        cfg = Config.from_env()
+    except ValueError as e:
+        print(f"Fehler: {e}", file=sys.stderr)
+        return 2
+    path = os.path.join(cfg.data_dir, "flightpanel.db")
+    try:
+        db = Db(path, put_aside=False)          # läuft neben dem Server: eine kaputte Datei bleibt liegen
+    except DatabaseError as e:
+        print(f"Fehler: {path}: {e}", file=sys.stderr)
+        return 2
     try:
         args.func(db, cfg, args)
         return 0

@@ -185,6 +185,7 @@ One set of handlers; a resolver supplies the panel.
 - **Firmware files:** `DATA_DIR/firmware/<channel>/firmware.txt|.bin`. The channel is set per panel (`stable` default, or `canary`) and is resolved for identified panels; the rescue channel (no identity) always gets `stable`. `firmware.txt` is served `no-store`; `firmware.bin` is fetched as `/panel/firmware.bin?v=<version>` and served `Cache-Control: public, max-age=86400`, so Cloudflare's edge caches the 1.8 MB download instead of the homelab serving it per panel.
 
 ### 5. Settings page — new `settings.py`
+- **Mobile-first** (owner's requirement): friends set up and calibrate with their phone, standing at the window. The page is designed for a phone first and desktop second: one column, large touch targets, no horizontal scrolling, the calibration table readable at phone width, and the buttons reachable with a thumb.
 - The form is generated from the `Config` field metadata (scope `panel`, grouped and labeled). It's server-rendered and every value is `html.escape`d. A paste helper accepts "52.52, 13.40".
 - **Saving** goes through `fetch()` with a JSON body (`application/json` only) and the `Origin` check above, on both listeners. Then:
   - only panel keys are accepted (a test posts `DATA_DIR`, `OPENSKY_CLIENT_SECRET`, `PUBLIC_PORT` and expects 400 with the DB unchanged);
@@ -214,6 +215,7 @@ One set of handlers; a resolver supplies the panel.
   - **Full portal** (BOOT held 3 s at power-on, or nothing configured yet): Wi‑Fi plus an "Erweitert" section with server, client ID and secret, and a factory reset. The secret can only be overwritten, never shown. Changing the server URL wipes the stored token.
   - The access point is `flightpanel-XXXX` with an 8-digit password from `esp_random()` taken after the radio is up, shown on the LED panel.
   - The page lists SSIDs escaped.
+  - Mobile-first like the settings page: it is only ever opened on a phone.
 - **Self-hosters** enter Wi‑Fi and `http://<server>:8080` on their phone. For friends, you enter server and token before handing over; they only enter Wi‑Fi.
 
 ### 2. Fetching (core: Arduino-ESP32 2.0.17 in the pinned platform 7.1.3)
