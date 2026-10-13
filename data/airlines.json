@@ -23,6 +23,7 @@
   "BAW": {"name": "British Air", "iata": "BA"},
   "SHT": {"name": "British Air", "iata": "BA"},
   "EFW": {"name": "BA Euroflyer", "iata": "BA"},
+  "CFE": {"name": "BA CityFlyer", "iata": "BA"},
   "THY": {"name": "Turkish", "iata": "TK"},
   "PGT": {"name": "Pegasus", "iata": "PC"},
   "SXS": {"name": "SunExpress", "iata": "XQ"},
