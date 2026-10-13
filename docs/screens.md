@@ -25,7 +25,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | ![Landerichtung](images/runway.png)<br>`runway` | ![Wetter](images/weather.png)<br>`weather` |
 | ![ISS](images/iss.png)<br>`iss` | ![Tagesstatistik](images/scoreboard.png)<br>`scoreboard` |
 | ![Sammelalbum](images/pokedex.png)<br>`pokedex` | ![Uhr](images/clock.png)<br>`clock` |
-| ![Weihnachten](images/santa.png)<br>`santa` | ![Feuerwerk und "Frohes 2027!"](images/fireworks.png)<br>`fireworks`: Neujahr, um Mitternacht vor allem anderen |
+| ![Weihnachten](images/santa.png)<br>`santa` | ![Feuerwerk und Neujahrsgruß](images/fireworks.png)<br>`fireworks`: Neujahr, um Mitternacht vor allem anderen |
 
 ## Alle Karten
 
@@ -50,7 +50,7 @@ Mit Beispieldaten gerendert (`tools/screenshots.py`), in LED-Optik wie die Vorsc
 | | `iss` | ISS-Überflug: Richtung, Höhe, ob durchs Fenster | sichtbarer Überflug in 30 min, oder gerade (dringend) |
 | | `sunset`, `sunrise` | Uhrzeit; "Gegenlicht", wenn die Sonne im Sichtfeld steht | 2 h vor Sonnenuntergang, 90 min vor Sonnenaufgang |
 | | `santa` | Schlitten 1 im Anflug | 24.12. ab 15 Uhr |
-| | `fireworks` | Feuerwerk, "Frohes 2027!" | 1. Januar; um 0 Uhr fünf Minuten vor allem außer dem Notfall, auch in der Ruhezeit |
+| | `fireworks` | Feuerwerk, `Frohes <Jahr>!` mit dem aktuellen Jahr | 1. Januar; um 0 Uhr fünf Minuten vor allem außer dem Notfall, auch in der Ruhezeit |
 | | `clock` | Uhr und Datum | immer |
 | **4 Gar nichts los** | `plane`, `pigeon` | Animationen: Flugzeug zieht durchs Bild, Taube auf dem Balkon | nur wenn gar nichts los ist (siehe unten), dann gemischt mit Stufe 3 |
 
