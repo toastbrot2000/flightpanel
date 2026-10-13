@@ -7,7 +7,7 @@ import random
 from .. import sprites
 from ..aircraft import second_line, shown_elsewhere
 from ..airport import runway_name
-from ..colors import ARR_C, BAND, DEP_C, GOLD, HORIZON, INFO, MUTED, OVF_C, RED, dim
+from ..colors import ARR_C, BAND, DEP_C, GOLD, HORIZON, INFO, MUTED, NAME, OVF_C, RED, dim
 from ..draw import ROW1, ROW2, ROW3, STATUS_COLORS, blink, frame, km, line, minutes, right, status_glyph, text
 from ..fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from ..geo import kompass
@@ -73,7 +73,9 @@ def next_draw(img, ctx, d, t_in, f):
     lab = "Nächster"
     lw = FONT_SMALL.text_width(lab) + 4
     show_lab = FONT_BIG.text_width(head) + lw <= W
-    FONT_BIG.draw(img, 0, ROW1, FONT_BIG.fit(head, W - (lw if show_lab else 0)), dim(col, f))
+    shown = FONT_BIG.fit(head, W - (lw if show_lab else 0))
+    FONT_BIG.draw(img, 0, ROW1, shown, dim(NAME, f))                          # Airline neutral wie im Flug
+    FONT_BIG.draw(img, 0, ROW1, shown.split(" ", 1)[0], dim(col, f))         # nur der Pfeil in Statusfarbe
     if show_lab:
         FONT_SMALL.draw(img, W - FONT_SMALL.text_width(lab), ROW1 + 1, lab, dim(MUTED, 0.7 * f))
     # Die Zeit bis zum Sichtfeld, nicht bis zur Landung: deshalb "Sichtbar in"
