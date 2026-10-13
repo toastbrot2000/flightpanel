@@ -608,7 +608,25 @@ def test_issues_take_over_the_old_json(tmp_path, monkeypatch):
     iss.save()
     again = Issues(db)
     assert again.since == now[0] - 5 * DAY and again.items["exception:x"]["seen"] == 3
+
+
+def test_issues_keep_their_changes_when_the_save_fails(tmp_path, monkeypatch):
+    """App.save() schreibt alle Speicher in einer Transaktion; scheitert sie, bleibt alles
+    für den nächsten Lauf vorgemerkt (Db.after_commit)."""
+    clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    iss.note("exception", "x")
+    with pytest.raises(RuntimeError):
+        with db.transaction():
+            iss.save()
+            raise RuntimeError("Platte voll")
+    assert Issues(db).items == {}                             # nichts geschrieben
+    iss.save()
+    assert "exception:x" in Issues(db).items                  # beim nächsten Mal
 ```
+
+(`pytest` is already imported in `test_dream.py`; add the import if it is missing.)
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -680,20 +698,29 @@ class Issues:
         self.note("rate_limit" if "429" in error else "source_error", source, error=error, **example)
 
     def save(self) -> None:
-        if self._reset:
+        """Geändertes schreiben. Als gespeichert gilt es erst nach dem COMMIT (Db.after_commit);
+        scheitert die Transaktion, schreibt der nächste Lauf es noch einmal."""
+        reset, since, gone, dirty = self._reset, self._since_dirty, set(self._gone), set(self._dirty)
+        if reset:
             self.db.execute("DELETE FROM issues")
-            self._reset = False
-        if self._since_dirty:
+        if since:
             self.db.state_set("issues_since", self.since)
-            self._since_dirty = False
-        for k in self._gone:
+        for k in gone:
             self.db.execute("DELETE FROM issues WHERE key = ?", (k,))
-        self._gone.clear()
-        rows = [(k, json.dumps(self.items[k], ensure_ascii=False)) for k in self._dirty if k in self.items]
+        rows = [(k, json.dumps(self.items[k], ensure_ascii=False)) for k in dirty if k in self.items]
         if rows:
             self.db.executemany("INSERT INTO issues (key, data) VALUES (?, ?) "
                                 "ON CONFLICT(key) DO UPDATE SET data = excluded.data", rows)
-        self._dirty.clear()
+        self.db.after_commit(lambda: self._saved(reset, since, gone, dirty))
+
+    def _saved(self, reset: bool, since: bool, gone: set[str], dirty: set[str]) -> None:
+        """Nach dem COMMIT: das Geschriebene vergessen. Nur Speicher, darf nicht scheitern."""
+        if reset:
+            self._reset = False
+        if since:
+            self._since_dirty = False
+        self._gone -= gone
+        self._dirty -= dirty
 
     def clear(self) -> None:
         self.items = {}
@@ -1012,6 +1039,24 @@ class Stats:
         self.db.state_set("course", {"now": self.course, "prev": self.prev_course, "since": self.course_since,
                                      "seen": self.course_seen})
         self.dirty = False
+```
+
+**Bookkeeping only after the COMMIT** (controller ruling after Task 2; it overrides the clearing lines in the code above). `App.save()` (Task 8) runs all stores in one `db.transaction()`. `save()` therefore snapshots what it writes (`finished = dict(self._finished)`, `gone_days = set(self._gone_days)`, `gone_brands = set(self._gone_brands)`) and writes from the snapshots. It then forgets exactly those via `self.db.after_commit(...)`, including `self.dirty = False`, the same way `Cache.save()` and `Issues.save()` do. A ROLLBACK leaves everything for the next save. The callback touches memory only and must not raise. Nothing changes the store between its `save()` and the COMMIT, because `App.save()` is synchronous; say so in a short German comment. Test (in `test_stats.py`, add `import pytest` if missing):
+
+```python
+def test_a_failed_save_is_written_next_time(tmp_path):
+    """App.save() schreibt in einer Transaktion; scheitert sie, ist beim nächsten Lauf nichts verloren."""
+    db = make_db(tmp_path)
+    st = mk(tmp_path, db)
+    st.observe([state(icao="a", cs="EZY1")], DisplayModel(), ts(2026, 10, 10, 12, 0))
+    st.observe([], DisplayModel(), ts(2026, 10, 11, 7, 0))            # der 10. ist abgeschlossen
+    with pytest.raises(RuntimeError):
+        with db.transaction():
+            st.save()
+            raise RuntimeError("Platte voll")
+    assert mk(tmp_path, db).history == {}                               # nichts geschrieben
+    st.save()
+    assert mk(tmp_path, db).history["2026-10-10"]["aircraft"] == 1     # beim nächsten Mal alles da
 ```
 
 Replace `_roll`:
@@ -1717,7 +1762,8 @@ def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, log
         if not os.path.exists(path):
             continue
         raw = read_json(path)
-        if raw is None:
+        if not isinstance(raw, dict):                   # unlesbar (read_json hat es geloggt) oder kein Objekt
+            log.warning("%s nicht übernommen, bleibt liegen", name)
             continue
         store.load_legacy(raw)
         os.replace(path, path + ".imported")
