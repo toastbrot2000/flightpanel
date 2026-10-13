@@ -6,6 +6,7 @@ Dazu der Platzhalter für Airlines ohne Logo."""
 import functools
 import io
 import math
+from collections import Counter
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -67,6 +68,20 @@ def remove_background(img: Image.Image, threshold: int = 235) -> Image.Image:
     return img
 
 
+def background_threshold(img: Image.Image, default: int = 235) -> int:
+    """Schwelle für remove_background: knapp unter einem hellgrauen Grund, der nicht
+    ganz weiß ist (234 bei Bildern von Webseiten), sonst default. Grund ist die Farbe,
+    die mindestens 80 % des Randes ausmacht: Die Marke darf den Rand berühren."""
+    rgb = img.convert("RGB")
+    w, h = rgb.size
+    border = [rgb.getpixel((x, y)) for x in range(w) for y in (0, h - 1)] + \
+             [rgb.getpixel((x, y)) for y in range(h) for x in (0, w - 1)]
+    bg = Counter(border).most_common(1)[0][0]
+    share = sum(1 for c in border if max(abs(a - b) for a, b in zip(c, bg, strict=True)) <= 6) / len(border)
+    lo = min(bg)
+    return lo - 4 if share >= 0.8 and 200 <= lo < default and max(bg) - lo <= 8 else default
+
+
 def white_mark(img: Image.Image, color: Color) -> Image.Image:
     """Weiße Bildmarke auf farbiger Kachel (App-Icon, etwa das e von easyJet): nur die
     Marke, in color, die Kachel durchsichtig. Deckkraft aus dem kleinsten Farbkanal:
@@ -103,13 +118,20 @@ def circle_crop(img: Image.Image, threshold: int = 235) -> Image.Image:
 
 
 def brighten(img: Image.Image) -> Image.Image:
-    """Dunkles Logo (LOT-Navy) fürs Panel aufhellen: Farben strecken, bis der hellste
-    Kanal der sichtbaren Pixel 255 erreicht; der Farbton bleibt. Auf LEDs ist Dunkelblau
-    sonst fast schwarz."""
+    """Dunkles Logo (LOT-Navy) fürs Panel aufhellen: Farben strecken, bis bei 90 % der
+    sichtbaren Pixel der hellste Kanal 255 erreicht; der Farbton bleibt. Ein dünner
+    heller Saum von der Kantenglättung (Finnair auf Hellgrau) zählt so nicht mit; Logos
+    mit nennenswert Weiß bleiben, wie sie sind. Auf LEDs ist Dunkelblau sonst fast schwarz."""
     img = img.convert("RGBA")
     r, g, b, a = img.split()
     seen = a.point(lambda v: 255 if v >= 128 else 0)
-    top = max(ImageChops.multiply(ch, seen).getextrema()[1] for ch in (r, g, b))
+    hist = ImageChops.lighter(ImageChops.lighter(r, g), b).histogram(mask=seen)
+    total, run, top = sum(hist), 0, 0
+    for v, n in enumerate(hist):
+        run += n
+        if run >= 0.9 * total:
+            top = v
+            break
     if top in (0, 255):
         return img
     k = 255 / top

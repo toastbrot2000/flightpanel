@@ -94,6 +94,28 @@ def test_dark_logo_is_brightened_keeping_its_hue():
     assert out.getpixel((0, 0))[3] == 0
     white = Image.new("RGBA", (4, 4), (255, 255, 255, 255))
     assert brighten(white).getpixel((1, 1)) == (255, 255, 255, 255)
+    # Finnair: ein dünner heller Saum von der Kantenglättung zum Hintergrund hält es nicht auf
+    edged = Image.new("RGBA", (70, 70), (0, 0, 0, 0))
+    edged.paste((200, 200, 210, 255), (4, 4, 66, 66))
+    edged.paste((37, 38, 104, 255), (5, 5, 65, 65))
+    assert brighten(edged).getpixel((35, 35)) == (91, 93, 255, 255)
+
+
+def test_light_gray_background_counts_as_background():
+    """Finnair: Bilder von Webseiten liegen oft auf Hellgrau (234) statt Weiß. Ist der
+    Rand fast überall so hell und grau, ist das der Hintergrund; die Marke bleibt,
+    auch wo sie den Rand berührt (der Fuß des F)."""
+    from flightpanel.logo_image import background_threshold, remove_background
+
+    img = Image.new("RGB", (64, 64), (234, 234, 234))
+    ImageDraw.Draw(img).polygon([(0, 50), (0, 44), (30, 12), (54, 12), (34, 50)], fill=(11, 20, 95))
+    out = remove_background(img, background_threshold(img))
+    assert out.getpixel((0, 0))[3] == 0 and out.getpixel((63, 63))[3] == 0
+    assert out.getpixel((32, 30)) == (11, 20, 95, 255)
+    assert background_threshold(Image.new("RGB", (8, 8), (255, 255, 255))) == 235    # Weiß wie bisher
+    photo = Image.new("RGB", (8, 8), (240, 240, 240))
+    photo.paste((60, 60, 60), (0, 0, 8, 1))                  # Rand nicht einheitlich: wie bisher
+    assert background_threshold(photo) == 235
 
 
 def test_white_mark_comes_off_its_tile():

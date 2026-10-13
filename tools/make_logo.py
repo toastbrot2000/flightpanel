@@ -21,7 +21,7 @@ ICAO-Code (3); der Server probiert beide. Ergebnis: data/logos/own/<CODE>.png in
 LOGO_SIZE (Default 32), dazu own/preview/<CODE>.png (8x vergrößert) zum Begutachten.
 Eigene Logos gehen den abgerufenen vor, der Abruf fasst sie nie an; löschen, um zum
 abgerufenen zurückzukehren. Dieselbe Aufbereitung wie beim automatischen Abruf:
-weißer Hintergrund weg, auf den Inhalt zuschneiden, quadratisch einpassen."""
+weißer oder hellgrauer Hintergrund weg, auf den Inhalt zuschneiden, quadratisch einpassen."""
 
 import argparse
 import io
@@ -31,7 +31,14 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
 from PIL import Image, ImageColor
 
-from flightpanel.logo_image import brighten, circle_crop, prepare_logo, remove_background, white_mark
+from flightpanel.logo_image import (
+    background_threshold,
+    brighten,
+    circle_crop,
+    prepare_logo,
+    remove_background,
+    white_mark,
+)
 
 
 def load(path: str, px: int = 512) -> Image.Image:
@@ -65,7 +72,7 @@ def main() -> None:
     elif a.circle:
         img = circle_crop(img)
     elif not a.keep_white:
-        img = remove_background(img)
+        img = remove_background(img, background_threshold(img))     # Weiß, auch Hellgrau
     if a.crop:
         w, h = img.size
         c = a.crop / 100
