@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from PIL import Image
 
-from conftest import NAMES, make_cfg, state
+from conftest import NAMES, make_cfg, make_db, state
 from flightpanel.astro import Pass, sun_day
 from flightpanel.cards import CARDS, album, fun, runway, sky, traffic
 from flightpanel.colors import GOLD
@@ -103,7 +103,7 @@ def test_weather_headline_fits_for_every_ceiling():
 
 
 def _stats(tmp_path, course=249, since_min=60, seen_min=5, prev=None, now=None):
-    st = Stats(str(tmp_path / "s.json"), make_cfg(), NAMES, {"types": {}, "callsigns": {}})
+    st = Stats(make_db(tmp_path), "home", make_cfg(), NAMES, {"types": {}, "callsigns": {}})
     st.course, st.prev_course = course, prev
     st.course_since = now - since_min * 60
     st.course_seen = now - seen_min * 60
@@ -189,7 +189,7 @@ def test_new_airline_text_stays_off_the_frame(monkeypatch):
 
 def test_quiet_rare_new(tmp_path):
     t = ts(2026, 10, 10, 15, 0)
-    st = Stats(str(tmp_path / "s.json"), make_cfg(), NAMES, {"types": {"A388": "A380"}, "callsigns": {}})
+    st = Stats(make_db(tmp_path), "home", make_cfg(), NAMES, {"types": {"A388": "A380"}, "callsigns": {}})
     st.since = t - 8 * 3600
     st.observe([], DisplayModel(flights=[fl()]), t - 900)
     st.observe([state(icao="big", cs="UAE45", actype="A388", lat=52.0, lon=14.2, alt=11000),
@@ -444,7 +444,7 @@ def test_radar_counts_only_planes_landing_here():
 
 def test_high_visit_is_as_urgent_as_a_rare_type(tmp_path):
     t = ts(2026, 10, 10, 15, 0)
-    st = Stats(str(tmp_path / "s.json"), make_cfg(), NAMES, {"types": {}, "callsigns": {"KRH": "UK Royal VIP"}})
+    st = Stats(make_db(tmp_path), "home", make_cfg(), NAMES, {"types": {}, "callsigns": {"KRH": "UK Royal VIP"}})
     st.observe([state(icao="vip", cs="KRH01", actype="A321", lat=52.0, lon=14.2, alt=9000)], DisplayModel(), t)
     h = album.rare_cond(ctx(t + 10, stats=st))
     assert h.urgent and h.data["kind"] == "gov"

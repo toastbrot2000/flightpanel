@@ -11,17 +11,20 @@
   Piste       Landerichtung und seit wann sie gilt, für die Pistenkarte und als
               Startwert nach einem Neustart
 
-Liegt in data/stats.json (Muster wie issues.py), GET /stats zeigt alles."""
+Liegt je Panel in der Datenbank (db.py: Tabellen album, days, rare, Spalten in panels;
+die Landerichtung in state), GET /stats zeigt alles. main.App.save() schreibt, was
+sich geändert hat."""
 
+import json
 import logging
 import time
 
 from .airlines import AIRLINER_CATEGORIES, callsign_airline
 from .config import Config
 from .data import rare_match
+from .db import Db
 from .geo import angle_diff
 from .model import DisplayModel, State
-from .storage import read_json, write_json
 from .view import sighting
 
 log = logging.getLogger("stats")
@@ -43,9 +46,16 @@ def _new_day(date: str) -> dict:
             "max_alt_m": 0, "max_alt_callsign": "", "quiet_record_s": 0}
 
 
+def _counts(d: dict) -> dict:
+    """Ein abgeschlossener Tag, wie er in history steht."""
+    return {"aircraft": len(d["aircraft"]), "airlines": len(d["airlines"]), "shown": len(d["shown"]),
+            "max_alt_m": d["max_alt_m"], "quiet_record_s": d["quiet_record_s"]}
+
+
 class Stats:
-    def __init__(self, path: str, cfg: Config, names: dict[str, dict], rare: dict | None = None):
-        self.path = path
+    def __init__(self, db: Db, panel_id: str, cfg: Config, names: dict[str, dict], rare: dict | None = None):
+        self.db = db
+        self.panel_id = panel_id
         self.cfg = cfg
         self.names = names
         self.rare_cfg = rare or {"types": {}, "callsigns": {}}
@@ -61,33 +71,67 @@ class Stats:
         self.course_since = 0.0
         self.course_seen = 0.0
         self._pending: tuple[float, int] | None = None
+        self._finished: dict[str, dict] = {}     # abgeschlossene Tage, noch nicht geschrieben
+        self._gone_days: set[str] = set()        # aus der History gefallen
+        self._gone_brands: set[str] = set()      # Exoten, die zur Marke gezogen sind
         self.dirty = False
         self._load()
 
     # --------------------------------------------------------- Laden/Speichern --
     def _load(self) -> None:
-        raw = read_json(self.path)
-        if raw is None:
-            return
+        pid = self.panel_id
+        row = self.db.one("SELECT stats_since, last_obs, last_in_view FROM panels WHERE id = ?", (pid,))
+        if row is not None and row["stats_since"]:
+            self.since, self.last_obs, self.last_in_view = row["stats_since"], row["last_obs"], row["last_in_view"]
+        self.dex = {r["brand"]: {"first": r["first"], "last": r["last"], "code": r["code"], "name": r["name"],
+                                 "known": bool(r["known"]), "callsign": r["callsign"], "fanfare": bool(r["fanfare"])}
+                    for r in self.db.query("SELECT * FROM album WHERE panel_id = ?", (pid,))}
+        self._merge_listed()
+        days = self.db.query("SELECT * FROM days WHERE panel_id = ? ORDER BY date", (pid,))
+        # Der laufende Tag ist die jüngste Zeile mit ICAO-Mengen (ids), abgeschlossene Tage haben ids NULL und sind
+        # History. Nicht einfach die jüngste Zeile: Ging die Uhr zurück (ein Rechner ohne Uhr, bis die Zeit
+        # abgeglichen ist), steht ein abgeschlossener Tag mit späterem Datum dahinter, und der laufende gälte
+        # sonst als History.
+        cur = next((r for r in reversed(days) if r["ids"]), None)
+        if cur is not None:
+            ids = json.loads(cur["ids"])
+            self.day = {**_new_day(cur["date"]), "max_alt_m": cur["max_alt_m"],
+                        "max_alt_callsign": cur["max_alt_callsign"], "quiet_record_s": cur["quiet_record_s"],
+                        **{k: set(ids.get(k, [])) for k in ("aircraft", "airlines", "shown")}}
+        self.history = {r["date"]: {"aircraft": r["aircraft"], "airlines": r["airlines"], "shown": r["shown"],
+                                    "max_alt_m": r["max_alt_m"], "quiet_record_s": r["quiet_record_s"]}
+                        for r in days if r is not cur}
+        self.rare = {r["icao24"]: json.loads(r["data"])
+                     for r in self.db.query("SELECT icao24, data FROM rare WHERE panel_id = ?", (pid,))}
+        c = self.db.state_get("course") or {}
+        self.course, self.prev_course = c.get("now"), c.get("prev")
+        self.course_since, self.course_seen = c.get("since", 0.0), c.get("seen", 0.0)
+
+    def load_legacy(self, raw: dict) -> None:
+        """Alte stats.json übernehmen (main.absorb_legacy, einmalig)."""
         try:
             self.since = raw.get("since", self.since)
-            self.dex = raw.get("dex", {})
+            for key, e in raw.get("dex", {}).items():
+                self.dex.setdefault(key, e)
             self._merge_listed()
             d = raw.get("day") or {}
             if d.get("date"):
-                self.day = {**_new_day(d["date"]), **d,
-                            **{k: set(d.get(k, [])) for k in ("aircraft", "airlines", "shown")}}
-            self.history = raw.get("history", {})
-            self.last_obs = raw.get("last_obs", 0.0)
-            self.last_in_view = raw.get("last_in_view", 0.0)
-            self.rare = raw.get("rare", {})
+                day = {**_new_day(d["date"]), **d, **{k: set(d.get(k, [])) for k in ("aircraft", "airlines", "shown")}}
+                if day["date"] >= self.day["date"]:
+                    self.day = day
+                else:
+                    self.history[day["date"]] = _counts(day)
+            self.history.update(raw.get("history", {}))
+            self._finished.update(self.history)
+            self.last_obs = raw.get("last_obs", self.last_obs)
+            self.last_in_view = raw.get("last_in_view", self.last_in_view)
+            self.rare.update(raw.get("rare", {}))
             c = raw.get("course") or {}
-            self.course = c.get("now")
-            self.prev_course = c.get("prev")
-            self.course_since = c.get("since", 0.0)
-            self.course_seen = c.get("seen", 0.0)
+            self.course, self.prev_course = c.get("now", self.course), c.get("prev", self.prev_course)
+            self.course_since, self.course_seen = c.get("since", self.course_since), c.get("seen", self.course_seen)
         except Exception as e:
-            log.warning("stats.json unvollständig (%s), lese nur einen Teil", e)
+            log.warning("stats.json unvollständig (%s), übernehme nur einen Teil", e)
+        self.dirty = True
 
     def _merge_listed(self) -> None:
         """Exoten, die inzwischen in airlines.json stehen, zählen zur Marke (oder fallen
@@ -95,6 +139,7 @@ class Stats:
         Sichtungsdatum bleibt, außer die Marke hat schon einen Eintrag."""
         for code in [k for k, e in self.dex.items() if not e.get("known") and k in self.names]:
             e = self.dex.pop(code)
+            self._gone_brands.add(code)
             b = self.brand(code)
             if b is not None:
                 self.dex.setdefault(b[0], {**e, "name": b[1], "known": b[2]})
@@ -106,17 +151,56 @@ class Stats:
                 e["known"] = False
                 self.dirty = True
 
-    def to_dict(self) -> dict:
-        d = {**self.day, **{k: sorted(self.day[k]) for k in ("aircraft", "airlines", "shown")}}
-        return {"since": self.since, "dex": self.dex, "day": d, "history": self.history,
-                "last_obs": self.last_obs, "last_in_view": self.last_in_view, "rare": self.rare,
-                "course": {"now": self.course, "prev": self.prev_course, "since": self.course_since,
-                           "seen": self.course_seen}}
-
     def save(self) -> None:
-        if self.dirty:
-            write_json(self.path, self.to_dict())
-            self.dirty = False
+        """Geändertes in die Datenbank schreiben (main.App.save(), in einer Transaktion mit den anderen
+        Speichern). Was vorgemerkt war, gilt erst nach dem COMMIT als gespeichert (Db.after_commit);
+        scheitert die Transaktion, schreibt der nächste Lauf es noch einmal."""
+        if not self.dirty:
+            return
+        pid = self.panel_id
+        finished, gone_days, gone_brands = dict(self._finished), set(self._gone_days), set(self._gone_brands)
+        self.db.execute("UPDATE panels SET stats_since = ?, last_obs = ?, last_in_view = ? WHERE id = ?",
+                        (self.since, self.last_obs, self.last_in_view, pid))
+        for brand in gone_brands:
+            self.db.execute("DELETE FROM album WHERE panel_id = ? AND brand = ?", (pid, brand))
+        self.db.executemany(
+            "INSERT INTO album (panel_id, brand, code, name, known, callsign, first, last, fanfare) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(panel_id, brand) DO UPDATE SET code = excluded.code, "
+            "name = excluded.name, known = excluded.known, callsign = excluded.callsign, first = excluded.first, "
+            "last = excluded.last, fanfare = excluded.fanfare",
+            [(pid, b, e.get("code", ""), e.get("name", ""), int(bool(e.get("known"))), e.get("callsign", ""),
+              e["first"], e.get("last", e["first"]), int(bool(e.get("fanfare")))) for b, e in self.dex.items()])
+        for date in gone_days:
+            self.db.execute("DELETE FROM days WHERE panel_id = ? AND date = ?", (pid, date))
+        day_sql = ("INSERT INTO days (panel_id, date, aircraft, airlines, shown, max_alt_m, max_alt_callsign, "
+                   "quiet_record_s, ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(panel_id, date) DO UPDATE SET "
+                   "aircraft = excluded.aircraft, airlines = excluded.airlines, shown = excluded.shown, "
+                   "max_alt_m = excluded.max_alt_m, max_alt_callsign = excluded.max_alt_callsign, "
+                   "quiet_record_s = excluded.quiet_record_s, ids = excluded.ids")
+        # .get mit 0: Einträge aus alten Fassungen (stats.json) haben nicht immer jedes Feld.
+        self.db.executemany(day_sql, [(pid, date, h.get("aircraft", 0), h.get("airlines", 0), h.get("shown", 0),
+                                       h.get("max_alt_m", 0), "", h.get("quiet_record_s", 0), None)
+                                      for date, h in finished.items()])
+        d = self.day
+        ids = json.dumps({k: sorted(d[k]) for k in ("aircraft", "airlines", "shown")})
+        self.db.execute(day_sql, (pid, d["date"], len(d["aircraft"]), len(d["airlines"]), len(d["shown"]),
+                                  d["max_alt_m"], d["max_alt_callsign"], d["quiet_record_s"], ids))
+        self.db.execute("DELETE FROM rare WHERE panel_id = ?", (pid,))
+        self.db.executemany("INSERT INTO rare (panel_id, icao24, data) VALUES (?, ?, ?)",
+                            [(pid, k, json.dumps(v, ensure_ascii=False)) for k, v in self.rare.items()])
+        self.db.state_set("course", {"now": self.course, "prev": self.prev_course, "since": self.course_since,
+                                     "seen": self.course_seen})
+        # Zwischen diesem save() und dem COMMIT ändert sich nichts: App.save() ist synchron (kein await),
+        # observe() kommt nicht dazwischen. Darum darf dirty danach aus.
+        self.db.after_commit(lambda: self._saved(finished, gone_days, gone_brands))
+
+    def _saved(self, finished: dict[str, dict], gone_days: set[str], gone_brands: set[str]) -> None:
+        """Nach dem COMMIT: das Geschriebene vergessen. Nur Speicher, darf nicht scheitern."""
+        for date in finished:
+            self._finished.pop(date, None)
+        self._gone_days -= gone_days
+        self._gone_brands -= gone_brands
+        self.dirty = False
 
     # ---------------------------------------------------------------- Abruf --
     def brand(self, code: str) -> tuple[str, str, bool] | None:
@@ -185,11 +269,11 @@ class Stats:
 
     def _roll(self, date: str) -> None:
         d = self.day
-        self.history[d["date"]] = {"aircraft": len(d["aircraft"]), "airlines": len(d["airlines"]),
-                                   "shown": len(d["shown"]), "max_alt_m": d["max_alt_m"],
-                                   "quiet_record_s": d["quiet_record_s"]}
+        self.history[d["date"]] = self._finished[d["date"]] = _counts(d)
         for k in sorted(self.history)[:-HISTORY_DAYS]:
             del self.history[k]
+            self._finished.pop(k, None)
+            self._gone_days.add(k)
         self.day = _new_day(date)
 
     def _rare(self, s: State, now: float) -> None:

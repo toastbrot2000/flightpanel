@@ -3,6 +3,7 @@ import os
 import pytest
 
 from flightpanel.config import Config
+from flightpanel.db import Db
 from flightpanel.model import State
 
 DATA = os.path.join(os.path.dirname(__file__), "..", "..", "data")
@@ -20,6 +21,15 @@ def make_cfg(**kw) -> Config:
                 max_flights=3, data_dir=DATA, idle_seconds=12, idle_clock_share=0.35)
     base.update(kw)
     return Config(**base)
+
+
+def make_db(tmp_path, *panels: str) -> Db:
+    """Datenbank in tmp_path mit den Panel-Zeilen (Default: home), wie sie der Server anlegt."""
+    db = Db(str(tmp_path / "flightpanel.db"))
+    for pid in panels or ("home",):
+        if db.panel_get(pid) is None:
+            db.panel_add(pid)
+    return db
 
 
 def state(icao="3c0001", cs="EZY1234", lat=52.6, lon=13.6, alt=3000.0, speed=110.0, track=250.0,
