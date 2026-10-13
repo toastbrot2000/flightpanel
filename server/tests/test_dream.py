@@ -5,6 +5,8 @@ import asyncio
 import time
 from datetime import datetime
 
+import pytest
+
 from conftest import make_cfg
 from flightpanel import cache as cache_mod
 from flightpanel import issues as issues_mod
@@ -91,6 +93,46 @@ def test_cache_forgets_saved_entries_once_they_expire(tmp_path, monkeypatch):
     now[0] += 120
     assert len(Cache(db)) == 1                          # beim Laden fällt Abgelaufenes weg
     assert c.prune() == 1 and [r["key"] for r in db.query("SELECT key FROM cache")] == ["ac:3c0001"]
+
+
+def test_cache_stays_unsaved_when_the_surrounding_transaction_fails(tmp_path, monkeypatch):
+    """App.save() schreibt alle Speicher in einer Transaktion. Scheitert sie, steht davon nichts in der Datenbank:
+    Der Zwischenspeicher muss alles für das nächste Speichern vorgemerkt lassen."""
+    db = Db(str(tmp_path / "c.db"))
+    clock(monkeypatch, cache_mod)
+    c = Cache(db)
+    c.set("route:EZY1", {"origin": "LGW"}, ttl=3600)
+    with pytest.raises(RuntimeError):
+        with db.transaction():
+            c.save()
+            raise RuntimeError("ein anderer Speicher scheitert")
+    assert db.query("SELECT key FROM cache") == []
+    c.save()                                            # später ohne Transaktion
+    assert [r["key"] for r in db.query("SELECT key FROM cache")] == ["route:EZY1"]
+
+
+def test_cache_keeps_what_was_set_after_saving_but_before_the_commit(tmp_path, monkeypatch):
+    db = Db(str(tmp_path / "c.db"))
+    clock(monkeypatch, cache_mod)
+    c = Cache(db)
+    c.set("route:A", {"origin": "LGW"}, ttl=3600)
+    with db.transaction():
+        c.save()
+        c.set("route:B", {"origin": "BER"}, ttl=3600)   # kommt erst nach dem Schreiben dazu
+    c.save()
+    assert [r["key"] for r in db.query("SELECT key FROM cache ORDER BY key")] == ["route:A", "route:B"]
+
+
+def test_cache_forgets_what_it_wrote_once_the_transaction_committed(tmp_path, monkeypatch):
+    db = Db(str(tmp_path / "c.db"))
+    clock(monkeypatch, cache_mod)
+    c = Cache(db)
+    c.set("route:EZY1", {"origin": "LGW"}, ttl=3600)
+    with db.transaction():
+        c.save()
+    changes = db.conn.total_changes
+    c.save()
+    assert db.conn.total_changes == changes             # nichts mehr vorgemerkt, also nichts noch einmal geschrieben
 
 
 def test_cache_saves_after_an_unsaved_entry_expired_on_lookup(tmp_path, monkeypatch):

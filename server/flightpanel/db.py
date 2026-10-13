@@ -6,8 +6,10 @@ Auffälligkeiten (issues.py), fehlende Logos (logos.py), Bahndaten der ISS (astr
 Kleinkram in "state". Mitgelieferte Daten (airlines.json ...) bleiben JSON, Logos Dateien.
 
 Nur dieses Modul importiert sqlite3. Die Speicher halten ihren Zustand im Arbeitsspeicher
-und schreiben Geändertes in App.save() (main.py) in einer Transaktion; jedes SQL ist
-parametrisiert. Schema-Änderungen kommen als weiteres Skript in MIGRATIONS, PRAGMA
+und schreiben Geändertes in App.save() (main.py) in einer Transaktion; was sie sich dafür
+vorgemerkt haben, vergessen sie erst per after_commit, wenn die Transaktion festgeschrieben
+ist, sonst ginge es bei einem ROLLBACK verloren. Jedes SQL ist parametrisiert.
+Schema-Änderungen kommen als weiteres Skript in MIGRATIONS, PRAGMA
 user_version merkt sich den Stand der Datei. Jede Migration läuft samt neuem Stand in einer
 eigenen Transaktion; wer die Schreibsperre bekommt, prüft den Stand noch einmal. So tun
 Server und panels.py, die gleichzeitig eine neue Datei öffnen, nichts doppelt.
@@ -26,6 +28,7 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 
 log = logging.getLogger("db")
@@ -100,6 +103,7 @@ PANEL_SELECT = ("SELECT id, name, settings, fw_channel, created, updated, stats_
 class Db:
     def __init__(self, path: str, put_aside: bool = True):
         self.path = path
+        self._after_commit: list[Callable[[], None]] | None = None     # nur innerhalb von transaction()
         try:
             self.conn = self._connect()
         except sqlite3.DatabaseError as e:
@@ -166,9 +170,28 @@ class Db:
     def one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
         return self.conn.execute(sql, params).fetchone()
 
+    @contextmanager
     def transaction(self):
         """Mehrere Schreibzugriffe als eine Einheit: ganz oder gar nicht."""
-        return _immediate(self.conn)
+        with _immediate(self.conn):
+            # Erst nach dem BEGIN: Ein (nicht erlaubtes) verschachteltes transaction() scheitert schon dort
+            # und lässt die Warteschlange der äußeren Transaktion in Ruhe.
+            queue = self._after_commit = []
+            try:
+                yield
+            finally:
+                self._after_commit = None
+        for fn in queue:        # erst hier, nach gelungenem COMMIT: bei jedem Fehler kommt der Ablauf nicht bis dahin
+            fn()
+
+    def after_commit(self, fn: Callable[[], None]) -> None:
+        """fn läuft, sobald die laufende Transaktion festgeschrieben ist; wird sie zurückgerollt (auch wenn erst
+        das COMMIT scheitert), entfällt es. Außerhalb einer Transaktion ist alles schon für sich festgeschrieben:
+        fn läuft sofort. So vergisst ein Speicher Geändertes erst, wenn es sicher in der Datenbank liegt."""
+        if self._after_commit is None:
+            fn()
+        else:
+            self._after_commit.append(fn)
 
     def state_get(self, key: str, default=None):
         row = self.one("SELECT value FROM state WHERE key = ?", (key,))

@@ -53,11 +53,14 @@ class Cache:
     def save(self) -> None:
         self.prune()
         if self._dirty:
+            written = set(self._dirty)
             self.db.executemany(
                 "INSERT INTO cache (key, expires, value) VALUES (?, ?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET expires = excluded.expires, value = excluded.value",
-                [(k, self.data[k][0], json.dumps(self.data[k][1], ensure_ascii=False)) for k in self._dirty])
-            self._dirty.clear()
+                [(k, self.data[k][0], json.dumps(self.data[k][1], ensure_ascii=False)) for k in written])
+            # Erst nach dem COMMIT vergessen: Scheitert die umgebende Transaktion (App.save() schreibt alle Speicher
+            # in einer), bleibt alles fürs nächste Mal vorgemerkt.
+            self.db.after_commit(lambda: self._dirty.difference_update(written))
 
     def get(self, key: str):
         """Wert oder None, wenn unbekannt oder abgelaufen."""

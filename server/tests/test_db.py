@@ -108,6 +108,55 @@ def test_a_failed_commit_leaves_the_connection_usable(tmp_path):
     assert db.state_get("a") == 1 and db.one("SELECT 1 FROM album") is None
 
 
+def test_after_commit_runs_once_the_transaction_is_committed(tmp_path):
+    path = str(tmp_path / "f.db")
+    db, other = Db(path), Db(path)
+    seen = []
+    with db.transaction():
+        db.state_set("a", 1)
+        db.after_commit(lambda: seen.append(other.state_get("a")))
+        assert seen == []                               # erst nach dem COMMIT
+    assert seen == [1]                                  # und dann ist es für andere Verbindungen sichtbar
+    with db.transaction():
+        db.state_set("a", 2)
+    assert seen == [1]                                  # einmal angemeldet, einmal ausgeführt
+
+
+def test_after_commit_is_dropped_on_rollback(tmp_path):
+    db = Db(str(tmp_path / "f.db"))
+    ran = []
+    with pytest.raises(RuntimeError):
+        with db.transaction():
+            db.after_commit(lambda: ran.append("zurückgerollt"))
+            raise RuntimeError("mittendrin")
+    db.after_commit(lambda: ran.append("sofort"))       # danach gilt außerhalb wieder: sofort
+    with db.transaction():
+        db.state_set("a", 1)                            # und eine spätere Transaktion führt nichts Altes aus
+    assert ran == ["sofort"]
+
+
+def test_after_commit_is_dropped_when_the_commit_itself_fails(tmp_path):
+    db = Db(str(tmp_path / "f.db"))
+    ran = []
+    # aufgeschobener Fremdschlüssel: nicht schon eine Anweisung scheitert, erst das COMMIT
+    with pytest.raises(Exception, match="FOREIGN KEY"):
+        with db.transaction():
+            db.after_commit(lambda: ran.append("COMMIT gescheitert"))
+            db.execute("PRAGMA defer_foreign_keys = ON")
+            db.execute("INSERT INTO album (panel_id, brand, first, last) VALUES ('gibt-es-nicht', 'X', 1, 1)")
+    db.after_commit(lambda: ran.append("sofort"))
+    with db.transaction():
+        db.state_set("a", 1)
+    assert ran == ["sofort"]
+
+
+def test_after_commit_outside_a_transaction_runs_at_once(tmp_path):
+    db = Db(str(tmp_path / "f.db"))
+    ran = []
+    db.after_commit(lambda: ran.append(1))              # dort ist jede Anweisung schon für sich festgeschrieben
+    assert ran == [1]
+
+
 def test_panel_rows(tmp_path):
     db = Db(str(tmp_path / "f.db"))
     db.panel_add("home", settings={"HOME_LAT": "52.5"})
