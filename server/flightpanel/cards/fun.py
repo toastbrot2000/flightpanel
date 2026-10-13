@@ -10,7 +10,7 @@ from ..fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from ..idle import Ctx, Hit
 from .common import slot_rng
 
-PLANE_TEXTS = ["Himmel frei", "Warteschleife …", "gleich kommt einer"]   # unter dem Flugzeug
+PLANE_TEXTS = ["Himmel frei", "Warteschleife …"]   # unter dem Flugzeug; nichts, was nach einer Vorhersage klingt
 
 
 # -------------------------------------------------------------- Animationen --
