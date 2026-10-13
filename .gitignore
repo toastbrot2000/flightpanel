@@ -19,3 +19,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+
+# Worktrees von Claude-Code-Sitzungen (eigene Git-Repos, nie einchecken)
+.claude/worktrees/
