@@ -25,7 +25,7 @@ from PIL import Image
 
 from .aircraft import second_line, shown_elsewhere
 from .cards import CARDS, fun
-from .colors import CLOCK, GOLD, INFO, MUTED, dim
+from .colors import CLOCK, GOLD, INFO, MUTED, NAME, dim
 from .config import INFO_PAGES, Config
 from .draw import ROW1, ROW2, ROW3, STATUS_COLORS, headline, line, right, status_glyph
 from .fonts import FONT_BIG, FONT_MID, FONT_SMALL
@@ -257,7 +257,7 @@ class Renderer:
 
         # Zeile 1: Pfeil + Airline (oder Callsign, wenn kein Name bekannt)
         name = fl.airline or fl.callsign
-        headline(img, x0, ROW1, f"{status_glyph(fl.status)} {name}", STATUS_COLORS[fl.status], f, avail)
+        headline(img, x0, ROW1, f"{status_glyph(fl.status)} {name}", NAME, f, avail, lead=STATUS_COLORS[fl.status])
 
         # Zeile 2: Route, sonst was der Flug ist, sonst ?→BER; rechtsbündig der Typ
         route = second_line(fl.origin, fl.dest, fl.status, fl.label, self.cfg.local_airport_iata)
@@ -283,9 +283,9 @@ class Renderer:
             cs = ""
         csw = FONT_BIG.text_width(cs) if cs else 0
         col = STATUS_COLORS[fl.status]
-        headline(img, 0, ROW1, head, col, f, W - (csw + 6 if cs else 0))
+        headline(img, 0, ROW1, head, NAME, f, W - (csw + 6 if cs else 0), lead=col)
         if cs:
-            right(img, FONT_BIG, ROW1, cs, col, f)
+            right(img, FONT_BIG, ROW1, cs, NAME, f)
 
         # Zeile 2: Route, sonst was der Flug ist, sonst ?→BER; Typ rechts
         route = second_line(fl.origin, fl.dest, fl.status, fl.label, self.cfg.local_airport_iata)
@@ -314,7 +314,7 @@ class Renderer:
             col = dim(STATUS_COLORS[fl.status], f)
             name = fl.airline or fl.callsign
             x = FONT_SMALL.draw(img, 0, y, f"{status_glyph(fl.status)} ", col)
-            x = FONT_SMALL.draw(img, x, y, FONT_SMALL.fit(name, 60), col)
+            x = FONT_SMALL.draw(img, x, y, FONT_SMALL.fit(name, 60), dim(NAME, f))
             info = f"{fl.other_airport[:3]} {alt_text(fl)}".strip()
             if fl.actype and FONT_SMALL.text_width(info + " " + fl.actype) <= W - x - 6:
                 info = f"{info} {fl.actype}"

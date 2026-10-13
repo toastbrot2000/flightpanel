@@ -5,6 +5,7 @@ DEP_C = (0, 210, 70)        # Abflug, grün
 OVF_C = (70, 120, 230)      # Überflug, blau
 INFO = (120, 150, 230)
 MUTED = (150, 150, 150)
+NAME = (175, 175, 175)      # Airline in Flugzeilen: neutral, damit sie sich vom Logo abhebt; Status zeigt der Pfeil
 CLOCK = (140, 70, 0)
 RED = (230, 30, 30)
 GOLD = (230, 170, 20)

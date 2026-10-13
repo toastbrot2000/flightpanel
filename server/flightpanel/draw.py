@@ -35,13 +35,21 @@ def line(img: Image.Image, x: int, y: int, s: str, c: Color, f: float, max_w: in
     return FONT_SMALL.draw(img, x, y + FONT_MID.cap_height - FONT_SMALL.cap_height, FONT_SMALL.fit(s, max_w), dim(c, f))
 
 
-def headline(img: Image.Image, x: int, y: int, s: str, c: Color, f: float, max_w: int) -> int:
+def headline(img: Image.Image, x: int, y: int, s: str, c: Color, f: float, max_w: int,
+             lead: Color | None = None) -> int:
     """Zeile 1 eines Flugs oder einer Karte: fett, passt sie nicht, in FONT_MID, dann
-    FONT_SMALL (bündig mit der Unterkante der Großbuchstaben), erst dann gekürzt ("Germanwin")."""
+    FONT_SMALL (bündig mit der Unterkante der Großbuchstaben), erst dann gekürzt ("Germanwin").
+    lead: Farbe des ersten Worts (Statuspfeil), der Rest in c."""
     for font in (FONT_BIG, FONT_MID):
         if font.text_width(s) <= max_w:
-            return font.draw(img, x, y + FONT_BIG.cap_height - font.cap_height, s, dim(c, f))
-    return FONT_SMALL.draw(img, x, y + FONT_BIG.cap_height - FONT_SMALL.cap_height, FONT_SMALL.fit(s, max_w), dim(c, f))
+            break
+    else:
+        font, s = FONT_SMALL, FONT_SMALL.fit(s, max_w)
+    y += FONT_BIG.cap_height - font.cap_height
+    end = font.draw(img, x, y, s, dim(c, f))
+    if lead is not None:
+        font.draw(img, x, y, s.split(" ", 1)[0], dim(lead, f))      # dieselben Pixel, andere Farbe
+    return end
 
 
 def center(img: Image.Image, font: Font, y: int, s: str, c: Color, f: float, x0: int = 0,
