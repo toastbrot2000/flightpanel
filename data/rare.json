@@ -17,9 +17,8 @@
     "DC3": "DC-3",
     "C47": "Rosinenbomber",
     "JU52": "Ju 52",
-    "CONC": "Concorde"
-    "_comment": "please @ me if you see the concorde or a douglas :)",
-
+    "CONC": "Concorde",
+    "_comment_types": "please @ me if you see the concorde or a douglas :)"
   },
   "callsigns": {
     "AF1": "Air Force One",
