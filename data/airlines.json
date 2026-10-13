@@ -115,7 +115,7 @@
   "CND": {"name": "Corendon", "iata": "CD"},
   "CXI": {"name": "Corendon", "iata": "XC", "adsbdb": "Shanxi Airlines"},
   "AEG": {"name": "Airest", "iata": "", "adsbdb": "Aerofumigaciones Sam"},
-  "KRH": {"name": "UK Royal VIP", "iata": ""},
+  "KRH": {"name": "UK Royal VIP", "iata": "", "airline": false, "label": "Regierungsflug"},
   "GWI": {"name": "Germanwings", "iata": "4U"},
   "BCS": {"name": "DHL", "iata": "D0", "adsbdb": "European Air Transport"},
   "DHK": {"name": "DHL", "iata": "D0"},
