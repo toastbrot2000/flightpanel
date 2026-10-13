@@ -132,6 +132,7 @@ def test_operator_names_match():
     from flightpanel.issues import names_match
     assert names_match("Norwegian", "Norwegian Air Sweden AOC")
     assert names_match("SAS", "Scandinavian Airlines System")
+    assert names_match("airBaltic", "Air Baltic")                 # Leerzeichen zählen nicht
     assert not names_match("Sundair", "City Airline")
 
 

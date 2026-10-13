@@ -90,7 +90,7 @@ Alle Karten mit Bild, Stufe und Bedingung: [docs/screens.md](docs/screens.md).
 | Was | Quelle | Bemerkung |
 |---|---|---|
 | Flugzeuge | [adsb.lol](https://adsb.lol) (`SOURCE=adsblol`) | Community-Netz aus ADS-B-Empfängern, ohne Account, alle `POLL_INTERVAL` Sekunden. Liefert auch Typ und ADS-B-Kategorie (Hubschrauber, Leichtflugzeug). Daten unter ODbL. |
-| Ersatz | [OpenSky](https://opensky-network.org) | springt ein, wenn adsb.lol ausfällt, so oft das Tagesbudget erlaubt (anonym 400 Credits, mit Account 4000: `OPENSKY_CLIENT_ID`/`_SECRET`). `SOURCE=opensky` nimmt nur OpenSky. |
+| Ersatz | [OpenSky](https://opensky-network.org) | springt ein, wenn adsb.lol auch im zweiten Versuch nicht antwortet (der geht an einen anderen adsb.lol-Server), so oft das Tagesbudget erlaubt (anonym 400 Credits, mit Account 4000: `OPENSKY_CLIENT_ID`/`_SECRET`). `SOURCE=opensky` nimmt nur OpenSky. |
 | Routen | [adsb.im](https://adsb.im), dann [adsbdb](https://www.adsbdb.com) | pro Callsign gespeichert und oft alt; liegt das Flugzeug weit neben der Strecke, verwirft der Server sie. Fliegt eine Airline hin und zurück unter einem Callsign (BER-NCE-BER), zählt die Teilstrecke, auf der das Flugzeug gerade ist. |
 | Herkunft ohne Route | OpenSky-Flugspur | beginnt die Spur am Boden, ist der nächste Flughafen aus `data/airports.json` der Start; beginnt sie erst in der Luft, bleibt die Herkunft offen. |
 | Wetter | aviationweather.gov, NOAA | METAR alle 20 min (`METAR=0` schaltet ab). |

@@ -3,7 +3,13 @@ Liefert neben der Position auch den Flugzeugtyp (t) und die ADS-B-Kategorie
 (A7 = Hubschrauber), die OpenSky nicht hat.
 
 Rate-Limit pro IP: Bei zu vielen Abrufen kommt HTTP 429 (vorher bis zu einige
-Sekunden verzögert). Dann Pause, 60 s, bei Wiederholung doppelt, bis 10 min."""
+Sekunden verzögert). Dann Pause, 60 s, bei Wiederholung doppelt, bis 10 min.
+
+Hinter api.adsb.lol stehen mehrere Server (DNS mit kurzer TTL, wechselnde
+Reihenfolge). Im Oktober 2026 brauchte einer davon 5 bis 17 s oder antwortete mit
+429, die anderen 0,1 s; jeder zwanzigste Abruf lief in den Timeout. Darum nach
+kurzem Warten ein zweiter Versuch: aiohttp reicht die Adressen aus seinem DNS-Cache
+reihum weiter, der zweite Versuch geht also an einen anderen Server."""
 
 import logging
 import math
@@ -18,6 +24,8 @@ log = logging.getLogger("adsblol")
 POINT_URL = "https://api.adsb.lol/v2/point/{lat:.4f}/{lon:.4f}/{nm}"
 MAX_POS_AGE_S = 30      # ältere Positionen verwerfen
 BACKOFF_MIN, BACKOFF_MAX = 60, 600
+ATTEMPT_TIMEOUTS_S = (5, 8)     # erster Versuch, zweiter an einen anderen Server
+RETRY_ON = (TimeoutError, aiohttp.ClientConnectionError)   # 429 nie: das ist die Bremse
 
 
 class Paused(RuntimeError):
@@ -68,26 +76,33 @@ class AdsbLol:
         self._backoff = 0
 
     async def fetch(self, lat: float, lon: float, radius_km: float) -> list[State]:
-        """Flugzeuge im Umkreis. Wirft bei Fehlern, damit der Aufrufer auf
-        OpenSky ausweichen kann."""
+        """Flugzeuge im Umkreis. Hängt der erste Versuch, ein zweiter (siehe oben).
+        Wirft bei Fehlern, damit der Aufrufer auf OpenSky ausweichen kann."""
         wait = self.backoff_until - time.time()
         if wait > 0:
             raise Paused(f"Pause nach Rate-Limit, noch {wait:.0f} s")
         nm = max(1, min(250, math.ceil(radius_km / 1.852)))
-        try:
-            async with self.session.get(POINT_URL.format(lat=lat, lon=lon, nm=nm),
-                                        timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status == 429:
-                    self._backoff = min(BACKOFF_MAX, max(BACKOFF_MIN, self._backoff * 2))
-                    self.backoff_until = time.time() + self._backoff
-                    raise RuntimeError(f"HTTP 429, Pause {self._backoff} s")
-                if r.status >= 400:
-                    raise RuntimeError(f"HTTP {r.status}")
-                j = await r.json(content_type=None)
-        except Exception as e:
-            self.last_error = str(e) or type(e).__name__
-            raise
+        url = POINT_URL.format(lat=lat, lon=lon, nm=nm)
+        for attempt, limit in enumerate(ATTEMPT_TIMEOUTS_S, 1):
+            try:
+                j = await self._get(url, limit)
+                break
+            except Exception as e:
+                self.last_error = str(e) or type(e).__name__
+                if attempt == len(ATTEMPT_TIMEOUTS_S) or not isinstance(e, RETRY_ON):
+                    raise
+                log.info("adsb.lol: %s, zweiter Versuch", self.last_error)
         self.last_ok = time.time()
         self.last_error = None
         self._backoff = 0
         return [s for s in (parse(ac) for ac in j.get("ac") or []) if s is not None]
+
+    async def _get(self, url: str, limit: float) -> dict:
+        async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=limit)) as r:
+            if r.status == 429:
+                self._backoff = min(BACKOFF_MAX, max(BACKOFF_MIN, self._backoff * 2))
+                self.backoff_until = time.time() + self._backoff
+                raise RuntimeError(f"HTTP 429, Pause {self._backoff} s")
+            if r.status >= 400:
+                raise RuntimeError(f"HTTP {r.status}")
+            return await r.json(content_type=None)

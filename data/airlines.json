@@ -1,5 +1,5 @@
 {
-  "_comment": "ICAO-Code -> Anzeigename und IATA-Code (für den Logo-Abruf). Reihenfolge: häufig in Berlin zuerst. Wird auch vom Seed-Skript benutzt: python3 -m flightpanel.fetch_logos. \"airline\": false markiert Betreiber, die keine Airline sind (Rettung, Polizei, Militär): Die haben beim Anzeigen keinen Vorrang. \"adsbdb\": geprüfter abweichender Name bei adsbdb (veraltet), wird nicht mehr als name_mismatch gemeldet.",
+  "_comment": "ICAO-Code -> Anzeigename und IATA-Code (für den Logo-Abruf). Reihenfolge: häufig in Berlin zuerst. Wird auch vom Seed-Skript benutzt: python3 -m flightpanel.fetch_logos. \"airline\": false markiert Betreiber, die keine Airline sind (Rettung, Polizei, Militär, Businessjets): Die haben beim Anzeigen keinen Vorrang. \"adsbdb\": geprüfter abweichender Name bei adsbdb (veraltet oder Firmenname statt Marke), wird nicht mehr als name_mismatch gemeldet.",
 
   "EZY": {"name": "easyJet", "iata": "U2"},
   "EJU": {"name": "easyJet", "iata": "U2"},
@@ -9,7 +9,7 @@
   "MAY": {"name": "Malta Air", "iata": "FR"},
   "DLH": {"name": "Lufthansa", "iata": "LH"},
   "CLH": {"name": "Lufthansa", "iata": "CL"},
-  "LHX": {"name": "Lufthansa City", "iata": "VL"},
+  "LHX": {"name": "Lufthansa City", "iata": "VL", "adsbdb": "City Airlines"},
   "EWG": {"name": "Eurowings", "iata": "EW"},
   "EWE": {"name": "Eurowings", "iata": "EW"},
   "OCN": {"name": "Discover", "iata": "4Y"},
@@ -117,7 +117,7 @@
   "AEG": {"name": "Airest", "iata": "", "adsbdb": "Aerofumigaciones Sam"},
   "KRH": {"name": "UK Royal VIP", "iata": ""},
   "GWI": {"name": "Germanwings", "iata": "4U"},
-  "BCS": {"name": "DHL", "iata": "D0"},
+  "BCS": {"name": "DHL", "iata": "D0", "adsbdb": "European Air Transport"},
   "DHK": {"name": "DHL", "iata": "D0"},
   "BOX": {"name": "AeroLogic", "iata": "3S"},
   "FDX": {"name": "FedEx", "iata": "FX"},
@@ -137,6 +137,8 @@
   "SWT": {"name": "Swiftair", "iata": ""},
   "SRR": {"name": "Star Air", "iata": ""},
   "MNB": {"name": "MNG Cargo", "iata": ""},
+  "SRN": {"name": "SprintAir", "iata": "", "adsbdb": "Sirair"},
+  "ADZ": {"name": "Compass Cargo", "iata": ""},
   "GTI": {"name": "Atlas Air", "iata": "5Y"},
   "CKS": {"name": "Kalitta", "iata": "K4"},
   "PAC": {"name": "Polar Air", "iata": ""},
@@ -147,5 +149,7 @@
   "PBB": {"name": "Landespolizei", "iata": "", "airline": false, "label": "Polizei"},
   "CHX": {"name": "Christoph", "iata": "", "airline": false, "label": "Luftrettung", "number": true},
   "RHH": {"name": "Redstar", "iata": "", "airline": false, "label": "Ambulanzjet", "adsbdb": "Redstar Aviation"},
+  "JFA": {"name": "Jetfly", "iata": "", "airline": false},
+  "AWH": {"name": "Aerowest", "iata": "", "airline": false},
   "FCK": {"name": "Flugvermessung", "iata": "", "airline": false, "label": "prüft Landehilfen"}
 }
