@@ -148,6 +148,8 @@ class AdsbIm:
                     self.issues.source_error("adsbim", self.last_error)
                 continue
             for item in resp if isinstance(resp, list) else []:
+                if not isinstance(item, dict):
+                    continue            # adsb.im liefert manchmal null in der Liste
                 cs = str(item.get("callsign") or "").strip().upper()
                 if cs in ask:
                     stops = parse(item)

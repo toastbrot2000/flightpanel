@@ -4,10 +4,11 @@ Plausibilität."""
 import asyncio
 
 from conftest import BER, NAMES, FakeAdsb, make_cfg, state
-from flightpanel.adsbim import leg_route, parse
+from flightpanel.adsbim import AdsbIm, leg_route, parse
 from flightpanel.airlines import route_plausible
 from flightpanel.airport import Recent, returning
 from flightpanel.build import build_model
+from flightpanel.cache import Cache
 from flightpanel.geo import destination
 
 NCE = (43.6584, 7.2159)
@@ -25,6 +26,30 @@ ROUND_TRIP = parse(answer(("BER", BER), ("NCE", NCE), ("BER", BER)))      # EWG9
 def leg(s, hint=None):
     r = leg_route(ROUND_TRIP, s, "BER", hint)
     return (r["origin"], r["dest"]) if r else None
+
+
+def test_adsbim_skips_empty_entries(tmp_path):
+    """adsb.im liefert manchmal null in der Liste: überspringen, statt den ganzen Abruf
+    abzubrechen (AttributeError adsbim.py:151, zweimal in /issues)."""
+    class Response:
+        status = 200
+
+        async def json(self, content_type=None):
+            return [None, {"callsign": "EWG9SK", **answer(("BER", BER), ("NCE", NCE))}]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class Session:
+        def post(self, url, json=None, timeout=None):
+            return Response()
+
+    im = AdsbIm(Session(), Cache(str(tmp_path / "cache.json")))
+    out = asyncio.run(im.routes([state(cs="EWG9SK"), state(icao="x", cs="DLH1")]))
+    assert [stop.iata for stop in out["EWG9SK"]] == ["BER", "NCE"]
 
 
 def test_round_trip_takes_the_leg_the_plane_is_on():
