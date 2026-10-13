@@ -214,7 +214,8 @@ def radar_draw(img, ctx, d, t_in, f):
     for az, ch in ((0, "N"), (90, "O"), (180, "S"), (270, "W")):
         x = xof(az)
         img.putpixel((min(W - 1, max(0, x)), H - 1), dim(MUTED, f))
-        sprites.tiny_text(img, min(W - 3, max(0, x - 1)), base - 5, ch, dim(HORIZON, f * 1.6))
+        gw = sprites.width(sprites.TINY[ch])
+        sprites.tiny_text(img, min(W - gw, max(0, x - gw // 2)), base - 5, ch, dim(HORIZON, f * 1.6))
 
     up = ctx.model.upcoming.icao24 if ctx.model.upcoming else None
     for p in sorted(near, key=lambda p: p.get("in_view") == "now"):

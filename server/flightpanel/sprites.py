@@ -77,12 +77,13 @@ ISS = [
 ]
 ISS_PAL = {"#": (60, 110, 200), "o": (200, 200, 210)}
 
-# Winzige Buchstaben (3 x 5) für die Himmelsrichtungen im Radar
+# Winzige Buchstaben (5 hoch) für die Himmelsrichtungen im Radar; N und W brauchen
+# 5 Spalten, in 3 sahen beide aus wie M
 TINY = {
-    "N": ["#.#", "###", "###", "#.#", "#.#"],
+    "N": ["#...#", "##..#", "#.#.#", "#..##", "#...#"],
     "O": ["###", "#.#", "#.#", "#.#", "###"],
     "S": ["###", "#..", "###", "..#", "###"],
-    "W": ["#.#", "#.#", "###", "###", "#.#"],
+    "W": ["#...#", "#...#", "#.#.#", "#.#.#", ".#.#."],
 }
 
 
@@ -114,7 +115,7 @@ def tiny_text(img: Image.Image, x: int, y: int, text: str, color: Color) -> int:
         g = TINY.get(ch)
         if g:
             blit(img, g, x, y, color)
-            x += 4
+            x += width(g) + 1
     return x
 
 
