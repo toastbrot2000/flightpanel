@@ -5,7 +5,7 @@ from datetime import datetime
 
 from PIL import Image
 
-from ..colors import ARR_C, GOLD, HORIZON, INFO, MUTED, PINK, dim
+from ..colors import ARR_C, GOLD, HORIZON, INFO, MUTED, NAME, PINK, dim
 from ..draw import ROW1, ROW2, ROW3, frame, headline, km, line, minutes, right, text
 from ..fonts import FONT_BIG, FONT_MID, FONT_SMALL
 from ..geo import kompass
@@ -103,7 +103,7 @@ def new_draw(img, ctx, d, t_in, f):
         FONT_BIG.draw(img, x0, top, "NEU!", dim(GOLD, f))
     cs = d.get("callsign", "")
     FONT_SMALL.draw(img, x1 - FONT_SMALL.text_width(cs), top + 1, cs, dim(MUTED, f * 0.7))
-    text(img, FONT_BIG, x0, ROW2, d["name"], ARR_C, f, x1 - x0)
+    text(img, FONT_BIG, x0, ROW2, d["name"], NAME, f, x1 - x0)
     if d.get("known"):
         text(img, FONT_SMALL, x0, bottom, f"Nr. {d['seen']} von {d['total']}", INFO, f, x1 - x0)
     else:
