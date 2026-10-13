@@ -8,11 +8,16 @@ Kleinkram in "state". Mitgelieferte Daten (airlines.json ...) bleiben JSON, Logo
 Nur dieses Modul importiert sqlite3. Die Speicher halten ihren Zustand im Arbeitsspeicher
 und schreiben Geändertes in App.save() (main.py) in einer Transaktion; jedes SQL ist
 parametrisiert. Schema-Änderungen kommen als weiteres Skript in MIGRATIONS, PRAGMA
-user_version merkt sich den Stand der Datei.
+user_version merkt sich den Stand der Datei. Jede Migration läuft samt neuem Stand in einer
+eigenen Transaktion; wer die Schreibsperre bekommt, prüft den Stand noch einmal. So tun
+Server und panels.py, die gleichzeitig eine neue Datei öffnen, nichts doppelt.
 
 WAL, damit panels.py schreiben kann, während der Server läuft; geht das nicht
-(Netzlaufwerk), tut es das normale Journal auch. Eine kaputte Datei wird als .broken
-beiseitegelegt, der Server startet leer statt gar nicht."""
+(Netzlaufwerk), tut es das normale Journal auch. Nur eine Datei, die SQLite für keine
+Datenbank hält oder die beschädigt ist, wird als .broken beiseitegelegt, der Server startet
+dann leer statt gar nicht. Bei allem anderen (gesperrt, Ein-/Ausgabefehler, scheiternde
+Migration) bleibt die Datei liegen und der Start schlägt laut fehl: lieber kein Server als
+ein stillschweigend leeres Album."""
 
 import json
 import logging
@@ -22,6 +27,8 @@ import time
 from contextlib import contextmanager
 
 log = logging.getLogger("db")
+
+BUSY_MS = 5000        # so lange wartet SQLite auf eine fremde Sperre, bevor es "database is locked" meldet
 
 MIGRATIONS = [
     """
@@ -94,6 +101,10 @@ class Db:
         try:
             self.conn = self._connect()
         except sqlite3.DatabaseError as e:
+            # Nur eine Datei, die keine Datenbank oder beschädigt ist, kommt beiseite. Gesperrt, Ein-/Ausgabefehler
+            # oder eine scheiternde Migration sagen nichts über die Datei: laut scheitern, nichts verschieben.
+            if _code(e) not in (sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CORRUPT):
+                raise
             broken = self.path + ".broken"
             log.error("%s ist keine lesbare Datenbank (%s): liegt jetzt als %s beiseite, starte leer",
                       os.path.basename(self.path), e, os.path.basename(broken))
@@ -106,11 +117,19 @@ class Db:
 
     def _connect(self) -> sqlite3.Connection:
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-        conn = sqlite3.connect(self.path, isolation_level=None)      # Transaktionen ausdrücklich, s. u.
+        conn = sqlite3.connect(self.path, autocommit=True)           # Transaktionen ausdrücklich, s. u.
         try:
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA busy_timeout = 5000")
-            mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+            conn.execute(f"PRAGMA busy_timeout = {BUSY_MS}")
+            deadline = time.monotonic() + BUSY_MS / 1000
+            while True:                             # beim Umschalten auf WAL wartet busy_timeout nicht immer
+                try:
+                    mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+                    break
+                except sqlite3.OperationalError as e:
+                    if _code(e) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) or time.monotonic() > deadline:
+                        raise
+                    time.sleep(0.05)                # ein anderer Öffner schaltet gerade um
             if mode != "wal":
                 log.warning("WAL geht hier nicht (Dateisystem?), nehme %s", mode)
             conn.execute("PRAGMA synchronous = NORMAL")
@@ -123,11 +142,13 @@ class Db:
 
     @staticmethod
     def _migrate(conn: sqlite3.Connection) -> None:
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        for n, script in enumerate(MIGRATIONS[version:], start=version + 1):
-            conn.executescript("BEGIN;\n" + script + "\nCOMMIT;")
-            conn.execute(f"PRAGMA user_version = {n}")
-            log.info("Datenbank auf Stand %d", n)
+        # Der Stand wird erst ohne Sperre gelesen: Im Normalfall ist schon alles fertig und nichts wird gesperrt.
+        while (version := _version(conn)) < len(MIGRATIONS):
+            with _immediate(conn):                  # ab hier schreibt kein anderer Öffner dazwischen
+                if _version(conn) == version:       # sonst war einer schneller, dann gilt sein Stand
+                    conn.executescript(MIGRATIONS[version])      # bleibt in der Transaktion (autocommit=True)
+                    conn.execute(f"PRAGMA user_version = {version + 1}")
+                    log.info("Datenbank auf Stand %d", version + 1)
 
     # ------------------------------------------------------------ Zugriff --
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
@@ -142,16 +163,9 @@ class Db:
     def one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
         return self.conn.execute(sql, params).fetchone()
 
-    @contextmanager
     def transaction(self):
         """Mehrere Schreibzugriffe als eine Einheit: ganz oder gar nicht."""
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield
-        except BaseException:
-            self.conn.execute("ROLLBACK")
-            raise
-        self.conn.execute("COMMIT")
+        return _immediate(self.conn)
 
     def state_get(self, key: str, default=None):
         row = self.one("SELECT value FROM state WHERE key = ?", (key,))
@@ -199,6 +213,30 @@ class Db:
     def panel_remove(self, pid: str) -> None:
         if self.execute("DELETE FROM panels WHERE id = ?", (pid,)).rowcount == 0:
             raise ValueError(f"Panel {pid} gibt es nicht")
+
+
+def _code(e: sqlite3.Error) -> int:
+    """Der SQLite-Fehlercode ohne die erweiterten Bits; 0, wenn der Fehler nicht von SQLite selbst kommt."""
+    return getattr(e, "sqlite_errorcode", 0) & 0xFF
+
+
+def _version(conn: sqlite3.Connection) -> int:
+    return conn.execute("PRAGMA user_version").fetchone()[0]
+
+
+@contextmanager
+def _immediate(conn: sqlite3.Connection):
+    """BEGIN IMMEDIATE ... COMMIT. Scheitert etwas, auch das COMMIT selbst (etwa an einem aufgeschobenen
+    Fremdschlüssel), wird zurückgerollt, soweit noch etwas offen ist: Sonst bliebe die Verbindung mitten in
+    der Transaktion hängen und jede weitere scheiterte mit "cannot start a transaction within a transaction"."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 
 def _panel(row: sqlite3.Row) -> dict:

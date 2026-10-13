@@ -40,6 +40,38 @@ def test_broken_file_is_put_aside(tmp_path, caplog):
     assert db.state_get("k") == 1
 
 
+def test_a_failing_migration_leaves_the_file_alone(tmp_path, monkeypatch):
+    """Scheitert eine Migration, bleibt die Datei liegen und der Start schlägt laut fehl, statt leer zu starten."""
+    path = str(tmp_path / "f.db")
+    db = Db(path)
+    db.panel_add("home", name="Heim")
+    db.close()
+    broken = "CREATE TABLE halb (a);\nUPDATE panels SET name = NULL;"      # die zweite Anweisung scheitert an "home"
+    monkeypatch.setattr("flightpanel.db.MIGRATIONS", [*MIGRATIONS, broken])
+    with pytest.raises(Exception, match="NOT NULL"):
+        Db(path)
+    assert not (tmp_path / "f.db.broken").exists()
+    monkeypatch.undo()
+    db = Db(path)
+    assert db.panel_get("home")["name"] == "Heim" and db.one("PRAGMA user_version")[0] == len(MIGRATIONS)
+    assert db.one("SELECT 1 FROM sqlite_master WHERE name = 'halb'") is None      # alles oder nichts
+
+
+def test_a_slower_opener_does_not_migrate_twice(tmp_path, monkeypatch):
+    """Server und panels.py öffnen eine neue Datei gleichzeitig: Der langsamere hat den Stand gelesen, bevor der
+    schnellere fertig war, und darf dessen Migration trotzdem nicht ein zweites Mal ausführen."""
+    path = str(tmp_path / "f.db")
+    script = "CREATE TABLE IF NOT EXISTS runs (n);\nINSERT INTO runs VALUES (1);"     # ein zweiter Lauf ginge durch
+    monkeypatch.setattr("flightpanel.db.MIGRATIONS", [*MIGRATIONS, script])
+    Db(path).close()                                    # der schnellere Öffner migriert bis zum Ende
+    stale, real = iter([1]), flightpanel.db._version
+    # der langsamere sieht beim ersten Blick noch den alten Stand 1, danach den wahren
+    monkeypatch.setattr("flightpanel.db._version", lambda conn: next(stale, None) or real(conn))
+    db = Db(path)
+    assert [r["n"] for r in db.query("SELECT n FROM runs")] == [1]
+    assert db.one("PRAGMA user_version")[0] == len(MIGRATIONS) + 1
+
+
 def test_transaction_is_all_or_nothing(tmp_path):
     db = Db(str(tmp_path / "f.db"))
     with pytest.raises(RuntimeError):
@@ -50,6 +82,18 @@ def test_transaction_is_all_or_nothing(tmp_path):
     with db.transaction():
         db.state_set("a", 2)
     assert db.state_get("a") == 2
+
+
+def test_a_failed_commit_leaves_the_connection_usable(tmp_path):
+    """COMMIT kann scheitern (hier: aufgeschobener Fremdschlüssel); die nächste Transaktion muss trotzdem gehen."""
+    db = Db(str(tmp_path / "f.db"))
+    with pytest.raises(Exception, match="FOREIGN KEY"):
+        with db.transaction():
+            db.execute("PRAGMA defer_foreign_keys = ON")
+            db.execute("INSERT INTO album (panel_id, brand, first, last) VALUES ('gibt-es-nicht', 'X', 1, 1)")
+    with db.transaction():
+        db.state_set("a", 1)
+    assert db.state_get("a") == 1 and db.one("SELECT 1 FROM album") is None
 
 
 def test_panel_rows(tmp_path):
