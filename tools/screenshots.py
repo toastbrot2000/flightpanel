@@ -8,6 +8,7 @@ Logo.
     docker compose run --rm -v "$PWD:/repo" -w /repo flightpanel python tools/screenshots.py
 
 Im Container, weil die Bilder mit den DejaVu-Schriften des Containers entstehen sollen.
+Die Zeitzone legt das Werkzeug selbst fest (Europe/Berlin, wie TZ in .env.example), gleich wo es läuft.
 
 Nach Änderungen am Aussehen neu erzeugen und mit einchecken."""
 
@@ -15,6 +16,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
@@ -27,6 +29,11 @@ from flightpanel.idle import IdleScreen
 from flightpanel.logos import LogoStore
 from flightpanel.model import ARR, DEP, OVF, DisplayModel, Flight
 from flightpanel.render import Renderer
+
+# Die Zeitzone gehört zu den Bildern: Die Beispiele sind Ortszeiten (Neujahr 0:00:04), und das Feuerwerk wird aus dem
+# Zeitpunkt gewürfelt. Stünde der Rechner in einer anderen Zeitzone, sähe fireworks.png anders aus. Darum vor NOW.
+os.environ["TZ"] = "Europe/Berlin"
+time.tzset()
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 OUT = os.path.join(ROOT, "docs", "images")
