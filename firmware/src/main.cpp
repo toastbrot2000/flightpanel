@@ -15,10 +15,15 @@
 
 // OTA gibt es nur mit Passwort. Ohne eines wäre das Flashen im WLAN für jeden offen;
 // dann startet ArduinoOTA gar nicht (kein offener Port, kein mDNS-Name flightpanel.local).
+// "changeme" stand bis Oktober 2026 in der Vorlage und im öffentlichen Repo: zählt wie keins.
 #ifndef OTA_PASSWORD
 #define OTA_PASSWORD ""   // ältere secrets.h ohne diese Zeile: kein OTA
 #endif
-static const bool OTA_ENABLED = OTA_PASSWORD[0] != '\0';   // zur Compile-Zeit bekannt
+static constexpr bool sameText(const char* a, const char* b) {
+  return *a == *b && (*a == '\0' || sameText(a + 1, b + 1));
+}
+static const bool OTA_OLD_DEFAULT = sameText(OTA_PASSWORD, "changeme");
+static const bool OTA_ENABLED = OTA_PASSWORD[0] != '\0' && !OTA_OLD_DEFAULT;   // zur Compile-Zeit bekannt
 
 static MatrixPanel_I2S_DMA* panel = nullptr;
 static uint8_t frame[FRAME_LEN];
@@ -159,7 +164,9 @@ void setup() {
     ArduinoOTA.onError([](ota_error_t e) { Serial.printf("OTA Fehler %u\n", e); });
     ArduinoOTA.begin();
   } else {
-    Serial.println("OTA aus (OTA_PASSWORD leer)");
+    Serial.println(OTA_OLD_DEFAULT ? "OTA aus: OTA_PASSWORD ist noch \"changeme\" aus der alten Vorlage, "
+                                     "ein eigenes setzen (secrets.h und platformio_local.ini)"
+                                   : "OTA aus (OTA_PASSWORD leer)");
   }
 
   lastOk = millis();   // Neustart-Zähler erst ab jetzt
