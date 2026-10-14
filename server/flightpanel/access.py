@@ -46,7 +46,7 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from time import monotonic
-from typing import NamedTuple
+from typing import NamedTuple, NoReturn
 
 import aiohttp
 from aiohttp import web
@@ -390,7 +390,7 @@ class Gate:
         self.failures[reason] = self.failures.get(reason, 0) + 1
         self._warn(reason, "Zugang von außen: Anfrage %s abgelehnt", REASONS[reason])
 
-    def _too_many(self) -> None:
+    def _too_many(self) -> NoReturn:
         self.limited += 1
         self._warn("limited", "Zugang von außen: Anfragen gebremst (429)")
         raise web.HTTPTooManyRequests(text=TOO_MANY, headers={"Retry-After": "1"})
