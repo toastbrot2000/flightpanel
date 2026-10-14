@@ -1886,7 +1886,7 @@ In `stop`, after `await self.session.close()` add `self.db.close()`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/flightpanel/main.py server/tests/test_app.py
+git add server/flightpanel/main.py server/flightpanel/db.py server/flightpanel/fetch_logos.py server/tests/test_app.py
 git commit -m "Server: Panel home aus der Datenbank, alte JSON-Dateien und .env-Werte einmalig übernehmen
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1899,6 +1899,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Create: `server/flightpanel/panels.py`
 - Modify: `server/flightpanel/db.py` (one line: re-export `DatabaseError`)
+- Modify: `server/flightpanel/config.py` (the panel-id rule, once: `panel_id()` parser, used for `LAN_PANEL` and by `panels add`), `server/tests/test_config.py` (one test)
 - Test: `server/tests/test_panels.py`
 
 **Interfaces:**
@@ -1971,6 +1972,13 @@ def test_add_list_remove(run):
     assert run("remove", "home", "--yes")[0] == 2                      # das Panel am LAN-Port bleibt
 
 
+def test_unknown_cards_are_refused(run):
+    """Ein Tippfehler in CARD_<ID> bliebe sonst still wirkungslos."""
+    code, _, err = run("set", "home", "CARD_PIGEN=0")
+    assert code == 2 and "unbekannte Karte: CARD_PIGEN" in err and "pigeon" in err
+    assert run("set", "home", "card_pigeon=0")[0] == 0
+
+
 def test_backup(run, tmp_path):
     assert run("backup", str(tmp_path / "copy.db"))[0] == 0 and (tmp_path / "copy.db").exists()
 
@@ -1996,6 +2004,32 @@ In `db.py`, below `log = logging.getLogger("db")`, add (panels.py must not impor
 DatabaseError = sqlite3.DatabaseError       # für Werkzeuge neben dem Server (panels.py), ohne sqlite3-Import
 ```
 
+In `config.py`, define the panel-id rule once (before `class Config`; add `import re` if missing) and use it as the parser of `LAN_PANEL`:
+
+```python
+PANEL_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+def panel_id(text: str) -> str:
+    """Kennung eines Panels (LAN_PANEL, panels add): Kleinbuchstaben, Ziffern, - und _, höchstens 32 Zeichen."""
+    if not PANEL_ID.match(text):
+        raise ValueError("Kleinbuchstaben, Ziffern, - und _, höchstens 32 Zeichen")
+    return text
+```
+
+```python
+    lan_panel: str = _env("LAN_PANEL", "home", panel_id)       # das Panel am LAN-Port (:8080)
+```
+
+Test in `server/tests/test_config.py`:
+
+```python
+def test_lan_panel_follows_the_panel_id_rule():
+    assert Config.from_env(env(LAN_PANEL="wohnzimmer")).lan_panel == "wohnzimmer"
+    with pytest.raises(ValueError, match="LAN_PANEL"):
+        Config.from_env(env(LAN_PANEL="Wohnzimmer"))
+```
+
 Then `panels.py`:
 
 ```python
@@ -2019,14 +2053,20 @@ Im Container:
 Der Server liest die Einstellungen beim Start: danach docker compose restart flightpanel."""
 
 import argparse
-import re
 import sys
 import time
 
-from .config import Config, default_text, panel_fields
+from .cards import CARDS
+from .config import CARD_PREFIX, Config, default_text, panel_fields, panel_id
 from .db import DatabaseError, Db, db_path
 
-ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+CARD_IDS = sorted(c.id for c in CARDS)
+
+
+def _check_card(key: str) -> None:
+    """CARD_<ID> nur für Karten, die es gibt: ein Tippfehler bliebe sonst still wirkungslos."""
+    if key.startswith(CARD_PREFIX) and key[len(CARD_PREFIX):].lower() not in CARD_IDS:
+        raise ValueError(f"unbekannte Karte: {key}; bekannt: {', '.join(CARD_IDS)}")
 
 
 def _need(db: Db, pid: str) -> dict:
@@ -2048,7 +2088,7 @@ def cmd_keys(db: Db, cfg: Config, args) -> None:
     for f in panel_fields():
         group, text = f.metadata["panel"]
         print(f"{f.metadata['env']:<18} {default_text(f):<22} {group}: {text}")
-    print(f"{'CARD_<ID>':<18} {'1':<22} Karten: 0 schaltet eine Leerlauf-Karte ab (IDs: /idle, docs/screens.md)")
+    print(f"{'CARD_<ID>':<18} {'1':<22} Karten: 0 schaltet eine Leerlauf-Karte ab ({', '.join(CARD_IDS)})")
 
 
 def cmd_show(db: Db, cfg: Config, args) -> None:
@@ -2074,6 +2114,7 @@ def cmd_set(db: Db, cfg: Config, args) -> None:
         if not sep or not key:
             raise ValueError(f"erwartet KEY=WERT, nicht {item!r}")
         if value.strip():
+            _check_card(key)
             new[key] = value.strip()
         else:
             new.pop(key, None)
@@ -2087,8 +2128,10 @@ def cmd_unset(db: Db, cfg: Config, args) -> None:
 
 
 def cmd_add(db: Db, cfg: Config, args) -> None:
-    if not ID_RE.match(args.id):
-        raise ValueError("id: Kleinbuchstaben, Ziffern, - und _, höchstens 32 Zeichen")
+    try:
+        panel_id(args.id)
+    except ValueError as e:
+        raise ValueError(f"id {args.id!r}: {e}") from None
     db.panel_add(args.id, args.name)
     print(f"{args.id} angelegt. Einstellungen: set {args.id} HOME_LAT=... HOME_LON=... VIEW_FROM=...")
 
@@ -2158,7 +2201,7 @@ if __name__ == "__main__":
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/flightpanel/panels.py server/tests/test_panels.py
+git add server/flightpanel/panels.py server/flightpanel/db.py server/flightpanel/config.py server/tests/test_panels.py server/tests/test_config.py
 git commit -m "panels: Panel-Einstellungen per Kommandozeile setzen, Panels anlegen, Datenbank sichern
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
