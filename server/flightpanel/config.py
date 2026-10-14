@@ -1,5 +1,9 @@
-"""Einstellungen. Config.from_env() liest sie beim Start aus Umgebungsvariablen
-(.env, jede einzelne erklärt in .env.example); Tests bauen Config(...) direkt.
+"""Einstellungen. Server-Einstellungen (Flughafen, Quellen, Logos, Betrieb) liest
+Config.from_env() beim Start aus Umgebungsvariablen (.env, jede in .env.example erklärt).
+Panel-Einstellungen (Standort, Sichtfeld, Anzeige, Helligkeit, Ruhezeit, Karten: die Felder
+mit panel=...) liegen je Panel in der Datenbank und kommen über Config.for_panel(); gesetzt
+werden sie mit panels.py oder der Einstellungsseite, mit denselben Parsern und Fehlertexten.
+Tests bauen Config(...) direkt.
 
 Alles Ortsabhängige steht hier und nirgends sonst: Standort und Sichtfeld
 (HOME_*, VIEW_*) und der Heimatflughafen (LOCAL_AIRPORT_IATA, RUNWAY_COURSE ...).
@@ -18,7 +22,7 @@ import logging
 import math
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import Field, dataclass, field, fields, replace
 from datetime import datetime
 
 from .data import load_airports
@@ -93,35 +97,46 @@ def in_hours(rng: tuple[int, int], minute: int) -> bool:
     return a <= minute < b if a <= b else (minute >= a or minute < b)
 
 
-def _env(name: str, default, parse=None):
-    """Ein Feld, das aus der Umgebungsvariablen name kommt. parse wandelt den Text;
-    ohne parse der Typ des Defaults."""
+def _env(name: str, default, parse=None, panel: tuple[str, str] | None = None):
+    """Ein Feld aus der Umgebungsvariablen name (Server-Einstellung, .env) oder, mit
+    panel=(Gruppe, Erklärung), eine Panel-Einstellung (Datenbank, panels.py; beim ersten
+    Start einmalig aus einer älteren .env übernommen). parse wandelt den Text; ohne parse
+    der Typ des Defaults."""
     if parse is None:
         parse = _bool if isinstance(default, bool) else type(default)
-    return field(default=default, metadata={"env": name, "parse": parse})
+    return field(default=default, metadata={"env": name, "parse": parse, "panel": panel})
+
+
+CARD_PREFIX = "CARD_"
 
 
 @dataclass(frozen=True)
 class Config:
     # --- Standort und Abruf
-    home_lat: float = _env("HOME_LAT", 52.52)
-    home_lon: float = _env("HOME_LON", 13.40)
-    home_alt_m: float = _env("HOME_ALT_M", 40.0)            # Augenhöhe am Fenster über dem Meer
-    radius_km: float = _env("RADIUS_KM", 40.0)              # angezeigt wird, was so nah ist
-    max_alt_m: float = _env("MAX_ALT_M", 6000.0)            # ... und so tief
+    home_lat: float = _env("HOME_LAT", 52.52, panel=("Standort", "Breitengrad des Fensters, Dezimalgrad"))
+    home_lon: float = _env("HOME_LON", 13.40, panel=("Standort", "Längengrad des Fensters, Dezimalgrad"))
+    home_alt_m: float = _env("HOME_ALT_M", 40.0, panel=("Standort", "Augenhöhe am Fenster über dem Meer, Meter"))
+    radius_km: float = _env("RADIUS_KM", 40.0, panel=("Standort", "angezeigt wird, was höchstens so weit weg ist, km"))
+    max_alt_m: float = _env("MAX_ALT_M", 6000.0, panel=("Standort", "... und höchstens so hoch, Meter"))
     # Abrufradius für Statistik, seltene Flugzeuge und Notfall-Squawks; ohne Angabe
-    # wie RADIUS_KM (siehe from_env)
-    scan_radius_km: float = _env("SCAN_RADIUS_KM", 40.0)
+    # wie RADIUS_KM (siehe for_panel)
+    scan_radius_km: float = _env("SCAN_RADIUS_KM", 40.0,
+                                 panel=("Standort",
+                                        "Abrufradius für Statistik, Seltenes und Notfälle, km; leer = RADIUS_KM"))
 
     # --- Sichtfeld: Richtung im Uhrzeigersinn von VIEW_FROM bis VIEW_TO (0 = Nord,
     # 90 = Ost), Höhenwinkel über dem Horizont, Sichtweite. Default: rundum.
-    view_from: float = _env("VIEW_FROM", 0.0)
-    view_to: float = _env("VIEW_TO", 360.0)
-    view_min_elev: float = _env("VIEW_MIN_ELEV", 0.0)
-    view_max_elev: float = _env("VIEW_MAX_ELEV", 90.0)
-    view_max_km: float = _env("VIEW_MAX_KM", 100.0)
-    view_only: bool = _env("VIEW_ONLY", False)              # nur Sichtbares zeigen, sonst nur zuerst
-    show_other: bool = _env("SHOW_OTHER", True)             # Privatflieger, Hubschrauber, Militär
+    view_from: float = _env("VIEW_FROM", 0.0,
+                            panel=("Sichtfeld", "wo es beginnt, Grad im Uhrzeigersinn (0 Nord, 90 Ost)"))
+    view_to: float = _env("VIEW_TO", 360.0, panel=("Sichtfeld", "wo es endet; 0 bis 360 = rundum"))
+    view_min_elev: float = _env("VIEW_MIN_ELEV", 0.0,
+                                panel=("Sichtfeld", "Mindesthöhe über dem Horizont, Grad (Häuser, Bäume)"))
+    view_max_elev: float = _env("VIEW_MAX_ELEV", 90.0, panel=("Sichtfeld", "Obergrenze, Grad (Balkon darüber)"))
+    view_max_km: float = _env("VIEW_MAX_KM", 100.0, panel=("Sichtfeld", "Sichtweite, km"))
+    view_only: bool = _env("VIEW_ONLY", False, panel=("Sichtfeld", "1: nur zeigen, was im Sichtfeld ist"))
+    show_other: bool = _env("SHOW_OTHER", True,
+                            panel=("Sichtfeld",
+                                   "1: Privatflieger, Hubschrauber, Polizei, Militär, wenn keine Airline dran ist"))
 
     # --- Heimatflughafen
     local_airport_iata: str = _env("LOCAL_AIRPORT_IATA", "BER", str.upper)
@@ -148,18 +163,23 @@ class Config:
     # --- Anzeige
     width: int = _env("WIDTH", 128)
     height: int = _env("HEIGHT", 32)
-    layout: str = _env("LAYOUT", "C", parse_layout)         # C | A | B, siehe render.py
-    max_flights: int = _env("MAX_FLIGHTS", 3, _int(1))
-    calm: bool = _env("CALM", False)                        # ruhiger Modus, setzt CALM_PRESET
-    page_seconds: int = _env("PAGE_SECONDS", 4, _int(1))    # so lange steht eine Infoseite
-    flight_seconds: int = _env("FLIGHT_SECONDS", 0, _int(0))  # so lange mindestens ein Flug; 0: jede Seite einmal
-    info_pages: tuple[str, ...] = _env("INFO_PAGES", INFO_PAGES, _pages)
-    blink: bool = _env("BLINK", True)                       # sonst blinkt nur ein Notfall
+    layout: str = _env("LAYOUT", "C", parse_layout,
+                       panel=("Anzeige", "C Logo und drei Zeilen, A ohne Logo, B zwei Flüge"))
+    max_flights: int = _env("MAX_FLIGHTS", 3, _int(1), panel=("Anzeige", "so viele Flüge wechseln sich ab"))
+    calm: bool = _env("CALM", False,
+                      panel=("Anzeige", "1: ruhiger Modus (nichts blinkt, seltener Wechsel, nur Landezeit und Höhe)"))
+    page_seconds: int = _env("PAGE_SECONDS", 4, _int(1), panel=("Anzeige", "Sekunden je Infoseite"))
+    flight_seconds: int = _env("FLIGHT_SECONDS", 0, _int(0),
+                               panel=("Anzeige", "Sekunden je Flug mindestens; 0 = jede Infoseite einmal"))
+    info_pages: tuple[str, ...] = _env("INFO_PAGES", INFO_PAGES, _pages,
+                                       panel=("Anzeige", "Infoseiten der Reihe nach: eta, alt, dist, callsign"))
+    blink: bool = _env("BLINK", True, panel=("Anzeige", "0: nichts blinkt außer einem Notfall"))
 
     # --- Leerlauf-Karten, wenn keine Airline zu sehen ist
-    idle_seconds: int = _env("IDLE_SECONDS", 12, _int(1))
-    idle_clock_share: float = _env("IDLE_CLOCK_SHARE", 0.35, _share)
-    cards_off: frozenset[str] = frozenset()                 # CARD_<ID>=0, siehe from_env
+    idle_seconds: int = _env("IDLE_SECONDS", 12, _int(1), panel=("Anzeige", "Sekunden je Leerlauf-Karte"))
+    idle_clock_share: float = _env("IDLE_CLOCK_SHARE", 0.35, _share,
+                                   panel=("Anzeige", "Anteil der Uhr an den Leerlauf-Karten, 0 bis 1"))
+    cards_off: frozenset[str] = frozenset()                 # CARD_<ID>=0, siehe for_panel
     iss: bool = _env("ISS", True)                           # Bahndaten von Celestrak
 
     # --- Logos: Abruf beim ersten Auftauchen einer Airline. LOGO_URLS: kommagetrennte
@@ -171,32 +191,64 @@ class Config:
     logo_max_aspect: float = _env("LOGO_MAX_ASPECT", 1.5)
 
     # --- Helligkeit und Ruhezeiten
-    brightness_day: int = _env("BRIGHTNESS_DAY", 90, _int(0, 255))
-    brightness_evening: int = _env("BRIGHTNESS_EVENING", 35, _int(0, 255))
-    day_hours: tuple[int, int] = _env("DAY_HOURS", (8 * 60, 19 * 60), _hours)
-    quiet_hours: tuple[int, int] = _env("QUIET_HOURS", (0, 6 * 60 + 30), _hours)
+    brightness_day: int = _env("BRIGHTNESS_DAY", 90, _int(0, 255), panel=("Helligkeit", "tagsüber, 0 bis 255"))
+    brightness_evening: int = _env("BRIGHTNESS_EVENING", 35, _int(0, 255), panel=("Helligkeit", "abends, 0 bis 255"))
+    day_hours: tuple[int, int] = _env("DAY_HOURS", (8 * 60, 19 * 60), _hours,
+                                      panel=("Helligkeit", "Tag von-bis, z. B. 08:00-19:00"))
+    quiet_hours: tuple[int, int] = _env("QUIET_HOURS", (0, 6 * 60 + 30), _hours,
+                                        panel=("Helligkeit", "Ruhezeit: Panel dunkel, kein Abruf, z. B. 00:00-06:30"))
 
     # --- Betrieb
     data_dir: str = _env("DATA_DIR", "./data")
     http_port: int = _env("HTTP_PORT", 8080, _int(1, 65535))
+    lan_panel: str = _env("LAN_PANEL", "home")              # das Panel am LAN-Port (:8080)
     stale_after: int = _env("STALE_AFTER", 120, _int(0))    # Sekunden ohne Daten bis gedimmt
     empty_after: int = _env("EMPTY_AFTER", 600, _int(0))    # ... bis leer
     log_level: str = _env("LOG_LEVEL", "INFO")
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Config":
-        """Aus Umgebungsvariablen; leere zählen wie nicht gesetzte."""
+        """Server-Einstellungen aus Umgebungsvariablen; leere zählen wie nicht gesetzte.
+        Panel-Felder bleiben auf ihren Defaults (dafür: for_panel)."""
         env = os.environ if env is None else env
         values = {}
         for f in fields(cls):
             name = f.metadata.get("env")
-            raw = (env.get(name) or "").strip() if name else ""
+            if not name or f.metadata.get("panel"):
+                continue
+            raw = (env.get(name) or "").strip()
             if raw:
                 try:
                     values[f.name] = f.metadata["parse"](raw)
                 except ValueError as e:
                     raise ValueError(f"{name}={raw!r}: {e}") from None
-        values.setdefault("scan_radius_km", values.get("radius_km", cls.scan_radius_km))
+        for name, instead in REMOVED.items():
+            if (env.get(name) or "").strip():
+                log.warning("%s gibt es nicht mehr und wird ignoriert; stattdessen %s", name, instead)
+        _airport_from_list(values, values.get("data_dir", cls.data_dir))
+        return cls(**values)
+
+    @classmethod
+    def for_panel(cls, server: "Config", settings: Mapping[str, str]) -> "Config":
+        """server plus die Einstellungen eines Panels: rohe Strings wie in .env, aus der
+        Datenbank oder von panels.py, geprüft mit denselben Parsern und Fehlertexten.
+        Nicht Gesetztes bleibt wie in server (im Betrieb: die Defaults). Karten gelten,
+        sobald eine CARD-Zeile dabei ist: CARD_<ID>=0 schaltet ab."""
+        known = {f.metadata["env"]: f for f in panel_fields()}
+        unknown = sorted(k for k in settings if not is_panel_key(k))
+        if unknown:
+            raise ValueError(f"keine Panel-Einstellung: {', '.join(unknown)}; möglich: "
+                             f"{', '.join(known)}, CARD_<ID>")
+        values = {}
+        for name, f in known.items():
+            raw = (settings.get(name) or "").strip()
+            if raw:
+                try:
+                    values[f.name] = f.metadata["parse"](raw)
+                except ValueError as e:
+                    raise ValueError(f"{name}={raw!r}: {e}") from None
+        if "radius_km" in values and "scan_radius_km" not in values:
+            values["scan_radius_km"] = values["radius_km"]
         if values.get("calm"):
             kept = [k for k in CALM_PRESET if k in values]
             if kept:
@@ -204,13 +256,11 @@ class Config:
                             ", ".join(f"{_env_name(k)}={values[k]}" for k in kept))
             for k, v in CALM_PRESET.items():
                 values.setdefault(k, v)
-        for name, instead in REMOVED.items():
-            if (env.get(name) or "").strip():
-                log.warning("%s gibt es nicht mehr und wird ignoriert; stattdessen %s", name, instead)
-        values["cards_off"] = frozenset(k[len("CARD_"):].lower() for k, v in env.items()
-                                        if k.startswith("CARD_") and v.strip() and not _bool(v))
-        _airport_from_list(values, values.get("data_dir", cls.data_dir))
-        return cls(**values)
+        cards = [k for k in settings if k.startswith(CARD_PREFIX)]
+        if cards:
+            values["cards_off"] = frozenset(k[len(CARD_PREFIX):].lower() for k in cards
+                                            if settings[k].strip() and not _bool(settings[k]))
+        return replace(server, **values)
 
     # ------------------------------------------------------------- abgeleitet --
     @property
@@ -257,6 +307,38 @@ CALM_PRESET = {"page_seconds": 10, "flight_seconds": 20, "idle_seconds": 30, "bl
 
 def _env_name(field_name: str) -> str:
     return next(f.metadata["env"] for f in fields(Config) if f.name == field_name)
+
+
+def panel_fields() -> list[Field]:
+    """Die Panel-Einstellungen (Felder mit panel=...), in der Reihenfolge der Klasse."""
+    return [f for f in fields(Config) if f.metadata.get("panel")]
+
+
+def is_panel_key(key: str) -> bool:
+    return any(f.metadata["env"] == key for f in panel_fields()) or (
+        key.startswith(CARD_PREFIX) and len(key) > len(CARD_PREFIX))
+
+
+def default_text(f: Field) -> str:
+    """Default eines Feldes, so wie man ihn setzen würde ("08:00-19:00", "eta,alt", "1")."""
+    v = f.default
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if f.metadata["parse"] is _hours:
+        return f"{v[0] // 60:02d}:{v[0] % 60:02d}-{v[1] // 60:02d}:{v[1] % 60:02d}"
+    if isinstance(v, tuple):
+        return ",".join(v)
+    return str(v)
+
+
+def panel_settings_from_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Panel-Einstellungen aus einer (älteren) .env: beim ersten Start einmalig ins Panel
+    übernommen, danach ignoriert. Karten nur, wenn abgeschaltet; an ist der Default."""
+    out = {f.metadata["env"]: env[f.metadata["env"]].strip() for f in panel_fields()
+           if (env.get(f.metadata["env"]) or "").strip()}
+    out.update({k: v.strip() for k, v in env.items()
+                if k.startswith(CARD_PREFIX) and len(k) > len(CARD_PREFIX) and v.strip() and not _bool(v)})
+    return out
 
 
 def _airport_from_list(values: dict, data_dir: str) -> None:
