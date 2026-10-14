@@ -49,7 +49,7 @@ Serverweites steht in `.env` (nicht im Repo; jede Einstellung ist in [.env.examp
 
 **1. Heimatflughafen** (`.env`). `LOCAL_AIRPORT_IATA` genügt: Position, Höhe und METAR-Station kommen aus `data/airports.json`. Dazu `RUNWAY_COURSE`, der Kurs im Endanflug einer Landerichtung (BER 25: 249°, MUC 26: 263°), und `CURFEW_HOURS` für das Nachtflugverbot. Für einen Flughafen, der nicht in der Liste steht, `AIRPORT_LAT`, `AIRPORT_LON`, `AIRPORT_ALT_M` und `METAR_STATION` setzen.
 
-**2. Starten.** `docker compose up -d --build`. Beim ersten Start entsteht das Panel `home`; eine ältere `.env` mit Standort und Sichtfeld wird dabei einmalig übernommen. Auf Linux den Container als den Besitzer von `data/` laufen lassen: vor dem ersten Start in `.env` `PUID` und `PGID` setzen (`id -u`, `id -g`). Das macht ein `chown` überflüssig, und `git pull` (`tools/update.sh`) darf weiter in `data/` schreiben, was nach einem `chown` auf einen anderen Benutzer nicht ginge. Ohne compose (`docker run`) gehört `--user UID:GID` dazu oder `sudo chown -R 1000:1000 data`. Eine ältere Installation, deren Container als root lief, hat in `data/` noch Dateien von root: einmal `sudo chown -R "$(id -u):$(id -g)" data`. Unter Docker Desktop passt es von selbst. Sonst bricht der Start ab, und das Log nennt den Ordner, den Benutzer und was zu tun ist.
+**2. Starten.** `docker compose up -d --build`. Beim ersten Start entsteht das Panel `home`; eine ältere `.env` mit Standort und Sichtfeld wird dabei einmalig übernommen; diese Zeilen danach aus der `.env` löschen, sie gelten nicht mehr, und der Server warnt bei jedem Start vor ihnen. Auf Linux den Container als den Besitzer von `data/` laufen lassen: vor dem ersten Start in `.env` `PUID` und `PGID` setzen (`id -u`, `id -g`). Das macht ein `chown` überflüssig, und `git pull` (`tools/update.sh`) darf weiter in `data/` schreiben, was nach einem `chown` auf einen anderen Benutzer nicht ginge. Ohne compose (`docker run`) gehört `--user UID:GID` dazu oder `sudo chown -R 1000:1000 data`. Eine ältere Installation, deren Container als root lief, hat in `data/` noch Dateien von root: einmal `sudo chown -R "$(id -u):$(id -g)" data`. Unter Docker Desktop passt es von selbst. Sonst bricht der Start ab, und das Log nennt den Ordner, den Benutzer und was zu tun ist.
 
 **3. Standort und Sichtfeld.**
 
@@ -139,12 +139,17 @@ Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dan
 
 ```bash
 git clone https://github.com/toastbrot2000/flightpanel && cd flightpanel
-cp /pfad/zur/alten/.env .env                            # und data/logos/own/ mitnehmen
+cp /pfad/zur/alten/.env .env                            # und data/logos/own/ mitnehmen; Linux: PUID, PGID setzen
+cp /pfad/zur/kopie.db data/flightpanel.db               # die Datenbank vom alten Rechner (s. u.)
 docker compose up -d --build
 docker compose exec flightpanel python3 -m flightpanel.fetch_logos
 ```
 
-Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Cache, Logos, Statistik und Auffälligkeiten liegen in `data/` und bleiben. In den `QUIET_HOURS` ist das Panel schwarz und der Server ruft nichts ab. Die Checkliste für den Umzug steht in der [Bauanleitung](docs/bauanleitung.md#vor-dem-umzug-auf-den-server).
+Die Datenbank zieht mit um: Standort, Sichtfeld, Album und Statistik stehen in `data/flightpanel.db`, nicht in der `.env`. Auf dem alten Rechner eine Kopie ziehen, `docker compose exec flightpanel python3 -m flightpanel.panels backup /data/umzug.db` (die Kopie liegt danach als `data/umzug.db` im Projektordner; in Git Bash unter Windows `MSYS_NO_PATHCONV=1` davor, Näheres in der Bauanleitung), oder bei gestopptem Server (`docker compose stop`) `data/flightpanel.db` kopieren. Auf dem neuen Rechner gehört sie vor dem ersten Start nach `data/flightpanel.db`. Eigene Logos (`data/logos/own/`) nimmt man wie bisher mit, die abgerufenen holt der Server neu.
+
+Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Cache, Statistik, Album und Auffälligkeiten liegen in `data/flightpanel.db`, Logos in `data/logos/` und bleiben über Updates. In den `QUIET_HOURS` ist das Panel schwarz und der Server ruft nichts ab. Die Checkliste für den Umzug steht in der [Bauanleitung](docs/bauanleitung.md#vor-dem-umzug-auf-den-server).
+
+**Datenbank und Sicherung:** `data/flightpanel.db` wird laufend geschrieben (daneben `-wal` und `-shm`) und gehört deshalb nicht in einen synchronisierten Ordner (OneDrive, Dropbox …): Liegt das Projekt in einem, `data/` vom Abgleich ausnehmen. Das Sicherheitsnetz ist die nächtliche Kopie `data/flightpanel.db.bak` (siehe "Dauerbetrieb"). Zurück zu ihr: `docker compose stop`, `data/flightpanel.db.bak` als `data/flightpanel.db` kopieren, `flightpanel.db-wal` und `flightpanel.db-shm` daneben löschen, `docker compose start`. Das ist auch der Weg, wenn der Server eine kaputte Datenbank beiseitegelegt hat (`data/flightpanel.db.broken-<Datum>`, `/ok` ist rot, siehe `/issues`, Art `database`): Er startet dann leer, und das Log nennt diese Schritte. Weitere Kopien zieht `panels backup` (Bauanleitung, Abschnitt "Betrieb"), eine vorhandene Datei ersetzt der Befehl nur mit `--force`.
 
 **Updates:** `sh tools/update.sh` holt den neuen Stand, baut neu und startet neu, nur wenn es einen neuen Commit gibt. Wöchentlich per cron, montags in der Ruhezeit: `0 6 * * 1  cd /pfad/zu/flightpanel && sh tools/update.sh >> data/update.log 2>&1`.
 

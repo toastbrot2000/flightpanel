@@ -66,6 +66,7 @@ def test_env_panel_keys_are_taken_over_on_the_first_start_then_ignored(tmp_path,
         try:
             assert second.cfg.home_lat == 51.0
             assert "HOME_LAT" in caplog.text and "panels set home" in caplog.text
+            assert "aus .env entfernen" in caplog.text                  # und wie die Warnung verschwindet
         finally:
             await second.session.close()
 

@@ -148,7 +148,8 @@ class App:
                 log.info("Panel-Einstellungen aus .env übernommen: %s", ", ".join(sorted(leftover)))
         elif leftover:
             log.warning("%s in .env gilt nicht mehr, Panel-Einstellungen liegen in der Datenbank. Ändern mit: "
-                        "python -m flightpanel.panels set %s KEY=WERT", ", ".join(sorted(leftover)), cfg.lan_panel)
+                        "python -m flightpanel.panels set %s KEY=WERT. Die Zeilen aus .env entfernen, dann bleibt "
+                        "die Warnung weg", ", ".join(sorted(leftover)), cfg.lan_panel)
         skipped: list[tuple[str, str]] = []
         self.cfg = cfg = Config.for_panel(cfg, self.db.panel_get(cfg.lan_panel)["settings"], skipped)
         self.session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT})
