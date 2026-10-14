@@ -3,6 +3,7 @@ Token von Cloudflare Access antwortet nichts außer den zwei Firmware-Dateien; j
 Panel, und nur, wenn sie freigeschaltet ist. Die Tokens signiert der Testschlüssel aus test_access."""
 
 import asyncio
+import gzip
 import itertools
 import json
 import os
@@ -434,6 +435,20 @@ def test_settings_are_saved_from_the_public_page_only(tmp_path):
             assert r.status == 200 and await r.json() == {"ok": True}
             assert app.db.panel_get("anna")["settings"]["VIEW_FROM"] == "120"
             assert app.panels["anna"].cfg.view_from == 120                              # gilt sofort
+
+    asyncio.run(run())
+
+
+def test_packed_bodies_are_not_unpacked(tmp_path):
+    """aiohttp entpackt gzip sonst schon beim Empfang, vor jeder Prüfung (web.HANDLER_ARGS): Ein gepackter Körper
+    bleibt gepackt und ist damit kein JSON."""
+    async def run():
+        async with public(tmp_path) as (app, _gate, client):
+            body = gzip.compress(json.dumps({"settings": {"VIEW_FROM": "120"}}).encode())
+            r = await client.post("/settings", data=body, headers={
+                **browser(), "Origin": ORIGIN, "Content-Type": "application/json", "Content-Encoding": "gzip"})
+            assert r.status == 400
+            assert app.db.panel_get("anna")["settings"]["VIEW_FROM"] == "111"
 
     asyncio.run(run())
 

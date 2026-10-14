@@ -82,6 +82,10 @@ PUBLIC_LINKS = ("/display.json", "/stats", "/idle")     # ... am Zugang von auß
 LAN_MAX_SCALE = 40      # /frame.png?scale=
 PUBLIC_MAX_SCALE = 12   # ... von außen: 1536 x 384 Pixel genügen, und jeder Maßstab bleibt im Speicher (render.png)
 PUBLIC_MAX_BODY = 16 * 1024     # größte Anfrage am Zugang von außen (aiohttp client_max_size)
+# Körper bleiben, wie sie kommen: aiohttp entpackt gzip/deflate sonst schon beim Empfang, vor jeder Prüfung und in der
+# Ereignisschleife, und client_max_size zählt erst danach. Kein Panel und keine Seite schickt gepackte Körper; so
+# einer ist dann einfach kein JSON. Für beide Ports.
+HANDLER_ARGS = {"auto_decompress": False}
 WARN_EVERY_S = 60       # Absagen des Schutzes stehen höchstens so oft im Log
 
 NOT_LAN = ("Unter diesem Namen antwortet der LAN-Port nicht: nur unter IP-Adressen, localhost, Namen ohne Punkt und "
@@ -170,7 +174,7 @@ def make_web_app(app: "App") -> web.Application:
     """Der LAN-Port (HTTP_PORT): das Panel am LAN-Port ohne Anmeldung, dazu /health, /ok und /issues für den ganzen
     Server, mit SETTINGS_PAGE=1 die Einstellungsseite. Geschützt wie oben beschrieben."""
     cfg = app.server_cfg
-    web_app = web.Application(middlewares=[lan_guard(cfg)])
+    web_app = web.Application(middlewares=[lan_guard(cfg)], handler_args=HANDLER_ARGS)
     web_app[ROUTES] = {}
     web_app.on_response_prepare.append(security_headers)
     links = LAN_LINKS + (("/settings",) if cfg.settings_page else ())
@@ -195,7 +199,8 @@ def make_public_app(app: "App", gate: "Gate") -> web.Application:
     from .access import EMAIL, PUBLIC, TOKEN
     cfg = app.server_cfg
     routes: dict = {}
-    web_app = web.Application(middlewares=[gate.middleware(routes)], client_max_size=PUBLIC_MAX_BODY)
+    web_app = web.Application(middlewares=[gate.middleware(routes)], client_max_size=PUBLIC_MAX_BODY,
+                              handler_args=HANDLER_ARGS)
     web_app[ROUTES] = routes
     web_app.on_response_prepare.append(security_headers)
     origin = f"https://{cfg.public_host}"
