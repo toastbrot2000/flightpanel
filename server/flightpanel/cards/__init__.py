@@ -61,3 +61,31 @@ CARDS = [
     Card("plane", fun.plane_cond, fun.plane_draw, weight=0.5, tier=4, group="spaß"),
     Card("pigeon", fun.pigeon_cond, fun.pigeon_draw, weight=0.3, tier=4, group="spaß"),
 ]
+
+# Für Menschen: Name und ein Satz je Karte, Name je Gruppe (Vorschau und Einstellungsseite)
+ABOUT = {
+    "alert": ("Notfall in der Nähe", "Ein Flugzeug in der Nähe meldet einen Notfall. Kommt vor allem anderen."),
+    "departures": ("Abflüge", "Wer gerade am Flughafen startet oder eben gestartet ist."),
+    "arrivals": ("Landefolge", "Wer als Nächstes landet, mit Herkunft und Minuten bis zum Aufsetzen."),
+    "next": ("Gleich im Blick", "Welches Flugzeug als Nächstes ins Sichtfeld kommt, und wann."),
+    "runway_change": ("Pistenwechsel", "Wenn am Flughafen die Landerichtung gewechselt hat."),
+    "clock": ("Uhr", "Uhrzeit und Datum."),
+    "radar": ("Radar", "Rundumblick mit allen Flugzeugen, das Sichtfeld als Band in der Mitte."),
+    "runway": ("Landerichtung", "Aus welcher Richtung gerade gelandet wird."),
+    "weather": ("Wetter", "Wenn Nebel oder Wolken erklären, warum am Himmel nichts zu sehen ist."),
+    "curfew": ("Nachtflugverbot", "Während der Nachtruhe am Flughafen, mit ihrem Ende."),
+    "scoreboard": ("Tageszahlen", "Flugzeuge und Airlines des Tages und der höchste Flug."),
+    "pokedex": ("Sammelalbum", "Wie viele Airlines schon vorbeikamen, und die neueste."),
+    "new": ("Neue Airline", "Eine Airline, die das Panel zum ersten Mal sieht."),
+    "rare": ("Seltener Besuch", "Ein seltener Flugzeugtyp oder Betreiber in der Nähe."),
+    "quiet": ("Flaute", "Wie lange schon kein Flugzeug zu sehen war."),
+    "iss": ("ISS", "Wann die Raumstation sichtbar vorbeizieht."),
+    "sunset": ("Sonnenuntergang", "Kurz bevor die Sonne untergeht."),
+    "sunrise": ("Sonnenaufgang", "Kurz bevor die Sonne aufgeht."),
+    "santa": ("Weihnachten", "An den Weihnachtstagen."),
+    "fireworks": ("Neujahr", "Feuerwerk um Mitternacht an Silvester."),
+    "plane": ("Flugzeug", "Ein kleines Flugzeug zieht vorbei, wenn gar nichts los ist."),
+    "pigeon": ("Taube", "Eine Taube, wenn gar nichts los ist."),
+}
+GROUPS = {"notfall": "Notfall", "nützlich": "Am Flughafen", "uhr": "Uhr", "nerdig": "Statistik",
+          "himmel": "Am Himmel", "saison": "Feiertage", "spaß": "Spielereien"}

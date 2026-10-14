@@ -54,7 +54,9 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 from PIL import Image
 
-from .config import LAYOUTS, parse_layout
+from .cards import ABOUT
+from .config import LAYOUT_NAMES, LAYOUTS, parse_layout
+from .model import ARR, DEP, DisplayModel, Flight
 from .render import Renderer
 
 if TYPE_CHECKING:
@@ -101,17 +103,74 @@ VIA_CLOUDFLARE = ("Diese Anfrage kam über Cloudflare an den LAN-Port. Der Tunne
                   "LAN-Port: Der hat keine Anmeldung (docs/remote-panels.md).\n")
 FOREIGN_ORIGIN = "Schreiben nur von den Seiten dieses Servers aus dem LAN (Origin fremd).\n"
 
-PREVIEW_HTML = """<!doctype html><meta charset="utf-8"><title>flightpanel</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+# Beispielflüge für /frame.png?sample=1: die Aufteilungen zur Wahl, auch wenn gerade nichts fliegt
+SAMPLE_FLIGHTS = (
+    Flight(icao24="sample1", callsign="DLH2YM", status=ARR, dist_km=6.2, bearing=250, alt_ft=3200, speed_kt=160,
+           track=70, vrate_fpm=-800, origin="MUC", dest="BER", airline="Lufthansa", airline_icao="DLH",
+           airline_iata="LH", actype="A320", land_eta_s=240, seq=1),
+    Flight(icao24="sample2", callsign="EZY45KP", status=DEP, dist_km=11.5, bearing=80, alt_ft=6100, speed_kt=250,
+           track=260, vrate_fpm=2200, origin="BER", dest="LGW", airline="easyJet", airline_icao="EZY",
+           airline_iata="U2", actype="A20N"),
+)
+
+# Was die Vorschau unter "Technik" verlinkt, mit Namen
+LINK_NAMES = {"/display.json": "Flugdaten (JSON)", "/health": "Zustand des Servers", "/issues": "Auffälligkeiten",
+              "/stats": "Statistik (JSON)", "/idle": "Leerlauf-Karten (JSON)"}
+
+HEAD = """<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a1214">
+<title>{title}</title>
 <link rel="stylesheet" href="/static/preview.css">
-<script src="/static/preview.js" defer></script>
-<h2>flightpanel</h2>
-<img id="f" src="{frame}" alt="frame">
-<div>Layout:
-{layouts}
-| {links}</div>
-<p id="s"{health}></p>
-<p>Leerlauf-Karte erzwingen (passt die Lage nicht, mit Beispieldaten): <a href="/">aus</a> {cards}</p>
+{extra}</head>
+<body>
+"""
+
+
+def page_top(title: str, current: str, settings: bool, extra: str = "") -> str:
+    """Kopf jeder Seite: Titel, Stile und Skripte (extra), die Marke und, mit Einstellungsseite, die zwei Reiter.
+    current: "/" oder "/settings"."""
+    tabs = ""
+    if settings:
+        tabs = '<nav class="tabs" aria-label="Seiten">' + "".join(
+            f'<a href="{path}"{" aria-current=\"page\"" if path == current else ""}>{name}</a>'
+            for path, name in (("/", "Live"), ("/settings", "Einstellungen"))) + "</nav>"
+    return (HEAD.format(title=html.escape(title), extra=extra)
+            + f'<header class="topbar"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>'
+              f'flightpanel</a>{tabs}</header>\n')
+
+
+PREVIEW_HTML = """<main class="page live">
+<section class="stage" aria-label="Das Panel">
+<div class="device"><img id="f" class="screen" src="{frame}" alt="Was das Panel gerade zeigt" width="768"
+ height="192"></div>
+<p class="state" id="s" data-mode="{mode}"{health}><span class="dot" aria-hidden="true"></span><span
+ id="s-text">{state}</span></p>
+</section>
+<div class="columns">
+<section class="sky" aria-labelledby="sky-title">
+<div class="section-head"><h2 id="sky-title">In der Nähe</h2><p class="meta" id="sky-meta"></p></div>
+<ol class="flights" id="flights"></ol>
+<p class="empty" id="flights-empty">Lade Flugzeuge …</p>
+<p class="next" id="next"></p>
+</section>
+<section class="look" aria-labelledby="look-title">
+<h2 id="look-title">Ansicht ausprobieren</h2>
+<p class="hint">Nur hier in der Vorschau, das Panel selbst bleibt, wie es ist.{keep}</p>
+<div class="segmented" role="group" aria-label="Aufteilung">{layouts}</div>
+<h3>Karten im Leerlauf</h3>
+<p class="hint">Was das Panel zeigt, wenn kein Flug zu sehen ist. Passt die Lage gerade nicht, mit Beispieldaten.</p>
+<div class="chips">{cards}</div>
+</section>
+</div>
+</main>
+<footer class="foot"><details><summary>Technik</summary><ul class="tech">{links}</ul></details></footer>
+</body>
+</html>
 """
 
 
@@ -450,6 +509,12 @@ class Handlers:
              if layout else p.renderer)
         return r.render(p.model, time.time(), card=card or None)
 
+    def _sample(self, p: "Panel", layout: str) -> Image.Image:
+        """Zwei Beispielflüge in der Aufteilung layout, für die Wahl auf der Einstellungsseite: ein eigener Renderer,
+        die Rotation des Panels bleibt, wie sie ist."""
+        r = Renderer(replace(p.cfg, layout=layout, blink=False), self.app.logos, idle=p.idle)
+        return r.render(DisplayModel(flights=list(SAMPLE_FLIGHTS)), time.time())
+
     @staticmethod
     def _layout(req: web.Request) -> str | None:
         """?layout=, wie LAYOUT in den Panel-Einstellungen; Unbekanntes zählt wie nicht angegeben."""
@@ -478,7 +543,10 @@ class Handlers:
 
     async def frame_png(self, req: web.Request) -> web.Response:
         p = self.panel(req)
-        img = self._render(p, self._layout(req), req.query.get("card"))
+        if req.query.get("sample") == "1":
+            img = self._sample(p, self._layout(req) or p.cfg.layout)
+        else:
+            img = self._render(p, self._layout(req), req.query.get("card"))
         try:
             scale = max(1, min(self.max_scale, int(req.query.get("scale", "6"))))
         except ValueError:
@@ -494,12 +562,30 @@ class Handlers:
         if card not in p.idle.cards:
             card = ""
         esc = html.escape
-        page = PREVIEW_HTML.format(     # Links mit Leerzeichen dazwischen: Auf dem Telefon brechen sie um
+        settings = "/settings" in self.links
+        if card:
+            mode, state = "demo", f"Beispiel: Karte „{ABOUT.get(card, (card,))[0]}“"
+        elif layout != p.cfg.layout:
+            mode, state = "demo", f"Probeansicht: {LAYOUT_NAMES[layout]}"
+        else:
+            mode, state = "live", "Live"
+
+        def current(on: bool) -> str:
+            return ' aria-current="true"' if on else ""
+
+        page = page_top("flightpanel", "/", settings, '<script src="/static/preview.js" defer></script>\n')
+        page += PREVIEW_HTML.format(
             frame=esc(f"/frame.png?layout={layout}&card={card}"),
-            layouts=" ".join(f'<a href="{esc(f"/?layout={x}")}">{esc(x)}</a>' for x in LAYOUTS),
-            links=" ".join(f'<a href="{esc(path)}">{esc(path.lstrip("/"))}</a>' for path in self.links),
+            mode=mode, state=esc(state),
             health=' data-health="/health"' if "/health" in self.links else "",
-            cards=" ".join(f'<a href="{esc(f"/?layout={layout}&card={c}")}">{esc(c)}</a>' for c in p.idle.cards))
+            keep=" Dauerhaft unter Einstellungen, Anzeige." if settings else "",
+            layouts="".join(f'<a class="seg" href="{esc(f"/?layout={x}")}"{current(x == layout)}>'
+                            f'{esc(LAYOUT_NAMES[x])}</a>' for x in LAYOUTS),
+            cards=f'<a class="chip" href="{esc(f"/?layout={layout}")}"{current(not card)}>Live</a>' + "".join(
+                f'<a class="chip" href="{esc(f"/?layout={layout}&card={c}")}"{current(c == card)}>'
+                f'{esc(ABOUT.get(c, (c,))[0])}</a>' for c in p.idle.cards),
+            links="".join(f'<li><a href="{esc(path)}">{esc(LINK_NAMES.get(path, path))}</a></li>'
+                          for path in self.links if path != "/settings"))
         return web.Response(text=page, content_type="text/html", headers=NO_STORE)
 
     async def display(self, req: web.Request) -> web.Response:

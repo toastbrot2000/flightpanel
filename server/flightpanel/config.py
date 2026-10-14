@@ -54,6 +54,7 @@ def _hours(s: str) -> tuple[int, int]:
 
 
 LAYOUTS = ("A", "B", "C")                           # Fluglayouts, siehe render.py
+LAYOUT_NAMES = {"A": "Nur Text", "B": "Zwei Flüge", "C": "Mit Logo"}   # für Vorschau und Einstellungen
 
 
 def parse_layout(s: str) -> str:
@@ -183,14 +184,26 @@ def in_hours(rng: tuple[int, int], minute: int) -> bool:
     return a <= minute < b if a <= b else (minute >= a or minute < b)
 
 
-def _env(name: str, default, parse=None, panel: tuple[str, str] | None = None):
+@dataclass(frozen=True)
+class Ui:
+    """Wie die Einstellungsseite (settings.py) ein Panel-Feld zeigt: Name, ein Satz dazu, Einheit hinter dem Feld,
+    als Schieberegler (min, max, Schritt) mit Anzeige in Prozent des Maximums, Uhrzeiten mit einem Schalter zum
+    Abschalten. Die Erklärung in panel= bleibt die für panels keys."""
+    label: str
+    hint: str = ""
+    unit: str = ""
+    slider: tuple[float, float, float] | None = None
+    can_off: bool = False       # Uhrzeiten mit Schalter: aus speichert 00:00-00:00, ein leeres Fenster
+
+
+def _env(name: str, default, parse=None, panel: tuple[str, str] | None = None, ui: Ui | None = None):
     """Ein Feld aus der Umgebungsvariablen name (Server-Einstellung, .env) oder, mit
     panel=(Gruppe, Erklärung), eine Panel-Einstellung (Datenbank, panels.py; beim ersten
     Start einmalig aus einer älteren .env übernommen). parse wandelt den Text; ohne parse
-    der Typ des Defaults."""
+    der Typ des Defaults. ui: wie die Einstellungsseite das Feld zeigt."""
     if parse is None:
         parse = _bool if isinstance(default, bool) else type(default)
-    return field(default=default, metadata={"env": name, "parse": parse, "panel": panel})
+    return field(default=default, metadata={"env": name, "parse": parse, "panel": panel, "ui": ui})
 
 
 CARD_PREFIX = "CARD_"
@@ -231,34 +244,56 @@ def _parse(fs: Iterable[Field], src: Mapping[str, str], problems: list[tuple[str
 @dataclass(frozen=True)
 class Config:
     # --- Standort und Abruf
-    home_lat: float = _env("HOME_LAT", 52.52, _lat, panel=("Standort", "Breitengrad des Fensters, Dezimalgrad"))
-    home_lon: float = _env("HOME_LON", 13.40, _lon, panel=("Standort", "Längengrad des Fensters, Dezimalgrad"))
+    home_lat: float = _env("HOME_LAT", 52.52, _lat, panel=("Standort", "Breitengrad des Fensters, Dezimalgrad"),
+                           ui=Ui("Breitengrad", "", "°"))
+    home_lon: float = _env("HOME_LON", 13.40, _lon, panel=("Standort", "Längengrad des Fensters, Dezimalgrad"),
+                           ui=Ui("Längengrad", "", "°"))
     home_alt_m: float = _env("HOME_ALT_M", 40.0, _height,
-                             panel=("Standort", "Augenhöhe am Fenster über dem Meer, Meter"))
+                             panel=("Standort", "Augenhöhe am Fenster über dem Meer, Meter"),
+                             ui=Ui("Augenhöhe über dem Meer", "Wie hoch die Augen am Fenster über Normalnull sind: "
+                                   "Berlin liegt bei etwa 35 m, dazu rund 3 m je Stockwerk.", "m"))
     radius_km: float = _env("RADIUS_KM", 40.0, _km,
-                            panel=("Standort", "angezeigt wird, was höchstens so weit weg ist, km"))
+                            panel=("Standort", "angezeigt wird, was höchstens so weit weg ist, km"),
+                            ui=Ui("Umkreis", "Flugzeuge bis zu dieser Entfernung kommen aufs Panel.", "km"))
     max_alt_m: float = _env("MAX_ALT_M", 6000.0, _float(-500, 20000),
-                            panel=("Standort", "... und höchstens so hoch, Meter"))
+                            panel=("Standort", "... und höchstens so hoch, Meter"),
+                            ui=Ui("Höchste Flughöhe",
+                                  "Was höher fliegt, etwa in Reiseflughöhe, lässt das Panel weg.", "m"))
     # Abrufradius für Statistik, seltene Flugzeuge und Notfall-Squawks; ohne Angabe
     # wie RADIUS_KM (siehe for_panel)
     scan_radius_km: float = _env("SCAN_RADIUS_KM", 40.0, _km,
                                  panel=("Standort",
-                                        "Abrufradius für Statistik, Seltenes und Notfälle, km; leer = RADIUS_KM"))
+                                        "Abrufradius für Statistik, Seltenes und Notfälle, km; leer = RADIUS_KM"),
+                                 ui=Ui("Umkreis für Statistik", "Für Tageszahlen, seltene Flugzeuge und Notfälle. "
+                                       "Leer heißt: wie der Umkreis.", "km"))
 
     # --- Sichtfeld: Richtung im Uhrzeigersinn von VIEW_FROM bis VIEW_TO (0 = Nord,
     # 90 = Ost), Höhenwinkel über dem Horizont, Sichtweite. Default: rundum.
     view_from: float = _env("VIEW_FROM", 0.0, _deg,
-                            panel=("Sichtfeld", "wo es beginnt, Grad im Uhrzeigersinn (0 Nord, 90 Ost)"))
-    view_to: float = _env("VIEW_TO", 360.0, _deg, panel=("Sichtfeld", "wo es endet; 0 bis 360 = rundum"))
+                            panel=("Sichtfeld", "wo es beginnt, Grad im Uhrzeigersinn (0 Nord, 90 Ost)"),
+                            ui=Ui("Linker Rand", "Die Richtung, in der das Sichtfeld beginnt, wenn man hinausschaut: "
+                                  "0° ist Nord, 90° Ost.", "°"))
+    view_to: float = _env("VIEW_TO", 360.0, _deg, panel=("Sichtfeld", "wo es endet; 0 bis 360 = rundum"),
+                          ui=Ui("Rechter Rand", "Wo es endet. Von 0° bis 360° heißt rundum.", "°"))
     view_min_elev: float = _env("VIEW_MIN_ELEV", 0.0, _elev,
-                                panel=("Sichtfeld", "Mindesthöhe über dem Horizont, Grad (Häuser, Bäume)"))
-    view_max_elev: float = _env("VIEW_MAX_ELEV", 90.0, _elev, panel=("Sichtfeld", "Obergrenze, Grad (Balkon darüber)"))
-    view_max_km: float = _env("VIEW_MAX_KM", 100.0, _km, panel=("Sichtfeld", "Sichtweite, km"))
-    view_only: bool = _env("VIEW_ONLY", False, panel=("Sichtfeld", "1: nur zeigen, was im Sichtfeld ist"))
+                                panel=("Sichtfeld", "Mindesthöhe über dem Horizont, Grad (Häuser, Bäume)"),
+                                ui=Ui("Mindesthöhe", "So hoch muss ein Flugzeug über dem Horizont stehen, um über "
+                                      "Dächer und Bäume zu kommen.", "°"))
+    view_max_elev: float = _env("VIEW_MAX_ELEV", 90.0, _elev, panel=("Sichtfeld", "Obergrenze, Grad (Balkon darüber)"),
+                                ui=Ui("Obergrenze",
+                                      "Steiler nach oben verdeckt etwa ein Balkon darüber die Sicht.", "°"))
+    view_max_km: float = _env("VIEW_MAX_KM", 100.0, _km, panel=("Sichtfeld", "Sichtweite, km"),
+                              ui=Ui("Sichtweite", "Wie weit man Flugzeuge noch erkennt. Nachts mit "
+                                    "Landescheinwerfern oft 50 bis 60 km.", "km"))
+    view_only: bool = _env("VIEW_ONLY", False, panel=("Sichtfeld", "1: nur zeigen, was im Sichtfeld ist"),
+                           ui=Ui("Nur Sichtbares zeigen", "Das Panel zeigt dann nur Flugzeuge, die man gerade aus "
+                                 "dem Fenster sehen kann."))
     show_other: bool = _env("SHOW_OTHER", True,
                             panel=("Sichtfeld",
                                    "1: Privatflieger, Hubschrauber, Polizei, Militär in der Rotation, "
-                                   "mit Symbol statt Logo"))
+                                   "mit Symbol statt Logo"),
+                            ui=Ui("Auch Privatflieger und Hubschrauber", "Dazu Polizei und Militär, mit einem Symbol "
+                                  "statt eines Airline-Logos."))
 
     # --- Heimatflughafen
     local_airport_iata: str = _env("LOCAL_AIRPORT_IATA", "BER", str.upper)
@@ -286,21 +321,33 @@ class Config:
     width: int = _env("WIDTH", 128)
     height: int = _env("HEIGHT", 32)
     layout: str = _env("LAYOUT", "C", parse_layout,
-                       panel=("Anzeige", "C Logo und drei Zeilen, A ohne Logo, B zwei Flüge"))
-    max_flights: int = _env("MAX_FLIGHTS", 3, _int(1, 10), panel=("Anzeige", "so viele Flüge wechseln sich ab"))
+                       panel=("Anzeige", "C Logo und drei Zeilen, A ohne Logo, B zwei Flüge"),
+                       ui=Ui("Aufteilung", "Wie ein Flug auf dem Panel steht."))
+    max_flights: int = _env("MAX_FLIGHTS", 3, _int(1, 10), panel=("Anzeige", "so viele Flüge wechseln sich ab"),
+                            ui=Ui("Flüge im Wechsel", "So viele Flüge zeigt das Panel nacheinander, die nächsten "
+                                  "zuerst."))
     calm: bool = _env("CALM", False,
-                      panel=("Anzeige", "1: ruhiger Modus (nichts blinkt, seltener Wechsel, nur Landezeit und Höhe)"))
-    page_seconds: int = _env("PAGE_SECONDS", 4, _int(1, DAY_S), panel=("Anzeige", "Sekunden je Infoseite"))
+                      panel=("Anzeige", "1: ruhiger Modus (nichts blinkt, seltener Wechsel, nur Landezeit und Höhe)"),
+                      ui=Ui("Ruhiger Modus", "Nichts blinkt, seltener Wechsel, nur Landezeit und Höhe."))
+    page_seconds: int = _env("PAGE_SECONDS", 4, _int(1, DAY_S), panel=("Anzeige", "Sekunden je Infoseite"),
+                             ui=Ui("Zeit je Infoseite", "", "s"))
     flight_seconds: int = _env("FLIGHT_SECONDS", 0, _int(0, DAY_S),
-                               panel=("Anzeige", "Sekunden je Flug mindestens; 0 = jede Infoseite einmal"))
+                               panel=("Anzeige", "Sekunden je Flug mindestens; 0 = jede Infoseite einmal"),
+                               ui=Ui("Zeit je Flug, mindestens", "Bei 0 zeigt das Panel jede Infoseite einmal.", "s"))
     info_pages: tuple[str, ...] = _env("INFO_PAGES", INFO_PAGES, _pages,
-                                       panel=("Anzeige", "Infoseiten der Reihe nach: eta, alt, dist, callsign"))
-    blink: bool = _env("BLINK", True, panel=("Anzeige", "0: nichts blinkt außer einem Notfall"))
+                                       panel=("Anzeige", "Infoseiten der Reihe nach: eta, alt, dist, callsign"),
+                                       ui=Ui("Infoseiten", "Was das Panel zu einem Flug nacheinander zeigt."))
+    blink: bool = _env("BLINK", True, panel=("Anzeige", "0: nichts blinkt außer einem Notfall"),
+                       ui=Ui("Blinken", "Ausgeschaltet blinkt nur noch ein Notfall."))
 
     # --- Leerlauf-Karten, wenn keine Airline zu sehen ist
-    idle_seconds: int = _env("IDLE_SECONDS", 12, _int(1, DAY_S), panel=("Anzeige", "Sekunden je Leerlauf-Karte"))
+    idle_seconds: int = _env("IDLE_SECONDS", 12, _int(1, DAY_S), panel=("Anzeige", "Sekunden je Leerlauf-Karte"),
+                             ui=Ui("Zeit je Karte",
+                                   "So lange bleibt eine Karte stehen, wenn kein Flug zu sehen ist.", "s"))
     idle_clock_share: float = _env("IDLE_CLOCK_SHARE", 0.35, _share,
-                                   panel=("Anzeige", "Anteil der Uhr an den Leerlauf-Karten, 0 bis 1"))
+                                   panel=("Anzeige", "Anteil der Uhr an den Leerlauf-Karten, 0 bis 1"),
+                                   ui=Ui("Anteil der Uhr",
+                                         "Wie oft zwischen den Karten die Uhr kommt.", "", slider=(0, 1, 0.05)))
     cards_off: frozenset[str] = frozenset()                 # CARD_<ID>=0, siehe for_panel
     iss: bool = _env("ISS", True)                           # Bahndaten von Celestrak
 
@@ -313,12 +360,18 @@ class Config:
     logo_max_aspect: float = _env("LOGO_MAX_ASPECT", 1.5)
 
     # --- Helligkeit und Ruhezeiten
-    brightness_day: int = _env("BRIGHTNESS_DAY", 90, _int(0, 255), panel=("Helligkeit", "tagsüber, 0 bis 255"))
-    brightness_evening: int = _env("BRIGHTNESS_EVENING", 35, _int(0, 255), panel=("Helligkeit", "abends, 0 bis 255"))
+    brightness_day: int = _env("BRIGHTNESS_DAY", 90, _int(0, 255), panel=("Helligkeit", "tagsüber, 0 bis 255"),
+                               ui=Ui("Tagsüber", "", "", slider=(0, 255, 1)))
+    brightness_evening: int = _env("BRIGHTNESS_EVENING", 35, _int(0, 255), panel=("Helligkeit", "abends, 0 bis 255"),
+                                   ui=Ui("Abends", "", "", slider=(0, 255, 1)))
     day_hours: tuple[int, int] = _env("DAY_HOURS", (8 * 60, 19 * 60), _hours,
-                                      panel=("Helligkeit", "Tag von-bis, z. B. 08:00-19:00"))
+                                      panel=("Helligkeit", "Tag von-bis, z. B. 08:00-19:00"),
+                                      ui=Ui("Tag", "In dieser Zeit leuchtet das Panel mit der Helligkeit für "
+                                            "tagsüber, sonst mit der für abends."))
     quiet_hours: tuple[int, int] = _env("QUIET_HOURS", (0, 6 * 60 + 30), _hours,
-                                        panel=("Helligkeit", "Ruhezeit: Panel dunkel, kein Abruf, z. B. 00:00-06:30"))
+                                        panel=("Helligkeit", "Ruhezeit: Panel dunkel, kein Abruf, z. B. 00:00-06:30"),
+                                        ui=Ui("Ruhezeit", "Das Panel ist dann dunkel und ruft nichts ab.",
+                                              can_off=True))
 
     # --- Betrieb
     data_dir: str = _env("DATA_DIR", "./data")

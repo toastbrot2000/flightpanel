@@ -368,6 +368,24 @@ def test_every_response_carries_the_security_headers(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_a_sample_frame_shows_example_flights_and_leaves_the_rotation_alone(tmp_path):
+    """?sample=1: die Aufteilungen zur Wahl auf der Einstellungsseite, auch wenn gerade kein Flug zu sehen ist."""
+    async def run():
+        async with lan(tmp_path, quiet_hours=(0, 0)) as (app, client):
+            app.lan.model = DisplayModel()                                      # nichts los: sonst die Uhr
+            idle = await (await client.get("/frame.png?layout=C&gap=0&scale=1")).read()
+            shown = (app.lan.renderer.rotation.shown, app.lan.renderer.rotation.since)
+            pictures = set()
+            for layout in ("A", "B", "C"):
+                r = await client.get(f"/frame.png?layout={layout}&sample=1&gap=0&scale=1")
+                assert r.status == 200 and r.headers["Content-Type"] == "image/png", layout
+                pictures.add(await r.read())
+            assert idle not in pictures and len(pictures) == 3                  # drei verschiedene, keine Uhr
+            assert (app.lan.renderer.rotation.shown, app.lan.renderer.rotation.since) == shown
+
+    asyncio.run(run())
+
+
 def test_the_preview_has_no_inline_script_or_style(tmp_path):
     async def run():
         async with lan(tmp_path) as (_app, client):

@@ -75,9 +75,9 @@ def test_the_page_shows_every_panel_setting_and_every_card(tmp_path):
                 assert text.count(f'data-key="{key}"') == 1 and f'id="row-{key}"' in text, key
             for c in CARDS:
                 assert f'id="f-CARD_{c.id.upper()}" data-key="CARD_{c.id.upper()}" checked>' in text, c.id
-            assert 'placeholder="52.52"' in text and 'placeholder="00:00-06:30"' in text   # Defaults als Platzhalter
-            assert '<option value="" selected>Standard (C)</option>' in text                # LAYOUT nicht gesetzt
-            assert '<option value="" selected>Standard (an)</option>' in text               # BLINK nicht gesetzt
+            assert 'placeholder="52.52"' in text and 'data-default="00:00-06:30"' in text  # Defaults
+            assert 'name="layout-pick" value="C" checked>' in text                       # LAYOUT: Standard
+            assert re.search(r'id="f-BLINK" data-key="BLINK"[^>]* checked>', text)        # BLINK: Standard an
             assert 'id="paste"' in text and 'id="planes"' in text                           # Einfügen, Eichen
             assert 'href="/settings"' in await (await client.get("/")).text()               # die Vorschau verlinkt sie
             for name, kind in (("settings.js", "text/javascript"), ("settings.css", "text/css")):
@@ -95,8 +95,8 @@ def test_stored_values_are_shown_and_escaped(tmp_path):
             text = await (await client.get("/settings")).text()
             assert "<script>alert" not in text and 'value="&lt;script&gt;alert(1)&lt;/script&gt;"' in text
             assert 'value="110&quot;&gt;&lt;b&gt;x"' in text and '"><b>' not in text
-            assert re.search(r'id="f-LAYOUT"(?:(?!</select>).)*<option value="B" selected>', text, re.S)
-            assert re.search(r'id="f-BLINK"(?:(?!</select>).)*<option value="0" selected>', text, re.S)
+            assert 'name="layout-pick" value="B" checked>' in text
+            assert re.search(r'id="f-BLINK" data-key="BLINK"[^>]*">', text)            # aus
             assert 'id="f-CARD_PIGEON" data-key="CARD_PIGEON">' in text                    # aus
             assert 'id="f-CARD_CLOCK" data-key="CARD_CLOCK" checked>' in text              # an
 

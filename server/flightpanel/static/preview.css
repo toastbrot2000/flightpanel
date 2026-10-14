@@ -1,6 +1,231 @@
-/* Vorschauseite (web.py, GET /). Eine Datei statt Stilen in der Seite: Die Content-Security-Policy erlaubt nur, was
-   der Server selbst ausliefert. */
-body{background:#111;color:#ccc;font:14px system-ui;margin:24px}
-img{image-rendering:pixelated;display:block;margin:12px 0;border:1px solid #333;max-width:100%;height:auto}
-a{color:#8ab;margin-right:14px}
-#s{color:#d9a33a}
+/* Stile aller Seiten (web.page_top) und der Vorschau (web.py, GET /); die Einstellungsseite lädt dazu settings.css.
+   Fürs Telefon zuerst: man steht damit am Fenster, abends, neben einem leuchtenden Panel. Darum dunkel und
+   blendfrei, ein kühles Türkis als einzige Akzentfarbe, nur für Auswahl, Zustand
+   und die Hauptaktion. Eine Datei statt Stilen in der Seite: Die Content-Security-Policy erlaubt nur, was der
+   Server selbst ausliefert. */
+
+:root {
+  color-scheme: dark;
+  /* Neutrale Töne, leicht zum Akzent hin getönt */
+  --bg: oklch(0.155 0.012 215);
+  --surface: oklch(0.195 0.013 215);       /* Felder, Gerät, Abschnitte */
+  --surface-2: oklch(0.235 0.014 215);     /* gedrückt, ausgewählt ohne Akzent */
+  --line: oklch(0.285 0.014 215);          /* Trennlinien */
+  --edge: oklch(0.4 0.015 215);            /* Ränder von Feldern und Knöpfen: 3:1 auf --bg */
+  --edge-hover: oklch(0.52 0.016 215);
+  --text: oklch(0.89 0.008 215);
+  --strong: oklch(0.97 0.004 215);
+  --muted: oklch(0.73 0.014 215);          /* Erklärungen: 7:1 auf --bg, 6:1 auf --surface */
+  --faint: oklch(0.64 0.014 215);          /* Platzhalter: 4.6:1 auf --surface */
+  /* Akzent: Türkis */
+  --accent: oklch(0.8 0.13 178);
+  --accent-hover: oklch(0.86 0.12 178);
+  --accent-active: oklch(0.73 0.12 180);
+  --accent-soft: oklch(0.8 0.13 178 / 0.14);
+  --accent-line: oklch(0.8 0.13 178 / 0.55);
+  --on-accent: oklch(0.19 0.035 190);
+  /* Zustände */
+  --good: oklch(0.82 0.16 145);
+  --good-soft: oklch(0.82 0.16 145 / 0.14);
+  --warn: oklch(0.83 0.14 85);
+  --warn-soft: oklch(0.83 0.14 85 / 0.14);
+  --bad: oklch(0.74 0.16 25);
+  --bad-soft: oklch(0.74 0.16 25 / 0.14);
+  --info: oklch(0.79 0.09 240);
+  --info-soft: oklch(0.79 0.09 240 / 0.14);
+  --focus: oklch(0.88 0.09 190);
+  --focus-ring: oklch(0.88 0.09 190 / 0.3);
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);  /* ease-out-quint */
+  --gutter: 16px;
+  --z-sticky: 10;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 1rem/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--info); text-underline-offset: 0.18em; }
+a:hover { color: var(--strong); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+h1, h2, h3 { color: var(--strong); text-wrap: balance; }
+h2 { margin: 0; font-size: 1.1875rem; line-height: 1.3; font-weight: 650; }
+h3 { margin: 28px 0 0; font-size: 1rem; line-height: 1.35; font-weight: 650; }
+.hint { margin: 6px 0 0; max-width: 65ch; color: var(--muted); font-size: 0.9375rem; text-wrap: pretty; }
+
+.page { width: 100%; max-width: 46rem; margin: 0 auto; padding: 0 var(--gutter); }
+
+/* ------------------------------------------------------------------------------------------------- Kopf -- */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  max-width: 46rem; margin: 0 auto; padding: 0 var(--gutter);
+  min-height: 60px;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.brand {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 44px;
+  color: var(--strong); text-decoration: none; font-weight: 650; letter-spacing: -0.01em;
+}
+.brand:hover { color: var(--strong); }
+/* Das Zeichen: vier LEDs, eine davon an */
+.brand-mark {
+  flex: none; width: 18px; height: 18px; border-radius: 4px;
+  background:
+    radial-gradient(circle at 25% 25%, var(--accent) 0 2.2px, transparent 2.6px),
+    radial-gradient(circle at 75% 25%, var(--edge) 0 2.2px, transparent 2.6px),
+    radial-gradient(circle at 25% 75%, var(--edge) 0 2.2px, transparent 2.6px),
+    radial-gradient(circle at 75% 75%, var(--edge) 0 2.2px, transparent 2.6px),
+    var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.tabs { display: flex; gap: 4px; }
+.tabs a {
+  position: relative; display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px;
+  color: var(--muted); text-decoration: none; font-weight: 550; font-size: 0.9375rem;
+  border-radius: var(--radius-sm);
+  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+}
+.tabs a:hover { color: var(--strong); background: var(--surface); }
+.tabs a[aria-current="page"] { color: var(--strong); }
+.tabs a[aria-current="page"]::after {
+  content: ""; position: absolute; left: 12px; right: 12px; bottom: 6px; height: 2px;
+  border-radius: 1px; background: var(--accent);
+}
+
+/* ------------------------------------------------------------------------------------------------- Panel -- */
+.stage { padding: 8px 0 4px; }
+.device {
+  padding: 10px;
+  background: oklch(0.1 0.006 215);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 0 0 1px oklch(0.26 0.012 215),
+    0 1px 0 oklch(0.32 0.012 215 / 0.4),
+    0 28px 56px -32px oklch(0.8 0.13 178 / 0.35);
+}
+.screen {
+  display: block; width: 100%; height: auto; aspect-ratio: 4 / 1;
+  image-rendering: pixelated; border-radius: 3px; background: #000;
+}
+
+.state {
+  display: inline-flex; align-items: center; gap: 8px; margin: 14px 0 0;
+  min-height: 32px; padding: 4px 12px 4px 10px;
+  border-radius: 999px; background: var(--surface);
+  color: var(--text); font-size: 0.875rem; font-weight: 550;
+}
+.state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.state[data-mode="live"] .dot { background: var(--good); animation: pulse 2.4s var(--ease) infinite; }
+.state[data-mode="live"] { background: var(--good-soft); }
+.state[data-mode="quiet"] .dot { background: var(--muted); }
+.state[data-mode="warn"] { background: var(--warn-soft); }
+.state[data-mode="warn"] .dot { background: var(--warn); }
+.state[data-mode="demo"] { background: var(--info-soft); }
+.state[data-mode="demo"] .dot { background: var(--info); }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.82 0.16 145 / 0.55); }
+  60% { box-shadow: 0 0 0 6px oklch(0.82 0.16 145 / 0); }
+}
+
+/* ------------------------------------------------------------------------------------------ In der Nähe -- */
+.columns { display: grid; gap: 40px; margin: 36px 0 0; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.meta { margin: 0; color: var(--muted); font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+
+.flights { margin: 10px 0 0; padding: 0; list-style: none; }
+.flight {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 16px;
+  padding: 14px 0; border-top: 1px solid var(--line);
+}
+.flight:last-child { border-bottom: 1px solid var(--line); }
+.who { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 10px; min-width: 0; }
+.airline { color: var(--strong); font-weight: 600; overflow-wrap: anywhere; }
+.callsign { color: var(--muted); font: 0.8125rem/1.4 var(--mono); letter-spacing: 0.02em; }
+.route {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; margin-top: 2px;
+  color: var(--muted); font-size: 0.9375rem;
+}
+.route .iata { color: var(--text); font: 600 0.875rem/1.4 var(--mono); letter-spacing: 0.04em; }
+.route .sep { color: var(--edge-hover); }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; min-height: 22px;
+  border-radius: 999px; background: var(--accent-soft); color: var(--accent);
+  font-size: 0.8125rem; font-weight: 600;
+}
+.figure { grid-row: 1 / span 2; grid-column: 2; text-align: right; font-variant-numeric: tabular-nums; }
+.figure .num { display: block; color: var(--strong); font-size: 1.375rem; line-height: 1.15; font-weight: 600; }
+.figure .num small { margin-left: 2px; font-size: 0.8125rem; font-weight: 500; color: var(--muted); }
+.figure .cap { display: block; color: var(--muted); font-size: 0.8125rem; }
+.flight.arr .figure .num { color: var(--accent); }
+
+.empty { margin: 12px 0 0; color: var(--muted); max-width: 60ch; text-wrap: pretty; }
+.empty:empty { display: none; }
+.next {
+  margin: 14px 0 0; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--surface); color: var(--text); font-size: 0.9375rem;
+}
+.next:empty { display: none; }
+.next strong { color: var(--strong); font-weight: 600; }
+
+/* ------------------------------------------------------------------------------------ Ansicht ausprobieren -- */
+.segmented {
+  display: flex; margin-top: 14px; padding: 4px; gap: 4px;
+  background: var(--surface); border-radius: calc(var(--radius) + 2px);
+}
+.seg {
+  flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 6px 8px;
+  border-radius: var(--radius-sm); color: var(--muted); text-decoration: none; text-align: center;
+  font-size: 0.9375rem; font-weight: 550; line-height: 1.25;
+  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+}
+.seg:hover { color: var(--strong); background: var(--surface-2); }
+.seg[aria-current="true"] { color: var(--on-accent); background: var(--accent); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.chip {
+  display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 999px; background: transparent;
+  color: var(--text); text-decoration: none; font-size: 0.9375rem;
+  transition: border-color 150ms var(--ease), background-color 150ms var(--ease), color 150ms var(--ease);
+}
+.chip:hover { color: var(--strong); border-color: var(--edge-hover); }
+.chip[aria-current="true"] { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+
+/* ------------------------------------------------------------------------------------------------- Fuß -- */
+.foot {
+  max-width: 46rem; margin: 48px auto 0; padding: 16px var(--gutter) calc(24px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line); color: var(--muted); font-size: 0.875rem;
+}
+.foot summary {
+  display: inline-flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--muted);
+}
+.foot summary:hover { color: var(--strong); }
+.tech { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.tech a { display: inline-flex; align-items: center; min-height: 36px; }
+
+/* --------------------------------------------------------------------------------------- Breiter Schirm -- */
+@media (min-width: 48rem) {
+  :root { --gutter: 24px; }
+  .topbar, .page, .foot { max-width: 60rem; }
+  .stage { padding-top: 16px; }
+  .device { padding: 14px; border-radius: 18px; }
+  .columns { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 48px; margin-top: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
