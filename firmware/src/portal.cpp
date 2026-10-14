@@ -1,6 +1,7 @@
 // Einrichtungs-WLAN (siehe portal.h). Die Seite ist für das Handy gebaut: eine Spalte, Felder ab 16 px (sonst
 // zoomt iOS hinein), große Knöpfe, kein JavaScript. Alles, was von außen kommt (WLAN-Namen aus der Umgebung,
-// gespeicherte Werte, Eingaben), geht nur escaped in die Seite. Passwort und Secret stehen nie darin.
+// gespeicherte Werte, Eingaben), geht nur escaped in die Seite. Passwort und Secret stehen nie darin. Speichern und
+// Zurücksetzen nimmt es nur von der eigenen Seite an (fromPortal).
 #include "portal.h"
 
 #include <DNSServer.h>
@@ -87,7 +88,9 @@ void send(const String& html) {
   WebServer& s = *st.server;
   s.sendHeader("Cache-Control", "no-store");
   s.sendHeader("X-Content-Type-Options", "nosniff");
-  s.sendHeader("Referrer-Policy", "no-referrer");
+  // same-origin statt no-referrer: Mit no-referrer schickt der Browser beim Absenden des Formulars "Origin: null"
+  // (Fetch-Standard), und fromPortal() wiese die eigene Seite ab. Nach außen geht weiter nichts, es gibt keine Links.
+  s.sendHeader("Referrer-Policy", "same-origin");
   s.sendHeader("Content-Security-Policy",
                "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
   s.send(200, "text/html; charset=utf-8", html);
@@ -193,12 +196,30 @@ void handleRoot() {
   sendForm("");
 }
 
+// Speichern und Löschen nur von der eigenen Seite: Sonst schickt eine andere Seite im Browser des Handys, solange es
+// im Einrichtungs-WLAN ist, ein Formular hierher. handleRoot leitet jeden anderen Namen auf die IP um, die Seite steht
+// also immer unter http://<IP>/: Host ist die IP, und schickt der Browser einen Origin, ist es genau http://<IP>.
+// Ohne Origin (ältere Browser) zählt der Host allein.
+bool fromPortal() {
+  WebServer& s = *st.server;
+  const String self = st.ip.toString();
+  const String origin = s.header("Origin");
+  return s.hostHeader() == self && (origin.isEmpty() || origin == String("http://") + self);
+}
+
+void refuse() {
+  Serial.println("Einrichtungs-WLAN: Anfrage einer fremden Seite abgewiesen (Host oder Origin)");
+  st.server->sendHeader("Cache-Control", "no-store");
+  st.server->send(403, "text/plain; charset=utf-8", "Nur von der Einrichtungsseite des Panels.\n");
+}
+
 void handleScan() {
   scan();
   redirectHome();
 }
 
 void handleSave() {
+  if (!fromPortal()) return refuse();
   WebServer& s = *st.server;
   const Settings& cur = *st.current;
   const bool full = st.mode == portal::Mode::Full;
@@ -273,6 +294,7 @@ void handleSave() {
 }
 
 void handleReset() {
+  if (!fromPortal()) return refuse();
   if (st.server->arg("confirm") != "ja") return sendForm("Zum Löschen bitte „Ja, alles löschen“ ankreuzen.");
   st.wipe = true;
   sendDone("Wird gelöscht", "Alles Gespeicherte wird gelöscht, das Panel startet neu.");
@@ -320,6 +342,9 @@ void run(Mode mode, const Settings& current) {
   dns.start(53, "*", st.ip);   // jeder Name zeigt auf das Panel: das Handy öffnet die Seite von selbst
   WebServer server(80);
   st.server = &server;
+  // WebServer hebt nur die Header auf, die hier stehen (Authorization nimmt er selbst dazu, Host liest er immer)
+  const char* headers[] = {"Origin"};
+  server.collectHeaders(headers, 1);
   server.on("/", HTTP_GET, handleRoot);
   server.on("/scan", HTTP_GET, handleScan);
   server.on("/save", HTTP_POST, handleSave);

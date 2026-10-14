@@ -115,7 +115,8 @@ void streakReset() {
 }
 
 // ---- Laufendes Image --------------------------------------------------------------------------------------------
-bool confirmed = false;     // dieses Image hat ein Bild geholt
+bool confirmed = false;     // dieses Image hat ein Bild geholt und ist bestätigt
+bool confirmFailed = false; // das Bestätigen schlug schon fehl (steht einmal im Log, nicht bei jedem Bild)
 bool checkDue = true;       // erste Prüfung mit dem ersten Bild
 uint32_t nextCheck = 0;     // danach: millis() der nächsten
 
@@ -139,14 +140,20 @@ bool pendingVerify() {
 
 // Erstes Bild: Dieses Image funktioniert. Ein unbestätigtes wird jetzt gültig, sonst startete der Bootloader beim
 // nächsten Neustart wieder das alte. Erst danach darf ein Update kommen: Aus einem unbestätigten Image heraus
-// könnte ein zweites Update am Ende kein startbares Image übrig lassen.
+// könnte ein zweites Update am Ende kein startbares Image übrig lassen. Schlägt das Bestätigen fehl, bleibt es
+// unbestätigt (ohne Update-Prüfung, siehe afterFrame), und das nächste Bild versucht es wieder.
 void confirm() {
-  confirmed = true;
   if (pendingVerify()) {
     const esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
-    if (err == ESP_OK) Serial.printf("Firmware %s bestätigt (erstes Bild)\n", FW_VERSION);
-    else Serial.printf("Firmware %s: Bestätigen fehlgeschlagen (%d)\n", FW_VERSION, (int)err);
+    if (err != ESP_OK) {
+      if (!confirmFailed) Serial.printf("Firmware %s: Bestätigen fehlgeschlagen (%d), versucht es mit jedem Bild\n",
+                                        FW_VERSION, (int)err);
+      confirmFailed = true;
+      return;
+    }
+    Serial.printf("Firmware %s bestätigt (erstes Bild)\n", FW_VERSION);
   }
+  confirmed = true;
   if (strcmp(tries.version, FW_VERSION) == 0) clearTries();   // das Update, das gerade versucht wurde, läuft
 }
 
@@ -401,6 +408,7 @@ void afterFrame(frame::Result r) {
   if (r != frame::Result::Failed) {
     if (!confirmed) confirm();
     streakReset();
+    if (!confirmed) return;   // Bestätigen fehlgeschlagen: kein Update aus einem unbestätigten Image
     if (checkDue || (int32_t)(now - nextCheck) >= 0) {
       checkDue = false;
       nextCheck = now + UPDATE_CHECK_MS;

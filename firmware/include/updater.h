@@ -5,7 +5,8 @@
 //     Verbindung von net, Format prüfen (manifest.h), Signatur prüfen (fwsig.h), nur eine neuere Version als
 //     FW_VERSION. Dann /panel/firmware.bin?v=<Version> in den freien App-Slot schreiben, dabei SHA-256 rechnen;
 //     stimmen Größe und Hash nicht, wird abgebrochen, bevor das Image startbar ist. Sonst Neustart.
-//   - Rollback: Ein neues Image startet unbestätigt (PENDING_VERIFY) und bestätigt sich mit dem ersten Bild.
+//   - Rollback: Ein neues Image startet unbestätigt (PENDING_VERIFY) und bestätigt sich mit dem ersten Bild;
+//     scheitert das, versucht es jedes weitere Bild wieder, und bis dahin prüft es keine Updates.
 //     Startet es vorher neu (Absturz, Watchdog, 10 min ohne Bild, Stromausfall), startet der Bootloader wieder das
 //     alte. Eine Version, die so scheitert, versucht das Panel höchstens UPDATE_TRIES_MAX-mal, im Abstand von
 //     UPDATE_CHECK_MS.
