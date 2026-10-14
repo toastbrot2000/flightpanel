@@ -37,7 +37,9 @@ The server renders the complete 128 × 32 image. The ESP32 only fetches it as a 
 
 Two HUB75 P2.5 panels (64 × 32 each) side by side give 128 × 32 pixels on 32 × 8 cm, driven by a classic ESP32 (WROOM-32) and powered by a 5 V / 4 A desktop power supply. No soldering, no mains wiring; about 100 to 120 € in parts. The server runs anywhere Docker runs, e.g. on a home server. Parts list, wiring, firmware and setup: [docs/hardware.md](docs/hardware.md).
 
-## Quick start (no hardware, no network)
+## Quick start (no hardware, fictional flights)
+
+You need Git and Docker with Compose v2 (Docker Desktop, or Docker Engine on Linux).
 
 ```bash
 git clone https://github.com/toastbrot2000/flightpanel && cd flightpanel
@@ -45,20 +47,20 @@ cp .env.example .env            # MOCK=1 is preset: fictional flights
 docker compose up -d --build
 ```
 
-Then open `http://localhost:8080`: a preview that refreshes every 2 seconds, with links to the layouts and every idle card (`/frame.png?card=radar&scale=8` works directly too).
+Then open `http://localhost:8080`: a preview that refreshes every 2 seconds, with links to the layouts and every idle card (`/frame.png?card=radar&scale=8` works directly too). From another device use the server's IP address; a router name such as `nas.fritz.box` first needs `LAN_HOSTS` ([configuration.md](docs/configuration.md#allowed-host-names-lan_hosts)), otherwise the server answers 421.
 
-On Linux the container runs unprivileged as `PUID:PGID` from `.env` (default `1000:1000`) and needs write access to `./data`: set `PUID` and `PGID` to the owner of `data/` (`id -u`, `id -g`). Docker Desktop on Windows and macOS needs nothing.
+On Linux, set `PUID` and `PGID` in `.env` to the owner of `data/` first ([details](docs/configuration.md#server-settings-env)); Docker Desktop on Windows and macOS needs nothing.
 
 ## Going live
 
 1. In `.env`: your airport (`LOCAL_AIRPORT_IATA`, `RUNWAY_COURSE`, `CURFEW_HOURS`), `MOCK=0`, your time zone `TZ`. Then `docker compose up -d`.
-2. Your window's position and view field, per panel:
+2. Your window's position and view field, per panel (example values; calibrate at the window, see [configuration.md](docs/configuration.md#calibrating-the-view-field)):
    ```bash
    docker compose exec flightpanel python3 -m flightpanel.panels set home HOME_LAT=52.52 HOME_LON=13.40 HOME_ALT_M=40
    docker compose exec flightpanel python3 -m flightpanel.panels set home VIEW_FROM=90 VIEW_TO=180 VIEW_MIN_ELEV=1 VIEW_MAX_KM=50 VIEW_ONLY=1
    ```
-3. Fetch airline logos once: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`.
-4. Build the panel, flash it and enter your Wi-Fi and server address from your phone ([docs/hardware.md](docs/hardware.md)).
+3. Optional: fetch the logos of all known airlines at once (otherwise each is fetched when the airline first appears): `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`.
+4. Build the panel, flash it and enter your Wi-Fi and server address from your phone ([docs/hardware.md](docs/hardware.md#5-step-by-step-assembly)).
 
 Keep port 8080 on your home network: it has no login, and `/display.json` roughly reveals where your window is. Everything else, including calibrating the view field at the window, monitoring, backups and updates: [docs/configuration.md](docs/configuration.md).
 

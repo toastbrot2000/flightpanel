@@ -8,6 +8,8 @@ How to build the panel: parts, mounting, power, wiring, firmware and first start
 
 **Effort:** one evening for power, cables and the first image, an afternoon for the mounting board. Material roughly 100 to 120 € (2026 prices).
 
+**In a hurry:** buy the parts in section 1, then follow [section 5](#5-step-by-step-assembly); the other sections are reference.
+
 ## Contents
 
 1. [Parts](#1-parts)
@@ -34,7 +36,7 @@ How to build the panel: parts, mounting, power, wiring, firmware and first start
 | Mounting board 340 × 100 mm: 6 mm plywood or steel sheet | 1 | mounting | On steel the panels hold by their magnets; on wood use 8 × M3 × 8 screws. |
 | M3 standoffs or adhesive pads, cable ties, velcro | | ESP32 and cables on the back | |
 
-**Tools:** multimeter (to check polarity and voltage), a drill for the board, a computer with [PlatformIO](https://platformio.org) or Docker for flashing.
+**Tools:** multimeter (to check polarity and voltage), a drill for the board, and a computer with [PlatformIO](https://platformio.org) to flash over USB (Docker alone can check the build but not flash it).
 
 **Optional:**
 
@@ -113,7 +115,7 @@ That makes 14 wires. Labelled wires or a photo help; swapped colour lines show u
 
 ### 3.4 Logic levels: 3.3 V is usually enough
 
-HUB75 panels buffer their inputs with 74HC245 chips at 5 V. Their threshold is around 2.5 V, so the ESP32's 3.3 V are recognised reliably with short wires. Waveshare's documentation for this panel shows ESP32 and Raspberry Pi (both 3.3 V logic) connected directly, with the same library.
+HUB75 panels buffer their inputs with 74HC245 chips at 5 V. Their threshold is around 2.5 V, so the ESP32's 3.3 V is recognised reliably with short wires. Waveshare's documentation for this panel shows ESP32 and Raspberry Pi (both 3.3 V logic) connected directly, with the same library.
 
 If you still get flicker, ghosting or colour noise that `HUB75_CLKPHASE` and `HUB75_LATCH_BLANKING` (section 4.6) don't fix: put two 74HCT245 (8 channels each, 5 V supply, direction A→B) between ESP32 and panel. With 4-channel buffers such as the 74AHCT125, two chips cover the 8 most critical lines (CLK, LAT, OE, A to D, R1).
 
@@ -129,13 +131,23 @@ PlatformIO, board `esp32dev`, Arduino framework (Arduino-ESP32 2.0.17), ESP32-HU
 
 ### 4.1 Build and flash
 
+Flashing needs a local PlatformIO. All versions are pinned: platform and libraries in `platformio.ini` (the HUB75 library by commit), PlatformIO itself in `firmware/platformio.lock`. To install exactly that version, in the repository root:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install --require-hashes -r firmware/platformio.lock    # Windows: .venv\Scripts\pip
+. .venv/bin/activate                                                  # Windows: .venv\Scripts\activate
+```
+
+Then build, flash and watch the console:
+
 ```bash
 cd firmware
 pio run -t upload      # over USB, with VIN unplugged
 pio device monitor     # serial console, 115200 baud
 ```
 
-All versions are pinned: platform and libraries in `platformio.ini` (the HUB75 library by commit), PlatformIO itself in `firmware/platformio.lock`. Without a local PlatformIO, `sh tools/check_firmware.sh` builds and tests the firmware in Docker ([development.md](development.md#firmware-checks)).
+The VS Code extension works too, but installs its own, unpinned PlatformIO. `sh tools/check_firmware.sh` checks in Docker that the firmware builds and passes its tests ([development.md](development.md#firmware-checks)); it keeps no image, so it can't replace PlatformIO for flashing.
 
 **Partition table:** `min_spiffs.csv`, two app slots of 1.875 MB each, needed for HTTPS, the setup portal and updates. A partition table only reaches the panel over USB, never over OTA or a signed update.
 
@@ -157,9 +169,9 @@ Details worth knowing:
 - You can enter server and token in advance and leave Wi-Fi empty, e.g. before giving the panel away. Until a Wi-Fi is stored, the full portal opens at every power-on without time limit and shows its password on the LEDs; whoever reads it can change server and token or reset everything (they never see the secret). Hand the panel over soon after setting it up.
 - Use an IP address for the server if you can. A name without a dot only works if your router resolves it. A name with a dot that is not `*.local`, `*.home.arpa` or `*.internal` (e.g. `nas.fritz.box`) must also be listed in `LAN_HOSTS` on the server, otherwise the server answers 421 ([configuration.md](configuration.md#allowed-host-names-lan_hosts)).
 
-**Changing settings later:** power the panel on (or press EN) and press and hold BOOT during the test pattern until the panel shows "WLAN einrichten" (about 3 s). This opens the full portal including Advanced and **Zurücksetzen** (Reset: deletes everything, the panel is then as new). Holding BOOT already while plugging in puts the ESP32 into flash mode and the panel stays dark: just try again. Without input the portal closes after 10 minutes.
+**Changing settings later:** unplug the panel and plug it back in, then press and hold BOOT during the test pattern until the panel shows "WLAN einrichten" (about 3 s). This opens the full portal including Advanced and **Zurücksetzen** (Reset: deletes everything, the panel is then as new). Holding BOOT already while plugging in puts the ESP32 into flash mode and the panel stays dark: just try again. Without input the portal closes after 10 minutes.
 
-**Wi-Fi gone:** if the panel cannot find its Wi-Fi for 5 minutes (new router), it opens the portal with the Wi-Fi fields only; server and token cannot be changed there. It keeps retrying the old Wi-Fi and closes the portal as soon as that is back, otherwise after 10 minutes (restart, then from the beginning). A mistyped Wi-Fi password therefore costs 5 minutes, or use BOOT as above.
+**Wi-Fi gone:** if the panel cannot find its Wi-Fi for 5 minutes (new router), it opens the portal with the Wi-Fi fields only; server and token cannot be changed there. It keeps retrying the old Wi-Fi and closes the portal as soon as that is back, otherwise after 10 minutes (then it restarts and starts over). A mistyped Wi-Fi password therefore costs 5 minutes, or use BOOT as above.
 
 ### 4.3 Bench defaults: `secrets.h` (optional)
 
@@ -171,7 +183,7 @@ cp include/secrets.h.example include/secrets.h
 
 ### 4.4 OTA updates on your home network
 
-OTA is off unless `OTA_PASSWORD` in `secrets.h` is set; a build without `secrets.h`, with an empty password or with the old placeholder `changeme` opens no port and does not announce `flightpanel.local`. To upload over Wi-Fi, put the same password into `platformio_local.ini` too:
+OTA is off unless `OTA_PASSWORD` in `secrets.h` is set; without `secrets.h` or with an empty password the panel opens no port and does not announce `flightpanel.local`. To upload over Wi-Fi, put the same password into `platformio_local.ini` too:
 
 ```bash
 cp platformio_local.ini.example platformio_local.ini   # enter the OTA password there
@@ -186,7 +198,7 @@ After power-on the panel shows a test pattern (section 6; other restarts stay qu
 
 - **No server:** the last frame stays; after 60 s a dark red dot appears in the bottom right corner, after 10 minutes the ESP32 restarts.
 - **Hang:** if `loop()` itself hangs (Wi-Fi stack, driver, a server that stops mid-frame), the task watchdog resets the ESP32 after 60 s (`WDT_TIMEOUT_S`).
-- **HTTPS:** the firmware embeds `server/flightpanel/certs/roots.pem` (Let's Encrypt, Google Trust Services, SSL.com, Sectigo and a few spares; generated by `tools/make_roots.py`). Access tokens are only sent over HTTPS, never over HTTP.
+- **HTTPS:** the firmware embeds `server/flightpanel/certs/roots.pem` (Let's Encrypt, Google Trust Services, SSL.com, Sectigo and a few spares; generated by `tools/make_roots.py`, see [remote-panels.md](remote-panels.md#firmware-updates)). Access tokens are only sent over HTTPS, never over HTTP.
 
 **Frame protocol:** `GET /panel/frame` (on the LAN port also `/frame`) returns 12 292 bytes, `application/octet-stream`, with an `ETag`; with a matching `If-None-Match` the server answers 304. In the `X-Panel` header the panel reports firmware version, uptime, Wi-Fi signal and minimum free heap for diagnostics.
 
@@ -219,9 +231,9 @@ If the test pattern looks wrong:
 
 **Preparation, without hardware:**
 
-1. Start the server in mock mode (fictional flights): see [Quick start](../README.md#quick-start-no-hardware-no-network). Preview at `http://<server>:8080`.
+1. Start the server in mock mode (fictional flights): see [Quick start](../README.md#quick-start-no-hardware-fictional-flights). Preview at `http://<server>:8080`.
 2. Fetch logos, configure your airport, set `MOCK=0`, then set location and view field ([configuration.md](configuration.md)). Watch `/display.json` for a few days: how many flights, how high, how often empty? Use that to tune `RADIUS_KM`, `MAX_ALT_M` and the view field.
-3. Install PlatformIO (VS Code extension or `pip install platformio`). Create `firmware/include/secrets.h` only if you want OTA (section 4.4).
+3. Install PlatformIO, pinned as in 4.1. Create `firmware/include/secrets.h` only if you want OTA (section 4.4).
 
 **First image (one evening):**
 
@@ -244,7 +256,7 @@ If the test pattern looks wrong:
 
 ## 6. Test pattern and bench tests
 
-The test pattern only runs after power-on. After a restart in between (no data for 10 minutes, an OTA update, a watchdog reset) the panel stays quiet; to see it again, briefly switch the power off and on.
+The test pattern only runs after power-on. After any other restart (no data for 10 minutes, an OTA update, a watchdog reset) the panel stays quiet; to see it again, briefly switch the power off and on.
 
 | Image | Meaning |
 |---|---|
@@ -254,14 +266,14 @@ The test pattern only runs after power-on. After a restart in between (no data f
 | "flightpanel" readable, top left | orientation is right |
 | Text mirrored or upside down | rotate the panels, not the software |
 | Coloured snow, flicker | check Dupont wires (CLK, LAT, OE, GND), then `HUB75_CLKPHASE` |
-| Single rows slip one pixel left, cyan/magenta fringes | CLK ringing: `HUB75_CLK_DRIVE 0` (default); otherwise level shifters (3.4) |
+| Single rows slip one pixel left, other wiring symptoms | see the table in 4.6 |
 | Only the upper or lower half of each panel | R2/G2/B2 or R1/G1/B1 not connected |
 | Right panel blue instead of green, text pink instead of orange | panel with R-B-G colour order (happens with some batches): swap G1 and B1 at the ESP32 (wire 2 to GPIO 27, wire 3 to GPIO 26), and likewise G2 and B2 (wire 6 to GPIO 13, wire 7 to GPIO 12) |
 
 **Bench tests** with the ESP32 on USB (`pio device monitor`, 115200 baud). The console messages are in German. `Reset-Grund N` says why the ESP32 started: 1 power-on, 3 software restart (10-minute rule, OTA), 4 crash, 5 to 7 watchdog (6 = task watchdog), 9 brown-out.
 
 1. **Power-on:** unplug and replug USB (the panels may stay on the power supply, 3.5). The console shows `Reset-Grund 1 (Einschalten)`, then the test pattern runs.
-2. **EN button, flashing over USB:** both reset the chip via the EN line (some boards also do when the monitor opens). The classic ESP32 probably reports that as `1` too, then the test pattern runs; if you see another number, the test pattern stays off after EN.
+2. **EN button, flashing over USB:** both reset the chip via the EN line (some boards also do when the monitor opens). On most classic ESP32 boards this reports as `1` and the test pattern runs. If you see another number, unplug and replug instead of pressing EN to get the test pattern and the BOOT window.
 3. **OTA off:** leave `OTA_PASSWORD` empty, flash over USB. The console says `OTA aus (OTA_PASSWORD leer)`, `flightpanel.local` does not appear.
 4. **OTA on:** set the password in `secrets.h` and `platformio_local.ini`, flash over USB, then `pio run -e esp32dev_ota -t upload`. The panel goes dark (`OTA start`), the console reports `OTA fertig`, the ESP32 restarts with `Reset-Grund 3` and no test pattern. With a different password in `platformio_local.ini` the upload fails at authentication (`OTA Fehler 0`) and the panel keeps running.
 5. **Watchdog:** type `h` and Enter in the serial monitor. The console reports `Watchdog-Test: loop() steht jetzt 70 s still …` and counts seconds while the image freezes. At about 60 s the ESP32 restarts with `Reset-Grund 6`, no test pattern, then the normal image after Wi-Fi is up. If the console counts to 70, the watchdog does not work. At start-up it reports `Watchdog: 60 s auf loop()`; `Watchdog FEHLER` means `loop()` is not supervised.
@@ -285,7 +297,7 @@ Panels outside your home network can't be reached by OTA. Instead they fetch new
 
 - After the first frame and then every 6 hours the panel fetches `/panel/firmware.txt` over the same connection as its frames (with its token over HTTPS). It checks format and signature (format: `firmware/include/manifest.h`) and only accepts a higher version. It then downloads `/panel/firmware.bin?v=<version>` into the free app slot, computes SHA-256 while doing so and compares size and hash before the image becomes bootable; otherwise it aborts and keeps the running image. Then it restarts quietly. During the download (about a minute) the last frame stays on screen.
 - **Rollback:** a new image starts unconfirmed (console: `PENDING_VERIFY`) and confirms itself with its first frame. If it restarts before that (crash, watchdog, 10 minutes without a frame, power cut), the bootloader starts the previous image again. The same version is tried at most three times, 6 hours apart; a newer one at any time. This applies to OTA uploads too: they also have to fetch a frame within 10 minutes.
-- **Rescue mode:** if the panel rejects the server's certificate for 24 hours, its embedded trust list no longer matches Cloudflare. It then fetches, at most once per hour, only the manifest and image without certificate check and without token, trusting only signature, SHA-256 and a higher version. A release with an updated `roots.pem` (`tools/make_roots.py`) brings it back without USB. The 24 hours count across restarts and power cuts (saved hourly in NVS) and reset as soon as the certificate is accepted again.
+- **Rescue mode:** if the panel rejects the server's certificate for 24 hours, its embedded trust list no longer matches Cloudflare. It then fetches, at most once per hour, only the manifest and image without certificate check and without token, trusting only signature, SHA-256 and a higher version. A release with an updated `roots.pem` ([how](remote-panels.md#firmware-updates)) brings it back without USB. The 24 hours count across restarts and power cuts (saved hourly in NVS) and reset as soon as the certificate is accepted again.
 
 ### 7.1 Create the signing key (once)
 
@@ -333,16 +345,16 @@ Opt-in and **not yet run on a panel**. The default build stays on Arduino-ESP32 
 
 - **Supply chain:** official PlatformIO has no Arduino 3.x; platform and PlatformIO core come from the community fork pioarduino, framework and compiler from Espressif. Therefore this variant is only built by `sh tools/check_firmware_core3.sh`, in Docker, in its own volume `flightpanel-pio-core3` (about 0.6 GB download, about 6 GB on disk). Every package must match its SHA-256 in `firmware/platformio-core3.sha256`, the Python tooling comes only as wheels from `firmware/platformio-core3.lock`, and the script aborts if anything else got installed.
 - **Don't build, upload or flash this variant with a local `pio`:** it would fetch the platform unchecked and rebuild your IDE's PlatformIO environment (`~/.platformio/penv`) for pioarduino.
-- **`secrets.h`:** the script builds without it, like for a panel you give away; the panel keeps Wi-Fi, server and token from NVS. For a bench panel, `sh tools/check_firmware_core3.sh --mit-secrets` includes defaults and OTA password. The images then contain your Wi-Fi password, OTA password and possibly the access secret: delete `firmware/.pio/core3/` after flashing.
-- **Flashing over USB** with a verified standalone esptool from Espressif (release on github.com/espressif/esptool; check the download against the SHA-256 the release lists, on Windows with `Get-FileHash`). The script puts the images and the command line (`flash.txt`) into `firmware/.pio/core3/`. In `firmware/`, VIN unplugged, with your serial port:
+- **`secrets.h`:** the script builds without it, like for a panel you give away; the panel keeps Wi-Fi, server and token from NVS. For a bench panel, `sh tools/check_firmware_core3.sh --mit-secrets` ("with secrets") includes defaults and OTA password. The images then contain your Wi-Fi password, OTA password and possibly the access secret: delete `firmware/.pio/core3/` after flashing.
+- **Flashing over USB** with a verified standalone esptool from Espressif (release on github.com/espressif/esptool; check the download against the SHA-256 the release lists, on Windows with `Get-FileHash`). The script puts the images and the command line (`flash.txt`) into `firmware/.pio/core3/`. In `firmware/`, VIN unplugged, with your serial port (e.g. `COM3` on Windows, `/dev/ttyUSB0` on Linux):
   ```bash
-  esptool --chip esp32 --port COM5 write-flash 0x1000 .pio/core3/bootloader.bin 0x8000 .pio/core3/partitions.bin 0xe000 .pio/core3/boot_app0.bin 0x10000 .pio/core3/firmware.bin
+  esptool --chip esp32 --port <port> write-flash 0x1000 .pio/core3/bootloader.bin 0x8000 .pio/core3/partitions.bin 0xe000 .pio/core3/boot_app0.bin 0x10000 .pio/core3/firmware.bin
   ```
   This writes the same as `pio run -t upload` (bootloader, partition table, app); NVS with Wi-Fi, server and token stays. esptool before version 5 spells it `write_flash`. To go back to 2.0.17, flash normally as in 4.1.
 - **OTA** only works with an image built with `--mit-secrets`. 3.x authenticates with SHA-256 (PBKDF2) instead of MD5, so `pio run -e esp32dev_ota -t upload` fails; use `python .pio/core3/espota.py -i flightpanel.local -a <OTA password> -f .pio/core3/firmware.bin`. Updating from 2.0.17 to 3.x over OTA keeps the 2.0.17 bootloader, as a signed update would.
-- **Size** with update key: 2.0.17 uses 60 808 bytes RAM and 1 029 621 bytes flash (52 % of the app slot), 3.x 66 896 and 1 221 056 (62 %).
+- **Size:** the 3.x image uses about 6 KB more RAM and fills 62 % of the app slot (2.0.17: 52 %).
 
-**What to verify on hardware**, each compared with 2.0.17: free heap during TLS (console line after the first HTTPS fetch and after hours); test pattern, flicker and ghosting while Wi-Fi and TLS run, and whether `HUB75_CLK_DRIVE` still works; the watchdog test (6.5); a silent connection mid-download (`docker pause` the server container during `Update: lade …`, expect a restart after about 60 s with the old image); the setup portal opening on the phone by itself; OTA with and without password and switching 2.0.17 ↔ 3.x over USB and OTA with Wi-Fi and token kept; a signed 2.0.17 release installed on a 3.x panel.
+If you try it on hardware, please report free heap during TLS, flicker and ghosting, the watchdog test (6.5), the setup portal and OTA, compared with 2.0.17.
 
 ---
 
