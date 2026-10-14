@@ -6,7 +6,7 @@ annähernd quadratische Bildmarken (Seitenverhältnis bis LOGO_MAX_ASPECT):
 Schriftzüge werden bei 32 x 32 Pixeln unlesbar, dann lieber der Platzhalter
 (logo_image.placeholder_logo, ein graues Flugzeug).
 
-Negative Treffer werden in data/logos/.missing.json gemerkt (Retry nach 7 Tagen).
+Negative Treffer werden in der Datenbank gemerkt (Tabelle logo_missing; Retry nach 7 Tagen).
 
 Eigene Logos liegen in data/logos/own/ (tools/make_logo.py legt sie dort ab): Sie
 gehen den abgerufenen vor, und der Abruf fasst sie nie an, auch nicht mit
@@ -22,8 +22,8 @@ import time
 import aiohttp
 from PIL import Image, ImageChops
 
+from .db import Db
 from .logo_image import NotSquare, prepare_logo
-from .storage import read_json, write_json
 
 log = logging.getLogger("logos")
 
@@ -48,8 +48,9 @@ DEFAULT_URLS = (
 class LogoStore:
     def __init__(self, directory: str, size: int, fetch: bool = True,
                  urls: tuple[tuple[str, float | None], ...] = DEFAULT_URLS, max_aspect: float = 1.5,
-                 session: aiohttp.ClientSession | None = None):
-        """session: ohne gibt es keinen Abruf, nur die vorhandenen Dateien."""
+                 session: aiohttp.ClientSession | None = None, db: Db | None = None):
+        """session: ohne gibt es keinen Abruf, nur die vorhandenen Dateien. db: ohne werden
+        Fehlschläge nur im Speicher gemerkt."""
         self.dir = directory
         self.own_dir = os.path.join(directory, OWN)
         self.size = size
@@ -57,12 +58,12 @@ class LogoStore:
         self.urls = urls
         self.max_aspect = max_aspect
         self.session = session
+        self.db = db
         self._cache: dict[str, tuple[float, Image.Image | None]] = {}
         self._inflight: set[str] = set()
         self._tasks: set[asyncio.Task] = set()      # laufende Abrufe, festgehalten bis sie fertig sind
         self._errors: dict[str, float] = {}
         self._placeholders: dict[str, str | None] = {}
-        self._missing_path = os.path.join(directory, ".missing.json")
         self._missing: dict[str, float] = self._load_missing()
         os.makedirs(directory, exist_ok=True)
 
@@ -130,14 +131,21 @@ class LogoStore:
 
     # ------------------------------------------------------------- Abruf --
     def _load_missing(self) -> dict[str, float]:
-        raw = read_json(self._missing_path)
-        return raw if isinstance(raw, dict) else {}
+        if self.db is None:
+            return {}
+        return {r["code"]: r["failed"] for r in self.db.query("SELECT code, failed FROM logo_missing")}
 
-    def _save_missing(self) -> None:
-        try:
-            write_json(self._missing_path, self._missing)
-        except OSError as e:
-            log.warning("missing.json: %s", e)
+    def load_legacy(self, raw: dict) -> None:
+        """Alte logos/.missing.json übernehmen (main.absorb_legacy, einmalig)."""
+        for code, t in raw.items():
+            if isinstance(t, (int, float)):
+                self._note_missing(code, float(t))
+
+    def _note_missing(self, code: str, t: float) -> None:
+        self._missing[code] = t
+        if self.db is not None:
+            self.db.execute("INSERT INTO logo_missing (code, failed) VALUES (?, ?) "
+                            "ON CONFLICT(code) DO UPDATE SET failed = excluded.failed", (code, t))
 
     @staticmethod
     def key(iata: str, icao: str = "") -> str:
@@ -241,8 +249,7 @@ class LogoStore:
                 self._errors[k] = time.time()   # später noch einmal
             else:
                 log.info("Kein quadratisches Logo für %s", k)
-                self._missing[k] = time.time()
-                self._save_missing()
+                self._note_missing(k, time.time())
             return False
         finally:
             self._inflight.discard(k)
@@ -264,6 +271,7 @@ def parse_urls(spec: str) -> tuple[tuple[str, float | None], ...]:
     return tuple(out)
 
 
-def make_logo_store(cfg, session: aiohttp.ClientSession | None = None) -> LogoStore:
+def make_logo_store(cfg, session: aiohttp.ClientSession | None = None, db: Db | None = None) -> LogoStore:
     return LogoStore(os.path.join(cfg.data_dir, "logos"), cfg.logo_size, fetch=cfg.logo_fetch,
-                     urls=parse_urls(cfg.logo_urls) or DEFAULT_URLS, max_aspect=cfg.logo_max_aspect, session=session)
+                     urls=parse_urls(cfg.logo_urls) or DEFAULT_URLS, max_aspect=cfg.logo_max_aspect,
+                     session=session, db=db)

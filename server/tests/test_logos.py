@@ -3,13 +3,14 @@ eine weiße Bildmarke von ihrer farbigen Kachel lösen (tools/make_logo.py --mar
 
 import asyncio
 import io
-import json
 import time
 
+import pytest
 from PIL import Image, ImageDraw
 
 from conftest import make_cfg
 from flightpanel import fetch_logos
+from flightpanel.db import Db
 from flightpanel.logos import LogoStore
 
 
@@ -61,10 +62,56 @@ def test_missing_lists_only_codes_still_without_a_logo(tmp_path):
     """LY war vermerkt und wurde später doch geholt, AY bekommt ein eigenes: beide
     gehören nicht mehr nach /health -> logos_missing."""
     now = time.time()
-    (tmp_path / ".missing.json").write_text(json.dumps({"LY": now, "AY": now, "FX": now}))
+    db = Db(str(tmp_path / "f.db"))
+    store = LogoStore(str(tmp_path), 32, fetch=False, db=db)
+    store.load_legacy({"LY": now, "AY": now, "FX": now})                 # alte .missing.json
     _logo(tmp_path / "LY.png", (0, 0, 255))
     _logo(tmp_path / "own" / "AY.png", (0, 0, 255))
-    assert LogoStore(str(tmp_path), 32, fetch=False).missing() == ["FX"]
+    assert store.missing() == ["FX"]
+    assert LogoStore(str(tmp_path), 32, fetch=False, db=db).missing() == ["FX"]     # aus der Datenbank
+
+
+def test_no_logo_anywhere_is_remembered_in_the_database(tmp_path, monkeypatch):
+    async def download(self, url):
+        return None
+
+    monkeypatch.setattr(LogoStore, "_download", download)
+    db = Db(str(tmp_path / "f.db"))
+    store = LogoStore(str(tmp_path), 32, urls=(("https://logos.example/{iata}.png", None),), db=db)
+    assert not asyncio.run(store.fetch_now("XQ", "XQA"))
+    assert db.one("SELECT code FROM logo_missing")["code"] == "XQ"
+
+
+def test_fetch_logos_leaves_a_broken_database_alone(tmp_path):
+    """fetch_logos läuft neben dem Server: eine kaputte Datenbank bleibt liegen, wie sie ist
+    (beiseitelegen darf nur der Server, der sie offen hat)."""
+    junk = "kaputt, keine Datenbank " * 100
+    (tmp_path / "flightpanel.db").write_text(junk)
+    with pytest.raises(Exception, match="not a database"):
+        asyncio.run(fetch_logos.run(make_cfg(data_dir=str(tmp_path)), [], force=True))
+    assert (tmp_path / "flightpanel.db").read_text() == junk and not list(tmp_path.glob("*.broken*"))
+
+
+def test_load_legacy_takes_over_only_timestamps(tmp_path):
+    """Die alte .missing.json kann von Hand verändert sein: übernommen wird nur, was eine Zeit ist."""
+    now = time.time()
+    db = Db(str(tmp_path / "f.db"))
+    store = LogoStore(str(tmp_path), 32, fetch=False, db=db)
+    store.load_legacy({"FX": now, "LY": "gestern", "AY": None, "SK": [now]})
+    assert store.missing() == ["FX"]
+    assert [r["code"] for r in db.query("SELECT code FROM logo_missing")] == ["FX"]
+
+
+def test_without_a_database_failures_are_only_kept_in_memory(tmp_path, monkeypatch):
+    """Ohne db (tools/screenshots.py): Fehlschläge stehen im Speicher, auf die Platte kommt nichts."""
+    async def download(self, url):
+        return None
+
+    monkeypatch.setattr(LogoStore, "_download", download)
+    store = LogoStore(str(tmp_path), 32, urls=(("https://logos.example/{iata}.png", None),))
+    assert not asyncio.run(store.fetch_now("XQ", "XQA"))
+    assert store.missing() == ["XQ"]
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_circle_logo_keeps_its_white_inside():
