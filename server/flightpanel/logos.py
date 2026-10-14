@@ -24,6 +24,7 @@ from PIL import Image, ImageChops
 
 from .db import Db
 from .logo_image import NotSquare, prepare_logo
+from .storage import is_number
 
 log = logging.getLogger("logos")
 
@@ -136,10 +137,17 @@ class LogoStore:
         return {r["code"]: r["failed"] for r in self.db.query("SELECT code, failed FROM logo_missing")}
 
     def load_legacy(self, raw: dict) -> None:
-        """Alte logos/.missing.json übernehmen (main.absorb_legacy, einmalig)."""
+        """Alte logos/.missing.json übernehmen (main.absorb_legacy, einmalig). Übernommen wird nur, was eine Zeit ist:
+        eine endliche Zahl (storage.is_number). Von Hand verändert, steht dort mitunter Text, null, true, nan oder inf;
+        eine Warnung nennt, wie viele Einträge wegfallen."""
+        skipped = 0
         for code, t in raw.items():
-            if isinstance(t, (int, float)):
+            if is_number(t):
                 self._note_missing(code, float(t))
+            else:
+                skipped += 1
+        if skipped:
+            log.warning(".missing.json: %d Einträge sind keine Zeitangabe, übergangen", skipped)
 
     def _note_missing(self, code: str, t: float) -> None:
         self._missing[code] = t

@@ -3,6 +3,7 @@ eine weiße Bildmarke von ihrer farbigen Kachel lösen (tools/make_logo.py --mar
 
 import asyncio
 import io
+import json
 import os
 import sys
 import time
@@ -130,6 +131,27 @@ def test_load_legacy_takes_over_only_timestamps(tmp_path):
     store.load_legacy({"FX": now, "LY": "gestern", "AY": None, "SK": [now]})
     assert store.missing() == ["FX"]
     assert [r["code"] for r in db.query("SELECT code FROM logo_missing")] == ["FX"]
+
+
+def test_load_legacy_skips_what_is_not_a_finite_time_with_one_warning(tmp_path, caplog):
+    """Von Hand verändert, steht in der alten .missing.json mitunter nan, inf, true oder eine Zahl, die kein float ist:
+    nan scheiterte in der Datenbank (NOT NULL), inf hielte einen Code für immer für fehlend, true zählte als 1, und
+    float() liefe über. Übernommen wird nur eine endliche Zahl; was wegfällt, nennt eine einzige Warnung mit Anzahl."""
+    now = time.time()
+    db = Db(str(tmp_path / "f.db"))
+    store = LogoStore(str(tmp_path), 32, fetch=False, db=db)
+    odd = json.loads('{"NA": NaN, "PI": Infinity, "MI": -Infinity, "BI": 1e999, "T": true, "F": false, '
+                     '"S": "gestern", "N": null, "L": [1]}')
+    with caplog.at_level("WARNING", logger="logos"):
+        store.load_legacy({"FX": now, "LY": now - 3600, **odd, "HUGE": 10**400})
+    assert sorted(store.missing()) == ["FX", "LY"]
+    assert sorted(r["code"] for r in db.query("SELECT code FROM logo_missing")) == ["FX", "LY"]
+    (warning,) = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert ".missing.json" in warning and "10 Einträge" in warning
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="logos"):
+        store.load_legacy({"AY": now})                          # eine heile Datei bleibt ohne Warnung
+    assert caplog.records == []
 
 
 def test_without_a_database_failures_are_only_kept_in_memory(tmp_path, monkeypatch):
