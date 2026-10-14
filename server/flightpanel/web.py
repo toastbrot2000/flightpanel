@@ -2,7 +2,10 @@
 
 Ein Satz Handler (Handlers) für jeden Port; welches Panel eine Anfrage meint, sagt ein Resolver (resolve(req) ->
 Panel). Am LAN-Port (make_web_app, HTTP_PORT) ist es immer das Panel am LAN-Port (LAN_PANEL), ohne Anmeldung;
-/health, /ok und /issues gelten für den ganzen Server. Jede Route meldet add() an und vermerkt sie (ROUTES).
+/health, /ok und /issues gelten für den ganzen Server. Am Zugang von außen (make_public_app, PUBLIC_PORT, nur mit
+den Schaltern in .env) ist es das Panel der geprüften Anmeldung (access.Gate); dort gibt es nur, was
+make_public_app mit seiner Identitätsklasse aufzählt, und /health, /ok, /issues und /frame nicht. Jede Route meldet
+add() an und vermerkt sie samt Klasse (ROUTES).
 
   GET  /                    Vorschauseite (lädt /frame.png alle 2 s neu)
   GET  /panel/frame         Binär für den ESP32: [1, Helligkeit, Breite, Höhe] + RGB. ETag ist ein kurzer Hash der
@@ -54,6 +57,7 @@ from .config import LAYOUTS, Config, parse_layout
 from .render import Renderer
 
 if TYPE_CHECKING:
+    from .access import Gate
     from .main import App
     from .panel import Panel
 
@@ -74,6 +78,10 @@ CF_HEADERS = ("Cf-Ray", "Cf-Connecting-Ip", "Cf-Access-Jwt-Assertion")
 # Solche Namen trägt der Betreiber bewusst in LAN_HOSTS ein.
 LAN_SUFFIXES = (".local", ".home.arpa", ".internal")
 LAN_LINKS = ("/display.json", "/health", "/issues", "/stats", "/idle")     # was die Vorschau am LAN-Port verlinkt
+PUBLIC_LINKS = ("/display.json", "/stats", "/idle")     # ... am Zugang von außen: nur Seiten des eigenen Panels
+LAN_MAX_SCALE = 40      # /frame.png?scale=
+PUBLIC_MAX_SCALE = 12   # ... von außen: 1536 x 384 Pixel genügen, und jeder Maßstab bleibt im Speicher (render.png)
+PUBLIC_MAX_BODY = 16 * 1024     # größte Anfrage am Zugang von außen (aiohttp client_max_size)
 WARN_EVERY_S = 60       # Absagen des Schutzes stehen höchstens so oft im Log
 
 NOT_LAN = ("Unter diesem Namen antwortet der LAN-Port nicht: nur unter IP-Adressen, localhost, Namen ohne Punkt und "
@@ -116,10 +124,10 @@ def read_static(*names: str) -> dict[str, bytes]:
 PREVIEW_STATIC = read_static("preview.css", "preview.js")
 
 
-def add_static(web_app: web.Application, files: dict[str, bytes]) -> None:
-    """Jede Datei als eigene Route /static/<Name> (add)."""
+def add_static(web_app: web.Application, files: dict[str, bytes], kind: str | None = None) -> None:
+    """Jede Datei als eigene Route /static/<Name> (add), am Zugang von außen mit der Klasse kind."""
     for name, body in files.items():
-        add(web_app, "GET", f"/static/{name}", _static(name, body))
+        add(web_app, "GET", f"/static/{name}", _static(name, body), kind)
 
 
 def _static(name: str, body: bytes) -> Handler:
@@ -132,14 +140,15 @@ def _static(name: str, body: bytes) -> Handler:
 
 
 # ---------------------------------------------------------------------------------------------- Routen --
-ROUTES = web.AppKey("routes", list)
+ROUTES = web.AppKey("routes", dict)     # jede Route -> ihre Identitätsklasse (Zugang von außen), am LAN-Port None
 
 
-def add(web_app: web.Application, method: str, path: str, handler: Handler) -> None:
-    """Eine Route anmelden, GET samt HEAD, und in web_app[ROUTES] vermerken. Jede Route geht hier durch: Der Zugang
-    von außen gibt hier jeder ihre Identitätsklasse, eine Route an diesem Weg vorbei hätte keine."""
+def add(web_app: web.Application, method: str, path: str, handler: Handler, kind: str | None = None) -> None:
+    """Eine Route anmelden, GET samt HEAD, und mit ihrer Identitätsklasse kind in web_app[ROUTES] vermerken (am
+    Zugang von außen email, token oder public, siehe access.Gate; am LAN-Port None). Jede Route geht hier durch: Eine
+    Route an diesem Weg vorbei hätte keine Klasse, und der Zugang von außen wiese sie immer ab."""
     for m in (method, "HEAD") if method == "GET" else (method,):
-        web_app[ROUTES].append(web_app.router.add_route(m, path, handler))
+        web_app[ROUTES][web_app.router.add_route(m, path, handler)] = kind
 
 
 def add_panel_routes(web_app: web.Application, h: "Handlers") -> None:
@@ -162,7 +171,7 @@ def make_web_app(app: "App") -> web.Application:
     Server, mit SETTINGS_PAGE=1 die Einstellungsseite. Geschützt wie oben beschrieben."""
     cfg = app.server_cfg
     web_app = web.Application(middlewares=[lan_guard(cfg)])
-    web_app[ROUTES] = []
+    web_app[ROUTES] = {}
     web_app.on_response_prepare.append(security_headers)
     links = LAN_LINKS + (("/settings",) if cfg.settings_page else ())
     h = Handlers(app, lambda req: app.lan, lambda origin: lan_origin(origin, cfg.lan_hosts), links)
@@ -176,6 +185,57 @@ def make_web_app(app: "App") -> web.Application:
         from .settings import SettingsPage
         SettingsPage(h).add_routes(web_app)
     return web_app
+
+
+def make_public_app(app: "App", gate: "Gate") -> web.Application:
+    """Der Zugang von außen (PUBLIC_PORT): nur hinter Cloudflare Access, nur mit den Schaltern in .env (main.App.start
+    ruft das nur dann auf). Dieselben Handler wie am LAN-Port; das Panel kommt aus der geprüften Anmeldung (gate),
+    nie aus der Adresse. Es gibt genau die Routen unten, jede mit ihrer Identitätsklasse (access.Gate): kein /health,
+    /ok, /issues, kein /frame. Schreiben (Einstellungen) nur mit Origin genau https://<PUBLIC_HOST>."""
+    from .access import EMAIL, PUBLIC, TOKEN
+    cfg = app.server_cfg
+    routes: dict = {}
+    web_app = web.Application(middlewares=[gate.middleware(routes)], client_max_size=PUBLIC_MAX_BODY)
+    web_app[ROUTES] = routes
+    web_app.on_response_prepare.append(security_headers)
+    origin = f"https://{cfg.public_host}"
+    links = PUBLIC_LINKS + (("/settings",) if cfg.settings_page else ())
+    h = Handlers(app, _panel_of(app, gate), lambda o: o == origin, links, max_scale=PUBLIC_MAX_SCALE)
+    for method, path, kind, handler in (
+            ("GET", "/", EMAIL, h.index),                       # Vorschau, verlinkt nur das eigene Panel
+            ("GET", "/frame.png", EMAIL, h.frame_png),
+            ("GET", "/display.json", EMAIL, h.display),
+            ("GET", "/stats", EMAIL, h.stats),
+            ("GET", "/idle", EMAIL, h.idle),
+            ("GET", "/panel/frame", TOKEN, h.frame),            # das Bild fürs ESP32, nur mit dessen Service-Token
+            ("GET", "/panel/firmware.txt", PUBLIC, h.firmware_txt),     # signiert, ohne Geheimnisse: Rettungsweg
+            ("GET", "/panel/firmware.bin", PUBLIC, h.firmware_bin)):
+        add(web_app, method, path, handler, kind)
+    add_static(web_app, PREVIEW_STATIC, EMAIL)
+    if cfg.settings_page:
+        from .settings import SettingsPage
+        SettingsPage(h).add_routes(web_app, EMAIL)
+    return web_app
+
+
+def _panel_of(app: "App", gate: "Gate") -> Resolver:
+    """Der Resolver am Zugang von außen: das Panel der geprüften Anmeldung (Gate.panel_id); None nur auf den offenen
+    Firmware-Routen ohne Panel-Token (dann gilt stable). Hat panels add es eben erst angelegt, kennt App es vielleicht
+    noch nicht (die Abrufschleife zieht spätestens nach einer Minute nach): einmal nachziehen, sonst 503."""
+    def resolve(req: web.Request) -> "Panel | None":
+        pid = gate.panel_id(req)
+        if pid is None:
+            return None
+        if pid not in app.panels:
+            try:
+                app._sync_panels()
+            except Exception as e:                  # etwa Datenbank gesperrt: dieses Mal nicht
+                log.warning("Panels nicht nachgezogen: %s", e)
+        p = app.panels.get(pid)
+        if p is None:
+            raise web.HTTPServiceUnavailable(text="Dieses Panel ist gerade nicht bereit, gleich noch einmal.\n")
+        return p
+    return resolve
 
 
 # ------------------------------------------------------------------------------------------------ Schutz --
@@ -330,14 +390,15 @@ def _pretty(obj) -> web.Response:
 class Handlers:
     """Die Handler, für jeden Port dieselben. resolve(req) gibt das Panel der Anfrage (None: keines bekannt, nur am
     Zugang von außen bei den Firmware-Dateien), origin_ok(origin) sagt, ob eine Seite mit diesem Origin schreiben
-    darf, links, was die Vorschau verlinkt."""
+    darf, links, was die Vorschau verlinkt, max_scale, wie groß /frame.png höchstens wird."""
 
     def __init__(self, app: "App", resolve: Resolver, origin_ok: Callable[[str], bool],
-                 links: tuple[str, ...] = ()):
+                 links: tuple[str, ...] = (), max_scale: int = LAN_MAX_SCALE):
         self.app = app
         self.resolve = resolve
         self.origin_ok = origin_ok
         self.links = links
+        self.max_scale = max_scale
 
     def panel(self, req: web.Request) -> "Panel":
         p = self.resolve(req)
@@ -390,7 +451,7 @@ class Handlers:
         p = self.panel(req)
         img = self._render(p, self._layout(req), req.query.get("card"))
         try:
-            scale = max(1, min(40, int(req.query.get("scale", "6"))))
+            scale = max(1, min(self.max_scale, int(req.query.get("scale", "6"))))
         except ValueError:
             scale = 6
         gap = req.query.get("gap", "1") != "0"

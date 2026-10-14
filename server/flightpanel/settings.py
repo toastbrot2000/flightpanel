@@ -1,6 +1,6 @@
 """Einstellungsseite eines Panels (SETTINGS_PAGE=1): Standort, Sichtfeld, Anzeige, Helligkeit und Ruhezeit und die
 Leerlauf-Karten im Browser setzen, fürs Telefon gemacht, und das Sichtfeld am Fenster eichen. Geladen wird das Modul
-nur mit dem Schalter (web.make_web_app).
+nur mit dem Schalter (web.make_web_app, web.make_public_app).
 
   GET  /settings   das Formular, gebaut aus den Panel-Feldern in config.py (Gruppe, Erklärung, Default): Es gibt keine
                    zweite Liste der Einstellungen. Was gespeichert ist, steht im Feld, der Default als Platzhalter;
@@ -11,8 +11,9 @@ nur mit dem Schalter (web.make_web_app).
                    Datenbank bleibt, wie sie war.
 
 Schreiben nur als application/json (sonst 415), mit höchstens MAX_BODY Byte (sonst 413) und einem Origin, den die
-Handler zulassen (sonst 403): am LAN-Port eine Seite aus dem LAN (web.lan_origin). Welches Panel gemeint ist, sagt
-der Resolver der Handler; so hängt dieselbe Seite später auch am Zugang von außen, mit dessen Origin-Regel.
+Handler zulassen (sonst 403): am LAN-Port eine Seite aus dem LAN (web.lan_origin), am Zugang von außen genau
+https://<PUBLIC_HOST> (web.make_public_app). Welches Panel gemeint ist, sagt der Resolver der Handler: am LAN-Port
+das Panel am LAN-Port, von außen das der Anmeldung.
 
 Skript und Stil liegen in static/ (settings.js, settings.css), nicht in der Seite: Die Content-Security-Policy
 (web.SECURITY_HEADERS) lässt nur Dateien vom Server selbst laufen. Zum Eichen holt die Seite alle 5 s display.json
@@ -112,10 +113,11 @@ class SettingsPage:
     def __init__(self, h: Handlers):
         self.h = h
 
-    def add_routes(self, web_app: web.Application) -> None:
-        add(web_app, "GET", "/settings", self.get)
-        add(web_app, "POST", "/settings", self.post)
-        add_static(web_app, STATIC)
+    def add_routes(self, web_app: web.Application, kind: str | None = None) -> None:
+        """Seite, Speichern, Skript und Stil; am Zugang von außen mit der Identitätsklasse kind (email)."""
+        add(web_app, "GET", "/settings", self.get, kind)
+        add(web_app, "POST", "/settings", self.post, kind)
+        add_static(web_app, STATIC, kind)
 
     async def get(self, req: web.Request) -> web.Response:
         p = self.h.panel(req)

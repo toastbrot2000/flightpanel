@@ -16,7 +16,25 @@ Was ein Token erfüllen muss:
   - exp Pflicht, nbf nur wenn da, je LEEWAY_S Spielraum; iss genau https://<team>.cloudflareaccess.com;
     type app; aud eine Liste, die das AUD-Tag der Anwendung enthält
   - Identität: entweder email (klein geschrieben) oder common_name mit sub "" (Service-Token: die Client-ID),
-    nie beides. Ob sie etwas darf, entscheidet die Datenbank (identities), nie das Token."""
+    nie beides. Ob sie etwas darf, entscheidet die Datenbank (identities), nie das Token.
+
+Gate ist der Türsteher davor, eine Middleware für den Zugang von außen (web.make_public_app). Er lässt nur durch, was
+die Route ausdrücklich erlaubt; jede Route meldet dafür eine Identitätsklasse an (web.add):
+  email   Browser eines Freundes (E-Mail-Code): Vorschau, Modell, Statistik, Einstellungen seines Panels
+  token   Service-Token eines Panels: /panel/frame
+  public  ohne Anmeldung: nur /panel/firmware.txt und .bin (signiert, ohne Geheimnisse; Rettungsweg der Panels)
+Eine Route ohne Klasse bekommt immer 403. Sonst, der Reihe nach:
+  - public: ein gemeinsamer Eimer für alle (PUBLIC_RATE, PUBLIC_BURST), sonst 429. Ein gültiges Service-Token
+    eines freigeschalteten Panels wählt dessen Firmware-Kanal, sonst gilt stable.
+  - genau ein Token-Header (keiner oder mehrere: 401), geprüft mit verify(); ein unbekannter kid holt die Schlüssel
+    neu (KeySet: höchstens einmal pro Minute) und prüft noch einmal. Jede Ausnahme dabei: 401.
+  - die Art der Identität gleich der Klasse der Route (sonst 403), die Identität in der Datenbank einem Panel
+    zugeordnet (identities, sonst 403 "nicht freigeschaltet"), ihr eigener Eimer (RATE, BURST) nicht leer (sonst
+    429). Dann bekommt der Handler das Panel (panel_id), und nur dieses.
+  - Kennt der Router den Pfad nicht (404) oder nicht die Methode (405): 401 vor der Anmeldung, wie überall, damit
+    ein Fremder nicht erfährt, was es gibt; danach der Fehler des Routers.
+Ins Log kommen nur feste Sätze (REASONS), nie etwas aus dem Token, auch nicht der kid; /health zählt die Absagen je
+Grund, die gebremsten Anfragen und die Uhrzeit-Abweichung (report)."""
 
 import base64
 import hashlib
@@ -25,9 +43,13 @@ import json
 import logging
 import math
 import re
+import time
+from collections.abc import Callable, Mapping
+from time import monotonic
 from typing import NamedTuple
 
 import aiohttp
+from aiohttp import web
 
 from .issues import error_text
 
@@ -225,3 +247,163 @@ def _object(raw: bytes) -> dict:
 
 def _number(v) -> bool:
     return isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
+
+
+# ------------------------------------------------------------------------------------------- Türsteher --
+# Identitätsklassen der Routen; EMAIL und TOKEN sind zugleich die Arten von Identity.kind
+EMAIL, TOKEN, PUBLIC = "email", "token", "public"
+CLASSES = (EMAIL, TOKEN, PUBLIC)
+HEADER = "Cf-Access-Jwt-Assertion"
+WARN_EVERY_S = 60       # jeder Grund einer Absage höchstens so oft im Log
+PANEL = web.RequestKey("panel", str)                    # das Panel der geprüften Anmeldung (Gate.panel_id)
+
+# Warum eine Anfrage abgewiesen wurde: Schlüssel für /health, fester Satz fürs Log
+REASONS = {
+    "missing": "ohne Token",
+    "several": "mit mehreren Tokens",
+    "invalid": "mit ungültigem Token (Form, Signatur, Aussteller, Anwendung oder Ablauf)",
+    "unknown_key": "mit einem Schlüssel, den Access auch nach dem Neuladen nicht kennt",
+    "wrong_class": "mit einer Anmeldung, die nicht zur Seite passt (Panel auf einer Browserseite oder umgekehrt)",
+    "not_allowed": "mit einer Anmeldung, die keinem Panel zugeordnet ist (panels email, panels token)",
+    "undeclared": "auf einer Route ohne Identitätsklasse",
+}
+UNAUTHORIZED = "Anmeldung fehlt oder ist ungültig.\n"
+WRONG_CLASS = "Diese Seite gibt es für diese Anmeldung nicht.\n"
+NOT_ALLOWED = "Diese Anmeldung ist nicht freigeschaltet.\n"
+UNDECLARED = "Gesperrt.\n"
+TOO_MANY = "Zu viele Anfragen, bitte langsamer.\n"
+
+
+class Bucket:
+    """Token-Bucket: im Mittel rate Anfragen pro Sekunde, burst auf einmal."""
+
+    def __init__(self, rate: float, burst: int, now: float):
+        self.rate, self.burst = rate, burst
+        self.tokens, self.at = float(burst), now
+
+    def take(self, now: float) -> bool:
+        self.tokens = min(float(self.burst), self.tokens + max(0.0, now - self.at) * self.rate)
+        self.at = now
+        if self.tokens < 1:
+            return False
+        self.tokens -= 1
+        return True
+
+
+class Gate:
+    """Der Türsteher des Zugangs von außen (siehe oben). keys: die Schlüssel von Access, team und aud aus .env
+    (ACCESS_TEAM, ACCESS_AUD), db: wer welches Panel sehen darf. clock: Uhr der Eimer (monoton; Tests geben eine
+    eigene). Wie spät es ist, sagt für die Tokens time.time()."""
+
+    RATE, BURST = 2.0, 10                   # je Anmeldung: ein Browser, der hämmert, bremst nicht den ganzen Server
+    PUBLIC_RATE, PUBLIC_BURST = 5.0, 20     # die zwei Firmware-Dateien, alle zusammen (Cloudflare cacht das Abbild)
+
+    def __init__(self, keys: KeySet, team: str, aud: str, db, clock: Callable[[], float] = monotonic):
+        self.keys, self.team, self.aud, self.db, self.clock = keys, team, aud, db, clock
+        self.buckets: dict[tuple[str, str], Bucket] = {}        # nur für freigeschaltete Anmeldungen
+        self.public_bucket = Bucket(self.PUBLIC_RATE, self.PUBLIC_BURST, clock())
+        self.failures: dict[str, int] = {}                     # Absagen je Grund (REASONS)
+        self.limited = 0                                       # Anfragen mit 429
+        self.skew_s: float | None = None                       # zuletzt: jetzt minus iat eines Service-Tokens
+        self._warned: dict[str, float] = {}
+
+    def middleware(self, routes: Mapping[web.AbstractRoute, str | None]):
+        """Die Middleware für eine Anwendung, deren Routen routes mit ihrer Klasse vermerkt (web.add)."""
+        @web.middleware
+        async def gate(req: web.Request, handler) -> web.StreamResponse:
+            refused = getattr(req.match_info, "http_exception", None)     # 404 oder 405 des Routers
+            kind = None if refused is not None else routes.get(req.match_info.route)
+            if refused is None and kind not in CLASSES:
+                self._refuse("undeclared")
+                raise web.HTTPForbidden(text=UNDECLARED)
+            if kind == PUBLIC:
+                if not self.public_bucket.take(self.clock()):
+                    self._too_many()
+                pid = self._channel_panel(req)
+                if pid is not None:
+                    req[PANEL] = pid
+                return await handler(req)
+            who = await self._identity(req)
+            if refused is None and who.kind != kind:
+                self._refuse("wrong_class")
+                raise web.HTTPForbidden(text=WRONG_CLASS)
+            pid = self.db.identity_panel(who.kind, who.value)
+            if pid is None:
+                self._refuse("not_allowed")
+                raise web.HTTPForbidden(text=NOT_ALLOWED)
+            bucket = self.buckets.get((who.kind, who.value))
+            if bucket is None:
+                bucket = self.buckets[(who.kind, who.value)] = Bucket(self.RATE, self.BURST, self.clock())
+            if not bucket.take(self.clock()):
+                self._too_many()
+            if refused is not None:
+                raise refused
+            req[PANEL] = pid
+            return await handler(req)
+        return gate
+
+    def panel_id(self, req: web.Request) -> str | None:
+        """Das Panel, das die Anmeldung dieser Anfrage sehen darf; None auf den offenen Routen ohne Panel-Token."""
+        return req.get(PANEL)
+
+    async def _identity(self, req: web.Request) -> Identity:
+        """Die geprüfte Identität der Anfrage, sonst 401. Jede Ausnahme beim Prüfen ist 401, ihr Text bleibt hier."""
+        tokens = req.headers.getall(HEADER, [])
+        if len(tokens) != 1:
+            self._refuse("several" if tokens else "missing")
+            raise web.HTTPUnauthorized(text=UNAUTHORIZED)
+        now = time.time()
+        try:
+            try:
+                who = verify(tokens[0], self.keys.keys, self.team, self.aud, now)
+            except UnknownKey:
+                await self.keys.refresh(now)                   # höchstens einmal pro Minute (KeySet)
+                who = verify(tokens[0], self.keys.keys, self.team, self.aud, now)
+        except UnknownKey:
+            reason = "unknown_key"
+        except Exception:
+            reason = "invalid"
+        else:
+            if who.kind == TOKEN and who.iat is not None:
+                # Nur Service-Tokens: Access stellt sie je Anfrage aus. Das Token eines Browsers stammt von der
+                # Anmeldung, sein iat kann Stunden alt sein.
+                self.skew_s = round(now - who.iat, 1)
+            return who
+        self._refuse(reason)
+        raise web.HTTPUnauthorized(text=UNAUTHORIZED)
+
+    def _channel_panel(self, req: web.Request) -> str | None:
+        """Auf den offenen Routen: das Panel eines gültigen Service-Tokens, wenn genau eines mitkommt und das Panel
+        freigeschaltet ist; es wählt den Firmware-Kanal. Ohne Neuladen der Schlüssel (diese Routen erreicht jeder,
+        und ein Fremder soll keine Abrufe bei Cloudflare auslösen) und ohne Zählen: Was nicht passt, ist hier einfach
+        keine Anmeldung."""
+        tokens = req.headers.getall(HEADER, [])
+        if len(tokens) != 1:
+            return None
+        try:
+            who = verify(tokens[0], self.keys.keys, self.team, self.aud, time.time())
+        except Exception:
+            return None
+        return self.db.identity_panel(who.kind, who.value) if who.kind == TOKEN else None
+
+    def _refuse(self, reason: str) -> None:
+        self.failures[reason] = self.failures.get(reason, 0) + 1
+        self._warn(reason, "Zugang von außen: Anfrage %s abgelehnt", REASONS[reason])
+
+    def _too_many(self) -> None:
+        self.limited += 1
+        self._warn("limited", "Zugang von außen: Anfragen gebremst (429)")
+        raise web.HTTPTooManyRequests(text=TOO_MANY, headers={"Retry-After": "1"})
+
+    def _warn(self, key: str, msg: str, *args) -> None:
+        """Höchstens einmal pro WARN_EVERY_S je Grund ins Log: Ein Panel mit falschem Token fragt alle 2 s."""
+        now = self.clock()
+        if now - self._warned.get(key, float("-inf")) >= WARN_EVERY_S:
+            self._warned[key] = now
+            log.warning(msg, *args)
+
+    def report(self, now: float) -> dict:
+        """Für /health am LAN-Port."""
+        return {"keys": len(self.keys.keys), "keys_age_h": self.keys.age_h(now),
+                "keys_last_error": self.keys.last_error, "auth_failures": dict(sorted(self.failures.items())),
+                "rate_limited": self.limited, "clock_skew_s": self.skew_s}
