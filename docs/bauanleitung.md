@@ -156,7 +156,7 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 
 1. Server starten: `cp .env.example .env`, `docker compose up -d --build`, Vorschau unter `http://<server>:8080` (Mock-Modus mit Fantasieflügen).
 2. Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`.
-3. `.env` einrichten (README, Abschnitt "Einrichten"), `MOCK=0`, neu starten. Ein paar Tage `/display.json` beobachten: Wie viele Flüge, wie hoch, wie oft leer? Damit `RADIUS_KM`, `MAX_ALT_M` und das Sichtfeld eichen.
+3. Flughafen und `MOCK=0` in der `.env` einrichten, Standort und Sichtfeld per `panels set home …` (README, Abschnitt "Einrichten"), neu starten. Ein paar Tage `/display.json` beobachten: Wie viele Flüge, wie hoch, wie oft leer? Damit `RADIUS_KM`, `MAX_ALT_M` und das Sichtfeld eichen. Das sind Panel-Einstellungen und stehen in der Datenbank, nicht in der `.env`; gesetzt werden sie mit `docker compose exec flightpanel python3 -m flightpanel.panels set home RADIUS_KM=30 MAX_ALT_M=4000` und gelten nach `docker compose restart flightpanel`.
 4. PlatformIO installieren (VS-Code-Erweiterung oder `pip install platformio`), `firmware/include/secrets.h` anlegen.
 
 **Erstes Bild (ein Abend):**
