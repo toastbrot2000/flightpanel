@@ -249,6 +249,79 @@ def test_a_foreign_host_gets_421_and_the_healthcheck_keeps_working(tmp_path, cap
     asyncio.run(run())
 
 
+def pin_clock(monkeypatch, clock: list[float]) -> None:
+    """time.time() in web.py und main.py zeigt auf clock[0]; alles andere am Modul time bleibt echt."""
+    pinned = {name: getattr(time, name) for name in dir(time) if not name.startswith("_")}
+    pinned["time"] = lambda: clock[0]
+    for module in ("web", "main"):
+        monkeypatch.setattr(f"flightpanel.{module}.time", SimpleNamespace(**pinned))
+
+
+def test_a_refused_host_turns_ok_red_until_the_panel_fetches_a_frame(tmp_path, monkeypatch):
+    """Ein Panel mit nas.lan als Server-Adresse bekommt 421 und holt nie ein Bild; /ok darf dann nicht grün bleiben.
+    Gemerkt werden nur die Zahl und die Zeit der Absagen, nie der Host."""
+    clock = [NOON]
+    pin_clock(monkeypatch, clock)
+
+    async def ok(client):
+        r = await client.get("/ok")
+        return r.status, await r.text()
+
+    async def refuse(client, host="nas.lan:8080"):
+        assert (await client.get("/panel/frame", headers={"Host": host})).status == 421
+
+    async def run():
+        async with lan(tmp_path, quiet_hours=(0, 0)) as (app, client):
+            app.last_model_ok = NOON
+            assert await ok(client) == (200, "ok\n")
+            health = json.loads(await (await client.get("/health")).text())
+            assert health["refused_host"] == {"count": 0, "last_age_s": None}
+            await refuse(client)
+            await refuse(client, "evil.example.com")
+            status, text = await ok(client)                          # abgewiesen, nie ein Bild geholt: rot
+            assert status == 503 and "421" in text and "LAN_HOSTS" in text
+            clock[0] += 90
+            app.last_model_ok = clock[0]
+            health = json.loads(await (await client.get("/health")).text())
+            assert health["refused_host"] == {"count": 2, "last_age_s": 90}
+            assert health["problems"] == [text.strip()]
+            assert "nas.lan" not in json.dumps(health) and "evil" not in json.dumps(health)   # kein Host gemerkt
+            assert (await client.get("/panel/frame")).status == 200      # mit einem erlaubten Namen: Bild geholt
+            assert await ok(client) == (200, "ok\n")
+            clock[0] += 5 * 60                                           # weitere Absage, das Bild ist 5 min alt
+            app.last_model_ok = clock[0]
+            await refuse(client)
+            assert await ok(client) == (200, "ok\n")
+            clock[0] += 6 * 60                                           # Bild jetzt 11 min alt, Absage 6 min
+            app.last_model_ok = clock[0]
+            status, text = await ok(client)
+            assert status == 503 and "LAN_HOSTS" in text
+            assert (await client.get("/frame")).status == 200            # auch /frame zählt
+            assert await ok(client) == (200, "ok\n")
+            assert app.refused == 3
+
+    asyncio.run(run())
+
+
+def test_old_refusals_do_not_turn_ok_red(tmp_path, monkeypatch):
+    clock = [NOON]
+    pin_clock(monkeypatch, clock)
+
+    async def run():
+        async with lan(tmp_path, quiet_hours=(0, 0)) as (app, client):
+            assert (await client.get("/panel/frame", headers={"Host": "nas.lan"})).status == 421
+            clock[0] += 10 * 60 - 1
+            app.last_model_ok = clock[0]
+            assert (await client.get("/ok")).status == 503               # knapp unter 10 min: noch rot
+            clock[0] += 1
+            app.last_model_ok = clock[0]
+            assert (await client.get("/ok")).status == 200               # 10 min her: vorbei
+            health = json.loads(await (await client.get("/health")).text())
+            assert health["refused_host"] == {"count": 1, "last_age_s": 600}    # die Zahl bleibt
+
+    asyncio.run(run())
+
+
 def test_cloudflare_headers_on_the_lan_port_mean_the_tunnel_is_wired_wrong(tmp_path):
     """Mit eingerichtetem Zugang von außen kommt über Cloudflare nichts an den LAN-Port: Trägt eine Anfrage dessen
     Header, hängt der Tunnel am falschen Port, und der hat keine Anmeldung. Ohne Zugang von außen gibt es nichts zu

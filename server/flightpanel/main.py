@@ -62,6 +62,7 @@ DREAM_FALLBACK_MIN = 4 * 60  # ohne QUIET_HOURS wird um 4 Uhr aufgeräumt
 OK_STALE_S = 15 * 60        # GET /ok: so lange ohne frische Flugdaten ist ein Problem
 OK_ESP32_S = 10 * 60        # ... so lange ohne Abruf des ESP32, wenn er schon da war
 OK_EXCEPTION_S = 3600       # ... Fehler im Code in dieser Zeit
+OK_REFUSED_S = 10 * 60      # ... eine 421 am LAN-Port in dieser Zeit und danach kein Abruf des Panels
 
 
 def dream_due(cfg: Config, last_day: str | None, now: float) -> bool:
@@ -201,6 +202,8 @@ class App:
         self.opensky_last_try = 0.0
         self.last_model_ok = 0.0                # letzter gelungener Abruf, für alle Panels
         self.counters = {"polls": 0, "ok": 0, "adsblol": 0, "opensky": 0}
+        self.refused = 0                        # Anfragen am LAN-Port, die web.lan_guard mit 421 abwies: nur die Zahl,
+        self.refused_at = 0.0                   # und wann die letzte kam; der Host selbst wird nie gemerkt
         self.last_dream: dict | None = None     # was das letzte nächtliche Aufräumen getan hat
         self._dream_day: str | None = None
         self._stop = asyncio.Event()
@@ -563,7 +566,9 @@ class App:
     def problems(self, now: float) -> list[str]:
         """Was gerade nicht stimmt, für GET /ok (Docker-Healthcheck, Uptime-Monitor); leer heißt alles gut. Alte
         Flugdaten zählen, solange ein Panel hell ist; ein ESP32, das nicht mehr abruft, nur am LAN-Port: Ein
-        Freund, der den Stecker zieht, macht den Server nicht ungesund. In der Ruhezeit ist dunkel normal. Mit Zugang
+        Freund, der den Stecker zieht, macht den Server nicht ungesund. In der Ruhezeit ist dunkel normal. Eine 421
+        am LAN-Port in den letzten OK_REFUSED_S ohne Abruf des Panels danach (falscher Hostname, LAN_HOSTS): Sonst
+        bliebe /ok grün, obwohl das Panel nie ein Bild bekommt. Mit Zugang
         von außen auch eine veraltete Root-Liste der Firmware (selfcheck.py): Dann blieben alle Panels der Freunde
         dunkel."""
         out = []
@@ -574,6 +579,10 @@ class App:
         lan = self.lan
         if lan.cfg.brightness(now) > 0 and lan.frame_count and now - lan.last_frame_fetch > OK_ESP32_S:
             out.append(f"ESP32 holt seit {(now - lan.last_frame_fetch) / 60:.0f} min keine Bilder")
+        if now - self.refused_at < OK_REFUSED_S and now - lan.last_frame_fetch >= OK_REFUSED_S:
+            # Das Panel (oder der Monitor) fragt unter einem Namen, den lan_host nicht kennt, und holt nie ein Bild
+            out.append("Panel-Anfragen mit unbekanntem Hostnamen abgewiesen (421): Namen in LAN_HOSTS eintragen "
+                       "oder die IP nutzen")
         out += [f"Fehler im Code: {it['key']}" for it in self.issues.items.values()
                 if it["kind"] == "exception" and now - it["last"] < OK_EXCEPTION_S]
         out += [f"Datenbank beiseitegelegt, das Album startete leer: {name} (siehe /issues)"
@@ -643,6 +652,9 @@ class App:
                 "fetches": lan.frame_count,
                 "alive": esp_age is not None and esp_age < 300,
             },
+            # 421 am LAN-Port (Host nicht erlaubt, siehe LAN_HOSTS): wie viele seit dem Start, wann die letzte war
+            "refused_host": {"count": self.refused,
+                             "last_age_s": round(now - self.refused_at) if self.refused_at else None},
             "panels": {pid: p.summary(now) for pid, p in self.panels.items()},
             # Zugang von außen (nur mit den Schaltern): Schlüssel von Access, Absagen je Grund, Gebremstes, Uhr
             "access": self.gate.report(now) if self.gate is not None else None,

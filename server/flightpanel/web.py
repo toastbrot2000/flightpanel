@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 from PIL import Image
 
-from .config import LAYOUTS, Config, parse_layout
+from .config import LAYOUTS, parse_layout
 from .render import Renderer
 
 if TYPE_CHECKING:
@@ -179,7 +179,7 @@ def make_web_app(app: "App") -> web.Application:
     """Der LAN-Port (HTTP_PORT): das Panel am LAN-Port ohne Anmeldung, dazu /health, /ok und /issues für den ganzen
     Server, mit SETTINGS_PAGE=1 die Einstellungsseite. Geschützt wie oben beschrieben."""
     cfg = app.server_cfg
-    web_app = web.Application(middlewares=[lan_guard(cfg)], handler_args=HANDLER_ARGS)
+    web_app = web.Application(middlewares=[lan_guard(app)], handler_args=HANDLER_ARGS)
     web_app[ROUTES] = {}
     web_app.on_response_prepare.append(security_headers)
     links = LAN_LINKS + (("/settings",) if cfg.settings_page else ())
@@ -307,10 +307,12 @@ def same_origin(origin: str, req: web.Request) -> bool:
             and [h.lower() for h in req.headers.getall("Host", [])] == [host.lower()])
 
 
-def lan_guard(cfg: Config):
+def lan_guard(app: "App"):
     """Der Schutz des LAN-Ports vor jedem Handler, auch vor 404 (siehe oben). Absagen stehen im Log, höchstens
     einmal pro WARN_EVERY_S: Ein ESP32 oder Uptime-Monitor unter einem fremden Namen fiele sonst still aus. Der Header
-    selbst nie: Was eine fremde Seite schickt, gehört nicht ins Log."""
+    selbst nie: Was eine fremde Seite schickt, gehört nicht ins Log. Jede 421 zählt in App.refused (Zahl und Zeit,
+    kein Text) und macht /ok rot, solange das Panel nichts holt (App.problems)."""
+    cfg = app.server_cfg
     last = {"warned": -WARN_EVERY_S}
 
     def warn(msg: str, *args) -> None:
@@ -324,6 +326,8 @@ def lan_guard(cfg: Config):
             warn("Anfrage über Cloudflare am LAN-Port abgelehnt (403): Der Tunnel gehört an PUBLIC_PORT")
             raise web.HTTPForbidden(text=VIA_CLOUDFLARE)
         if not all(lan_host(host, cfg.lan_hosts) for host in req.headers.getall("Host", [])):
+            app.refused += 1
+            app.refused_at = time.time()
             warn("Anfrage unter einem Namen außerhalb des LAN abgelehnt (421). Erreicht ein eigenes Gerät den Server "
                  "unter einem Namen mit Punkt (etwa ein Panel mit nas.fritz.box als Server-Adresse im "
                  "Einrichtungs-WLAN, oder ein Uptime-Monitor), den Namen in .env unter LAN_HOSTS eintragen")
