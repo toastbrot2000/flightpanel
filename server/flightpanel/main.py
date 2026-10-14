@@ -31,7 +31,7 @@ from .cache import Cache
 from .cards import CARDS
 from .config import Config, panel_settings_from_env
 from .data import load_airlines, load_airports, load_rare
-from .db import Db, db_path
+from .db import COPY, Db, db_path
 from .idle import IdleScreen
 from .issues import Issues
 from .logos import LogoStore, make_logo_store
@@ -392,14 +392,38 @@ class App:
     def dream(self, now: float) -> None:
         """Nachts aufräumen ("träumen"), damit der Server auch nach einem Jahr am Stück
         so läuft wie am ersten Tag: Einmaliges und Vergangenes in /issues vergessen
-        (Issues.forget), Abgelaufenes aus dem Cache. Kostet Millisekunden."""
+        (Issues.forget), Abgelaufenes aus dem Cache, eine Kopie der Datenbank (_copy).
+        Kostet Millisekunden."""
         forgotten = self.issues.forget(now)
         pruned = self.cache.prune()
+        copy = self._copy()
         self._dream_day = time.strftime("%Y-%m-%d", time.localtime(now))
         self.last_dream = {"at": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),
-                           "issues_forgotten": forgotten, "cache_expired": pruned, "cache_entries": len(self.cache)}
-        log.info("Nachts aufgeräumt: %d Auffälligkeiten vergessen, %d Cache-Einträge abgelaufen, %d bleiben",
-                 forgotten, pruned, len(self.cache))
+                           "issues_forgotten": forgotten, "cache_expired": pruned, "cache_entries": len(self.cache),
+                           "copy": copy}
+        log.info("Nachts aufgeräumt: %d Auffälligkeiten vergessen, %d Cache-Einträge abgelaufen, %d bleiben; "
+                 "Kopie: %s", forgotten, pruned, len(self.cache), copy)
+
+    def _copy(self) -> str:
+        """Eine stimmige Kopie der Datenbank nach flightpanel.db.bak, die die der Vornacht ersetzt (Db.backup). Ohne
+        sie gäbe es keine: Auf dem Laptop liegt data/ in einem synchronisierten Ordner, und eine beiseitegelegte
+        Datenbank kostet so einen Tag statt des Albums. Scheitert sie, steht es im Log und in /issues, das Aufräumen
+        geht weiter. Gibt zurück, was geschah, für /health."""
+        name = os.path.basename(self.db.path + COPY)
+        try:
+            self.db.backup(self.db.path + COPY)
+        except Exception as e:                          # Platte voll, Rechte, Datenbank gesperrt ...
+            log.warning("Nächtliche Kopie %s gescheitert: %s", name, e)
+            self.issues.note("backup", name, error=str(e)[:300])
+            return f"Fehler: {e}"
+        return name
+
+    def _copy_time(self) -> str | None:
+        """Wann die letzte nächtliche Kopie entstand, aus der Datei selbst: Das übersteht auch einen Neustart."""
+        try:
+            return time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(self.db.path + COPY)))
+        except OSError:
+            return None
 
     # ------------------------------------------------------------- Zustand --
     def issues_report(self) -> dict:
@@ -458,6 +482,7 @@ class App:
             "cache_entries": len(self.cache),
             "issues": self.issues.report()["counts"],
             "dream": self.last_dream,
+            "database": {"copy": self._copy_time()},
             "metar": None if not self.metar else {
                 "age_s": self.metar.age_s(now),
                 "last_error": self.metar.last_error,

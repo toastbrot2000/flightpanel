@@ -37,6 +37,7 @@ DatabaseError = sqlite3.DatabaseError       # für Werkzeuge neben dem Server (p
 
 DB_FILE = "flightpanel.db"
 SIDE_FILES = ("", "-wal", "-shm", "-journal")     # die Datenbank und was SQLite neben ihr anlegt
+COPY = ".bak"           # die nächtliche Kopie daneben, flightpanel.db.bak (main.App.dream)
 
 
 def db_path(data_dir: str) -> str:

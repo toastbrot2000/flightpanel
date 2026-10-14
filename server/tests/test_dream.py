@@ -2,17 +2,19 @@
 in /issues vergessen, Abgelaufenes aus dem Cache, volles /issues macht Platz."""
 
 import asyncio
+import os
 import time
 from datetime import datetime
 
 import pytest
 
-from conftest import make_cfg
+from conftest import make_cfg, state
 from flightpanel import cache as cache_mod
 from flightpanel import issues as issues_mod
 from flightpanel.cache import Cache
 from flightpanel.db import Db
 from flightpanel.issues import Issues
+from flightpanel.model import DisplayModel
 
 DAY = 24 * 3600
 
@@ -304,6 +306,59 @@ def test_dream_tidies_up_and_says_so_in_health(tmp_path):
             app.dream(now)
             assert app.issues.items == {} and "route:GONE" not in app.cache.data
             assert app.health()["dream"]["issues_forgotten"] == 1
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_dream_leaves_a_copy_of_the_database_with_the_album(tmp_path):
+    """Die Datenbank liegt auf dem Laptop in einem synchronisierten Ordner und sonst ohne Sicherung: Jede Nacht eine
+    stimmige Kopie flightpanel.db.bak, die die der Vornacht ersetzt. /health sagt, von wann sie ist."""
+    from flightpanel.main import App
+
+    async def run():
+        app = App(make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False), env={})
+        try:
+            now = time.time()
+            app.stats.observe([state(cs="EZY1")], DisplayModel(), now)
+            app.save()
+            bak = tmp_path / "flightpanel.db.bak"
+            bak.write_text("die Kopie der Vornacht")
+            assert app.health()["database"]["copy"] is not None
+            app.dream(now)
+            copy = Db(str(bak), put_aside=False)
+            assert [tuple(r) for r in copy.query("SELECT panel_id, brand, first FROM album")] == [
+                ("home", "EZY", now)]                   # ohne airlines.json in tmp_path: ein Exot unter seinem Code
+            copy.close()
+            assert app.last_dream["copy"] == "flightpanel.db.bak"
+            assert app.health()["database"]["copy"] == time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(bak)))
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_a_failing_copy_is_logged_and_noted_and_the_night_goes_on(tmp_path, monkeypatch, caplog):
+    from flightpanel.main import App
+
+    def full(self, dest):
+        raise OSError("Platte voll")
+
+    async def run():
+        app = App(make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False), env={})
+        try:
+            now = time.time()
+            assert app.health()["database"]["copy"] is None               # noch keine Nacht
+            app.cache.data["route:GONE"] = (now - 1, {})
+            monkeypatch.setattr(Db, "backup", full)
+            with caplog.at_level("WARNING"):
+                app.dream(now)
+            assert "route:GONE" not in app.cache.data and app.last_dream["cache_expired"] == 1
+            assert "Platte voll" in caplog.text and "flightpanel.db.bak" in caplog.text
+            assert app.issues.items["backup:flightpanel.db.bak"]["example"] == {"error": "Platte voll"}
+            assert app.last_dream["copy"] == "Fehler: Platte voll"
         finally:
             await app.session.close()
 

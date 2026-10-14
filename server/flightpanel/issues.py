@@ -11,6 +11,7 @@
   esp32_gap          der ESP32 hat länger keinen Frame geholt
   exception          Fehler im Code, mit Datei und Zeile
   setting            gespeicherte Panel-Einstellung gilt nicht (mehr), übergangen (main.App)
+  backup             die nächtliche Kopie der Datenbank ist gescheitert
 
 Pro Eintrag: wie oft gesehen (je Abruf), an wie vielen Tagen, erstes und letztes
 Mal, bis zu zehn Callsigns, ein Beispiel. Liegt in der Datenbank (Tabelle issues,
