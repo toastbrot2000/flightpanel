@@ -121,7 +121,7 @@ pio device monitor
 
 Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert (ohne `secrets.h` wie für Freunde), mit und ohne Update-Schlüssel, und lässt die Tests auf dem Rechner laufen (`pio test -e native`, Manifest der signierten Updates); alles in Docker. Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
 
-**Partitionstabelle:** `min_spiffs.csv`, zwei App-Bereiche zu 1,875 MB (vorher `default.csv` mit 1,25 MB): Platz für https, Einrichtungs-WLAN und Updates. Eine neue Tabelle kommt nur per USB aufs Panel. Ein Panel mit älterer Firmware also einmal per USB flashen; WLAN und Einstellungen im NVS bleiben dabei erhalten, danach geht OTA wie gewohnt.
+**Partitionstabelle:** `min_spiffs.csv`, zwei App-Bereiche zu 1,875 MB (vorher `default.csv` mit 1,25 MB): Platz für https, Einrichtungs-WLAN und Updates. Eine neue Tabelle kommt nur per USB aufs Panel. Ein Panel mit älterer Firmware also einmal per USB flashen. Die Firmware vor dem Einrichtungs-WLAN hatte WLAN und Server nur aus `secrets.h`, im NVS des Panels steht davon nichts: Was danach gilt, kommt allein aus der `secrets.h`, mit der jetzt gebaut wird. Eine alte `secrets.h` (wie jede mit WLAN und Server) lässt das Panel als eingerichtet gelten; das Einrichtungs-WLAN öffnet dann nur, wenn man BOOT während des Testbilds hält (unten, "Später ändern"). Darum die alte `secrets.h` vor dem Bauen umstellen (nach `secrets.h.example`: `SERVER_URL` statt `FRAME_URL`, ohne `/frame`) oder beiseitelegen und das Panel vom Handy aus einrichten. OTA geht danach nur mit einem OTA-Passwort in `secrets.h` (Prüfstand, unten); mit leerem bleibt es aus. Steht als Server ein Name wie `<name>.fritz.box` im Panel (auch aus einer alten `FRAME_URL`), braucht der Server denselben Namen in `LAN_HOSTS` seiner `.env`, sonst antwortet er 421 (Abschnitt 7).
 
 **Einrichten:** Ein Panel ohne Einrichtung öffnet nach dem Start das WLAN `flightpanel-XXXX`; Name und Passwort (8 Ziffern, bei jedem Öffnen neu) stehen auf dem Panel. Mit dem Handy hinein, die Seite öffnet sich von selbst (sonst `http://192.168.4.1`). WLAN wählen (nur 2,4 GHz), Passwort eintippen, unter "Erweitert" die Server-Adresse: für den eigenen Server `http://<server>:8080`, über Cloudflare `https://<name>` mit Client-ID und Secret des Service-Tokens. "Speichern und neu starten", fertig.
 
@@ -129,7 +129,7 @@ Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kom
 - **Später ändern:** Netzteil einstecken (oder EN drücken), während des Testbilds BOOT drücken und halten, bis "WLAN einrichten" auf dem Panel steht (3 s): volles Einrichtungs-WLAN mit "Erweitert" und "Zurücksetzen" (löscht alles, danach wie neu). BOOT schon beim Einstecken gedrückt startet den ESP32 im Flash-Modus, das Panel bleibt dunkel: einfach noch einmal. Ohne Eingabe schließt es nach 10 min.
 - **WLAN weg:** Findet das Panel sein WLAN 5 min lang nicht (neuer Router), öffnet es das Einrichtungs-WLAN nur mit WLAN-Feldern; Server und Token lassen sich darin nicht ändern. Es versucht weiter das alte WLAN und schließt, sobald es wieder da ist, sonst nach 10 min (Neustart, dann von vorn). Ein vertipptes Passwort kostet so 5 min, oder BOOT wie oben.
 
-**Prüfstand (freiwillig):** `cp include/secrets.h.example include/secrets.h` liefert Vorgaben für WLAN und Server, solange im Panel nichts gespeichert ist, und das OTA-Passwort. Ein leeres OTA-Passwort (und ein Build ohne `secrets.h`) schaltet OTA ab: Das Panel öffnet dann im WLAN keinen Port und meldet sich nicht als `flightpanel.local`. Fürs Hochladen per WLAN kommt dasselbe Passwort noch einmal in `platformio_local.ini` (Vorlage `platformio_local.ini.example`, nicht im Repo), dann `pio run -e esp32dev_ota -t upload`.
+**Prüfstand (freiwillig):** `cp include/secrets.h.example include/secrets.h` liefert Vorgaben für WLAN und Server, solange im Panel nichts gespeichert ist, und das OTA-Passwort. Mit WLAN und Server darin gilt ein Panel ohne eigene Einstellungen als eingerichtet: Es verbindet sich gleich, das Einrichtungs-WLAN gibt es nur mit BOOT. Ein leeres OTA-Passwort (und ein Build ohne `secrets.h`) schaltet OTA ab: Das Panel öffnet dann im WLAN keinen Port und meldet sich nicht als `flightpanel.local`. Fürs Hochladen per WLAN kommt dasselbe Passwort noch einmal in `platformio_local.ini` (Vorlage `platformio_local.ini.example`, nicht im Repo), dann `pio run -e esp32dev_ota -t upload`.
 
 **https:** Die Firmware bettet `server/flightpanel/certs/roots.pem` ein (Wurzeln von Let's Encrypt, Google, SSL.com, Sectigo, dazu Reserve; erzeugt von `tools/make_roots.py`). Das Token geht nur über https hinaus, nie über http.
 
@@ -193,7 +193,7 @@ Signieren ist Sache eines Menschen: KI-Agenten führen `fw_release.sh` nie aus. 
 1. Server starten: `cp .env.example .env`, `docker compose up -d --build`, Vorschau unter `http://<server>:8080` (Mock-Modus mit Fantasieflügen).
 2. Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`.
 3. Flughafen und `MOCK=0` in der `.env` einrichten, Standort und Sichtfeld per `panels set home …` (README, Abschnitt "Einrichten"), neu starten. Ein paar Tage `/display.json` beobachten: Wie viele Flüge, wie hoch, wie oft leer? Damit `RADIUS_KM`, `MAX_ALT_M` und das Sichtfeld eichen. Das sind Panel-Einstellungen und stehen in der Datenbank, nicht in der `.env`; gesetzt werden sie mit `docker compose exec flightpanel python3 -m flightpanel.panels set home RADIUS_KM=30 MAX_ALT_M=4000` und gelten ohne Neustart: Der laufende Server übernimmt sie spätestens nach einer Minute.
-4. PlatformIO installieren (VS-Code-Erweiterung oder `pip install platformio`); `firmware/include/secrets.h` nur für OTA (Abschnitt 4).
+4. PlatformIO installieren (VS-Code-Erweiterung oder `pip install platformio`); `firmware/include/secrets.h` nur für OTA (Abschnitt 4). Liegt dort noch eine alte (mit `FRAME_URL`), vor dem Bauen umstellen oder beiseitelegen (Abschnitt 4, Partitionstabelle).
 
 **Erstes Bild (ein Abend):**
 
@@ -202,7 +202,7 @@ Signieren ist Sache eines Menschen: KI-Agenten führen `fw_release.sh` nie aus. 
 7. Ein Panel: Stromkabel an die Klemmen (Polung!), Flachbandkabel in IN, 14 Dupont-Kabel zum ESP32 nach 3.3, GND verbinden.
 8. ESP32 per USB flashen (`pio run -t upload`), VIN bleibt ab. Netzteil ein. Testbild: Panel rot, dann Rahmen, dann lesbare Schrift. Falls nicht: Tabelle in Abschnitt 4.
 9. Zweites Panel: Strom parallel, Flachband von Panel 1 OUT zu Panel 2 IN. Testbild: links rot, rechts grün, Rahmen über beide, Diagonale ohne Knick.
-10. Das Panel zeigt "WLAN einrichten": mit dem Handy einrichten (Abschnitt 4). Serieller Monitor: WLAN verbunden, erstes Bild.
+10. Das Panel zeigt "WLAN einrichten": mit dem Handy einrichten (Abschnitt 4). Mit WLAN und Server in `secrets.h` (auch einer alten mit `FRAME_URL`) zeigt es das nicht, es verbindet sich gleich; zum Einrichten vom Handy die Datei vorher beiseitelegen oder BOOT halten. Serieller Monitor: WLAN verbunden, erstes Bild.
 
 **Montage (ein Nachmittag):**
 
