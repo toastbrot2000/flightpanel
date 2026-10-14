@@ -60,6 +60,20 @@
 #define BOOT_HOLD_MS       3000     // so lange halten: volles Einrichtungs-WLAN
 #define BOOT_WINDOW_MS     6000     // nach dem Einschalten: bis dahin muss das Drücken beginnen (Testbild ~4 s)
 
+// ---- Signierte Updates (nur mit include/fw_pubkey.h, updater.cpp) --------------------------------------------
+#define UPDATE_CHECK_MS    21600000UL   // Update-Prüfung nach dem ersten Bild, dann alle 6 h
+#define UPDATE_DEADLINE_MS 300000UL     // Image laden und schreiben: höchstens 5 min, sonst Abbruch
+#define UPDATE_TRIES_MAX   3            // so oft eine Version installieren, die danach kein Bild holt (Rollback)
+// Rettungsmodus: so lange lehnt das Panel das Zertifikat des Servers ab, bevor es Manifest und Image ohne Prüfung
+// holt, und so lange wartet es danach bis zum nächsten Versuch. Für den Prüfstand kürzer bauen, etwa mit
+// PLATFORMIO_BUILD_FLAGS="-DRESCUE_AFTER_MS=300000" pio run -t upload (5 min).
+#ifndef RESCUE_AFTER_MS
+#define RESCUE_AFTER_MS    86400000ULL  // 24 h
+#endif
+#ifndef RESCUE_RETRY_MS
+#define RESCUE_RETRY_MS    3600000ULL   // 1 h
+#endif
+
 #define FRAME_HEADER       4
 #define FRAME_LEN          (FRAME_HEADER + WIDTH * HEIGHT * 3)   // 12292
 #define PROTO_VERSION      1

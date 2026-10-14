@@ -18,7 +18,8 @@
 // true, wenn sig eine gültige ECDSA-P-256-Signatur (SHA-256, DER) über msg[0, msgLen) ist, gemacht mit dem privaten
 // Schlüssel zu FW_PUBKEY_PEM. Für das Manifest (include/manifest.h, nach erfolgreichem manifest::parse):
 //   fwsigVerify((const uint8_t*)text, m.signedLen, m.sig, m.sigLen)
-// Den Grund einer Ablehnung meldet die Funktion seriell. C-Name, damit tools/check_firmware.sh und fw_release.sh sie
-// mit -Wl,--require-defined=fwsigVerify in den Build zwingen können, auch solange sie noch niemand aufruft.
+// Den Grund einer Ablehnung meldet die Funktion seriell; aufgerufen wird sie von updater.cpp. C-Name, damit
+// tools/check_firmware.sh und fw_release.sh mit -Wl,--require-defined=fwsigVerify prüfen können, dass ein Build mit
+// Schlüssel sie wirklich enthält.
 extern "C" bool fwsigVerify(const uint8_t* msg, size_t msgLen, const uint8_t* sig, size_t sigLen);
 #endif

@@ -5,6 +5,7 @@
 //   wlan      WLAN als Station         portal    Einrichtungs-WLAN (voll oder nur WLAN)
 //   net       die eine Verbindung      frame     GET /panel/frame mit ETag und Diagnose
 //   ota       ArduinoOTA mit Passwort  watchdog  Task-Watchdog auf loop()
+//   updater   signierte Updates vom Server, Rollback, Rettungsmodus (nur mit include/fw_pubkey.h)
 //
 // Frame-Format (Server -> ESP32): [Version, Helligkeit, Breite, Höhe] + RGB
 
@@ -20,6 +21,7 @@
 #include "ota.h"
 #include "portal.h"
 #include "settings.h"
+#include "updater.h"
 #include "watchdog.h"
 #include "wlan.h"
 
@@ -74,6 +76,7 @@ void setup() {
 
   wlan::begin(cfg);
   net::begin(cfg);
+  updater::begin();   // meldet den Zustand des Images (PENDING_VERIFY bis zum ersten Bild)
   ota::begin();
   lastOk = millis();   // Neustart-Zähler erst ab jetzt
 }
@@ -109,6 +112,7 @@ void loop() {
       failures = 0;
       offlineMarked = false;
     }
+    updater::afterFrame(r);   // erstes Bild bestätigt ein neues Image; Update-Prüfung; Rettungsmodus
   }
 
   if (now - lastOk > OFFLINE_MARK_MS && !offlineMarked) {
