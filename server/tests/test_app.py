@@ -11,6 +11,7 @@ import time
 import aiohttp
 import pytest
 from aiohttp import web
+from test_sources import response_error
 
 from conftest import FIXTURES, make_cfg
 from flightpanel import panels
@@ -612,3 +613,20 @@ def test_the_server_starts_with_a_restrictive_umask(tmp_path, monkeypatch):
         assert os.umask(before) == 0o027
     finally:
         os.umask(before)
+
+
+def test_a_failing_opensky_request_leaves_no_position_in_log_or_issues(tmp_path, caplog):
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            e = response_error("https://opensky-network.org/api/states/all?lamin=52.1234&lomin=13.0001")
+            with caplog.at_level("WARNING"):
+                app._note_poll_error(e)
+            assert "opensky-network.org" in caplog.text and "52.1234" not in caplog.text
+            assert "52.1234" not in json.dumps(app.issues_report()) and app.issues.items
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())

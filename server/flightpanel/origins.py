@@ -21,7 +21,7 @@ import aiohttp
 from .cache import Cache
 from .data import Airport
 from .geo import haversine_km
-from .issues import Issues
+from .issues import Issues, error_text
 
 log = logging.getLogger("origins")
 
@@ -87,7 +87,7 @@ class Origins:
                 track = await r.json(content_type=None)
             self.last_error = None
         except Exception as e:
-            self.last_error = str(e) or type(e).__name__
+            self.last_error = error_text(e)
             log.warning("OpenSky-Spur %s: %s", callsign, self.last_error)
             if self.issues is not None:
                 self.issues.source_error("opensky_track", self.last_error)

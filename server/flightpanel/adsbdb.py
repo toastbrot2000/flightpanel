@@ -12,7 +12,7 @@ import re
 import aiohttp
 
 from .cache import Cache
-from .issues import Issues
+from .issues import Issues, error_text
 
 log = logging.getLogger("adsbdb")
 
@@ -54,7 +54,7 @@ class AdsbDb:
             resp = j.get("response")
             return resp if isinstance(resp, dict | list) else None
         except Exception as e:
-            self.last_error = str(e) or type(e).__name__
+            self.last_error = error_text(e)
             log.warning("adsbdb %s: %s", path, self.last_error)
             if self.issues is not None:
                 self.issues.source_error("adsbdb", self.last_error, path=path)

@@ -27,7 +27,7 @@ import aiohttp
 
 from .cache import Cache
 from .geo import angle_diff, bearing_deg, haversine_km
-from .issues import Issues
+from .issues import Issues, error_text
 from .model import State
 
 log = logging.getLogger("adsbim")
@@ -142,7 +142,7 @@ class AdsbIm:
                     resp = await r.json(content_type=None)
                 self.last_error = None
             except Exception as e:
-                self.last_error = str(e) or type(e).__name__
+                self.last_error = error_text(e)
                 log.warning("adsb.im: %s", self.last_error)
                 if self.issues is not None:
                     self.issues.source_error("adsbim", self.last_error)

@@ -45,6 +45,23 @@ KEEP_KINDS = {"exception", "database"}   # auch einmalig erst nach FORGET_DAYS
 PINNED_KINDS = {"database"}              # weichen auch bei vollem /issues nie (eher wächst die Liste über MAX_KEYS)
 DAY_S = 24 * 3600
 
+# Eine Adresse in einem Text: Schema und Server, dann Pfad und Parameter bis zum nächsten Leerzeichen oder
+# Anführungszeichen (aiohttp schreibt url='...'). Ein Satzzeichen am Ende gehört nicht mehr dazu ("…/22, nochmal"),
+# ein Komma mitten in den Parametern schon.
+_URL = re.compile(r"\b([a-z][a-z0-9+.-]*://[^/\s'\"?#]+)(?:[^\s'\"]*[^\s'\",.;:!)\]])?", re.IGNORECASE)
+
+
+def without_urls(text: str) -> str:
+    """Adressen in einem Text auf ihren Server kürzen: "https://opensky-network.org/…". aiohttp nennt in Fehlern die
+    ganze Anfrage samt Parametern, und bei adsb.lol und OpenSky stehen darin Mittelpunkt und Umkreis des Abrufs,
+    also ungefähr das Fenster. Log, /health und /issues werden gern geteilt; dort hat das nichts verloren."""
+    return _URL.sub(r"\1/…", text)
+
+
+def error_text(e: BaseException) -> str:
+    """Ein Fehler als Text für Log, /health und /issues: ohne Adressen (without_urls), ohne Text sein Typ."""
+    return without_urls(str(e)) or type(e).__name__
+
 
 def _ts(t: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
@@ -114,6 +131,7 @@ class Issues:
         self._since_dirty = True
 
     def note(self, kind: str, key: str, callsign: str = "", **example) -> None:
+        example = {k: without_urls(v) if isinstance(v, str) else v for k, v in example.items()}
         k = f"{kind}:{key}"
         now = time.time()
         it = self.items.get(k)

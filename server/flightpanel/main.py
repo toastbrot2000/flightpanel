@@ -34,7 +34,7 @@ from .config import Config, panel_settings_from_env
 from .data import load_airlines, load_airports, load_rare
 from .db import COPY, Aside, Db, db_path
 from .idle import IdleScreen
-from .issues import Issues
+from .issues import Issues, error_text
 from .logos import LogoStore, make_logo_store
 from .metar import MetarSource
 from .mock import mock_model
@@ -378,7 +378,7 @@ class App:
     def _note_poll_error(self, e: Exception) -> None:
         """Netz- und Quellenfehler als source_error/rate_limit, alles andere ist
         ein Bug: als exception mit Datei und Zeile, im Log mit Traceback."""
-        msg = str(e) or type(e).__name__
+        msg = error_text(e)
         if isinstance(e, (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError)):
             log.warning("Abruf fehlgeschlagen: %s", msg)
             if not msg.startswith("adsb.lol"):      # adsb.lol-Ausfälle zählt fetch_states schon
@@ -580,8 +580,8 @@ class App:
         if task.cancelled() or task.exception() is None:
             return
         e = task.exception()
-        log.error("Hintergrundschleife beendet: %s", e, exc_info=e)
-        self.issues.note("exception", f"loop {task.get_coro().__name__}", error=(str(e) or type(e).__name__)[:300])
+        log.error("Hintergrundschleife beendet: %s", error_text(e), exc_info=e)
+        self.issues.note("exception", f"loop {task.get_coro().__name__}", error=error_text(e)[:300])
 
     async def stop(self, runner: web.AppRunner) -> None:
         self._stop.set()

@@ -2,10 +2,16 @@
 wird nicht überrannt."""
 
 import asyncio
+import json
 
+import aiohttp
 import pytest
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
+from conftest import make_db
 from flightpanel.adsblol import AdsbLol
+from flightpanel.issues import Issues, error_text, without_urls
 
 AC = {"hex": "3c6444", "flight": "DLH4T   ", "lat": 52.4, "lon": 13.6, "alt_baro": 3000, "gs": 200, "track": 250}
 
@@ -63,3 +69,29 @@ def test_adsblol_rate_limit_is_not_retried():
     with pytest.raises(RuntimeError, match="429"):
         asyncio.run(lol.fetch(52.4, 13.6, 80))
     assert len(session.timeouts) == 1 and lol.backoff_until > 0
+
+
+def response_error(url: str) -> aiohttp.ClientResponseError:
+    """Ein Fehler, wie raise_for_status() ihn wirft: Er nennt die ganze Anfrage samt Parametern."""
+    info = aiohttp.RequestInfo(URL(url), "GET", CIMultiDictProxy(CIMultiDict()), URL(url))
+    return aiohttp.ClientResponseError(info, (), status=400, message="Bad Request")
+
+
+def test_error_texts_name_the_server_but_not_the_request():
+    """OpenSky und adsb.lol tragen Mittelpunkt und Umkreis des Abrufs in der Adresse, also ungefähr das Fenster."""
+    e = response_error("https://opensky-network.org/api/states/all?lamin=52.1234&lomin=13.0001&lamax=52.9&lomax=13.9")
+    assert "52.1234" in str(e)                                   # so käme es sonst in Log, /health und /issues
+    text = error_text(e)
+    assert "52.1234" not in text and "13.0001" not in text
+    assert "400" in text and "https://opensky-network.org/…" in text
+    point = "Fehler bei https://api.adsb.lol/v2/point/52.5200/13.4000/22, nochmal"
+    assert without_urls(point) == "Fehler bei https://api.adsb.lol/…, nochmal"
+    assert error_text(TimeoutError()) == "TimeoutError"
+
+
+def test_issues_never_store_a_request_url(tmp_path):
+    issues = Issues(make_db(tmp_path))
+    issues.source_error("opensky", "400, url='https://opensky-network.org/api/states/all?lamin=52.1234'")
+    issues.note("source_error", "adsblol", error="https://api.adsb.lol/v2/point/52.5200/13.4000/22")
+    text = json.dumps(issues.report())
+    assert "52.1234" not in text and "52.5200" not in text and "opensky-network.org" in text

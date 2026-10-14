@@ -5,6 +5,7 @@ import time
 
 import aiohttp
 
+from .issues import error_text
 from .model import State
 
 log = logging.getLogger("opensky")
@@ -68,7 +69,7 @@ class OpenSky:
         try:
             j = await self._get_states(bbox)
         except (aiohttp.ClientConnectionError, TimeoutError) as e:
-            self.last_error = str(e) or type(e).__name__        # Netz weg: auch in /health
+            self.last_error = error_text(e)        # Netz weg: auch in /health
             raise
         self.last_ok = time.time()
         self.last_error = None

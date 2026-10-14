@@ -17,6 +17,7 @@ import time
 
 import aiohttp
 
+from .issues import error_text
 from .model import State
 
 log = logging.getLogger("adsblol")
@@ -88,7 +89,7 @@ class AdsbLol:
                 j = await self._get(url, limit)
                 break
             except Exception as e:
-                self.last_error = str(e) or type(e).__name__
+                self.last_error = error_text(e)
                 if attempt == len(ATTEMPT_TIMEOUTS_S) or not isinstance(e, RETRY_ON):
                     raise
                 log.info("adsb.lol: %s, zweiter Versuch", self.last_error)
