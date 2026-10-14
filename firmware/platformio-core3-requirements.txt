@@ -3,10 +3,14 @@
 # und installiert ihre Python-Pakete sonst bei jedem Build ungeprüft in der neuesten Version (builder/penv_setup.py
 # der Plattform: python_deps, esptool aus tool-esptoolpy). Hier stehen sie fest, mit Prüfsummen.
 #
+# esptool selbst fehlt im Lock (--no-emit-package): PyPI hat 5.4.0 nur als Quellpaket, pip müsste es bauen und dafür
+# setuptools ungeprüft nachladen. Die Plattform installiert esptool ohnehin aus ihrem Paket tool-esptoolpy (geprüft
+# über dessen tools.json), mit dem setuptools von hier. Das Skript installiert nur Wheels (--only-binary=:all:).
+#
 # Nicht im wöchentlichen Escrow (tools/escrow.py): Das Lock ändert sich nur zusammen mit der Plattform und
 # platformio-core3.sha256, von Hand, im Image und mit dem uv aus tools/escrow.lock, Stichtag mindestens 7 Tage zurück:
 #   uv pip compile --universal --python-version 3.12 --generate-hashes --exclude-newer <Stichtag> \
-#     --custom-compile-command "siehe firmware/platformio-core3-requirements.txt" \
+#     --no-emit-package esptool --custom-compile-command "siehe firmware/platformio-core3-requirements.txt" \
 #     -o firmware/platformio-core3.lock firmware/platformio-core3-requirements.txt
 pioarduino==6.2.0
 uv

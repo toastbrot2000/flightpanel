@@ -1,27 +1,36 @@
 #!/bin/sh
 # Freiwillige Variante mit Arduino-ESP32 3.x (env:esp32dev_core3) prüfen und bauen; Bauanleitung, Abschnitt 4.
-# In Docker wie tools/check_firmware.sh, aber im eigenen Volume flightpanel-pio-core3 (beim ersten Mal etwa 1 GB):
-# Das Werkzeug für 2.0.17 im Volume flightpanel-pio bleibt unberührt, tools/check_firmware.sh baut weiter nur 2.0.17.
+# In Docker wie tools/check_firmware.sh, aber im eigenen Volume flightpanel-pio-core3 (etwa 0,6 GB Download, danach
+# rund 6 GB): Das Werkzeug für 2.0.17 im Volume flightpanel-pio bleibt unberührt, tools/check_firmware.sh baut weiter
+# nur 2.0.17.
 #
-#   sh tools/check_firmware_core3.sh
+#   sh tools/check_firmware_core3.sh                 Images ohne include/secrets.h, wie für Freunde
+#   sh tools/check_firmware_core3.sh --mit-secrets   Images für den Prüfstand mit secrets.h; nach dem Flashen löschen
 #
-#   1. Python-Werkzeug (PlatformIO-Fork pioarduino, esptool ...) nur aus firmware/platformio-core3.lock, mit
-#      Prüfsummen. Die Plattform installiert sonst bei jedem Build ungeprüft die neuesten Versionen nach (ihr
-#      builder/penv_setup.py); das unterbinden PLATFORMIO_OFFLINE=1 und, für uv, UV_OFFLINE=1.
+#   1. Python-Werkzeug (PlatformIO-Fork pioarduino ...) nur aus firmware/platformio-core3.lock: nur fertige Wheels mit
+#      Prüfsummen, ohne Abhängigkeiten aufzulösen, also nichts außerhalb des Locks. esptool steht nicht darin, das
+#      installiert die Plattform aus ihrem geprüften Paket tool-esptoolpy. Sonst installierte sie bei jedem Build
+#      ungeprüft die neuesten Versionen nach (ihr builder/penv_setup.py); das unterbinden PLATFORMIO_OFFLINE=1 und,
+#      für uv und pip, UV_OFFLINE=1 und PIP_NO_INDEX=1.
 #   2. Plattform, Framework und Werkzeug-Pakete nur mit der SHA-256 aus firmware/platformio-core3.sha256 (siehe dort).
 #   3. Alles installieren, ohne zu bauen (pio pkg install), dann prüfen, bevor irgendetwas davon baut: Zugelassen ist
 #      nur, was eine der Regeln bei check_packages trifft, alles andere bricht ab, auch eine unbekannte Quelle.
 #   4. Build ohne include/fw_pubkey.h und mit der Vorlage (Signaturprüfung mit mbedTLS 3 muss bauen und linken),
 #      danach dieselbe Prüfung noch einmal.
-#   5. Build wie im Ordner (mit include/secrets.h und fw_pubkey.h, falls vorhanden). Images, espota.py von
-#      Arduino 3.x (OTA auf ein Panel mit 3.x) und der esptool-Aufruf zum Flashen landen in firmware/.pio/core3/.
+#   5. Build mit include/fw_pubkey.h, falls vorhanden, mit --mit-secrets auch mit include/secrets.h. Images, espota.py
+#      von Arduino 3.x (OTA auf ein Panel mit 3.x) und der esptool-Aufruf landen in firmware/.pio/core3/.
 #
-# Ohne eigene Prüfsumme bleiben wie bei 2.0.17: git aus Debian (signiert), die Bibliotheken aus platformio.ini (HUB75
-# per Git-Commit, Adafruit mit der Prüfsumme der PlatformIO-Registry). Flashen per USB macht pio auf dem Rechner mit dem
-# ESP32 nicht selbst (siehe Bauanleitung): Ein lokales pio würde die Plattform ungeprüft laden.
+# Nie im Build: platformio_local.ini (OTA-Passwort; ein eigenes [env:...] darin könnte die Plattform vor der Prüfung
+# tauschen) und include/secrets.h außer mit --mit-secrets in Schritt 5. Ohne eigene Prüfsumme bleiben wie bei 2.0.17:
+# git aus Debian (signiert), die Bibliotheken aus platformio.ini (HUB75 per Git-Commit, Adafruit mit der Prüfsumme der
+# PlatformIO-Registry). Geflasht wird mit einem geprüften esptool, nicht mit pio (Bauanleitung).
 set -e
 
 if [ "$1" != "--im-container" ]; then
+  case "$1" in
+    '' | --mit-secrets) ;;
+    *) echo "Aufruf: sh tools/check_firmware_core3.sh [--mit-secrets]" >&2; exit 2 ;;
+  esac
   cd "$(dirname "$0")/.."
   IMAGE=$(grep -o 'python:3.12-slim@sha256:[0-9a-f]*' tools/check_firmware.sh)   # eine Quelle, tools/escrow.py pflegt sie
   ROOT="$(pwd -W 2>/dev/null || pwd)"   # pwd -W: Git Bash unter Windows
@@ -29,25 +38,29 @@ if [ "$1" != "--im-container" ]; then
   MSYS_NO_PATHCONV=1 docker run --rm \
     -v "$ROOT/firmware:/src:ro" -v "$ROOT/server/flightpanel/certs:/certs:ro" -v "$ROOT/firmware/.pio/core3:/out" \
     -v "$ROOT/tools/check_firmware_core3.sh:/check.sh:ro" -v flightpanel-pio-core3:/root/.platformio \
-    "$IMAGE" sh /check.sh --im-container
+    "$IMAGE" sh /check.sh --im-container "$1"
   exit
 fi
 
 # ---- ab hier im Container ----
+MIT_SECRETS=$2
 rm -f /out/*   # nie Images eines früheren Laufs liegen lassen, wenn dieser scheitert
 apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git >/dev/null
 PIO=/root/.platformio
 LIST=/src/platformio-core3.sha256
 
-echo "== 1. Python-Werkzeug aus platformio-core3.lock (Prüfsummen)"
+echo "== 1. Python-Werkzeug aus platformio-core3.lock (nur Wheels, Prüfsummen)"
 if ! cmp -s /src/platformio-core3.lock "$PIO/penv/flightpanel.lock" 2>/dev/null; then
   rm -rf "$PIO/penv"   # dort sucht die Plattform ihr Python; neu, sobald sich das Lock ändert
   python -m venv "$PIO/penv"
-  "$PIO/penv/bin/pip" install -q --disable-pip-version-check --require-hashes -r /src/platformio-core3.lock
+  "$PIO/penv/bin/pip" install -q --disable-pip-version-check --no-deps --only-binary=:all: --require-hashes \
+    -r /src/platformio-core3.lock
   cp /src/platformio-core3.lock "$PIO/penv/flightpanel.lock"
 fi
-# esptool installiert die Plattform per uv aus ihrem Paket: ohne Netz und mit setuptools aus dem Lock
-export PATH="$PIO/penv/bin:$PATH" PLATFORMIO_OFFLINE=1 UV_OFFLINE=1 UV_NO_BUILD_ISOLATION=1
+# Ab hier lädt kein Python-Werkzeug mehr etwas nach. esptool installiert die Plattform per uv aus ihrem Paket: ohne
+# Netz und mit setuptools aus dem Lock.
+export PATH="$PIO/penv/bin:$PATH" PLATFORMIO_OFFLINE=1 UV_OFFLINE=1 UV_NO_BUILD_ISOLATION=1 PIP_NO_INDEX=1 \
+  PIP_ONLY_BINARY=:all:
 
 echo "== 2. Pakete aus platformio-core3.sha256 prüfen und in den Download-Cache von PlatformIO legen"
 platform=$(sed -n '/^\[env:esp32dev_core3\]/,/^\[/s/^platform *= *//p' /src/platformio.ini)
@@ -150,7 +163,8 @@ PY
 }
 
 mkdir -p /build/firmware /build/server/flightpanel/certs
-(cd /src && tar --exclude=./.pio -cf - .) | tar -C /build/firmware -xf -
+(cd /src && tar --exclude=./.pio --exclude=./platformio_local.ini --exclude=./include/secrets.h -cf - .) |
+  tar -C /build/firmware -xf -
 cp /certs/roots.pem /build/server/flightpanel/certs/
 cd /build/firmware
 
@@ -169,9 +183,16 @@ PLATFORMIO_BUILD_FLAGS=-Wl,--require-defined=fwsigVerify pio run -e esp32dev_cor
 echo "== 4. Nach den Builds dieselbe Prüfung"
 check_packages
 
-echo "== 5. Build wie im Ordner (secrets.h, fw_pubkey.h, falls vorhanden) für firmware/.pio/core3/"
+echo "== 5. Build für firmware/.pio/core3/: mit fw_pubkey.h, falls vorhanden; secrets.h nur mit --mit-secrets"
 rm -f include/fw_pubkey.h
 if [ -f /src/include/fw_pubkey.h ]; then cp /src/include/fw_pubkey.h include/; fi
+if [ "$MIT_SECRETS" = --mit-secrets ]; then
+  if [ ! -f /src/include/secrets.h ]; then
+    echo "--mit-secrets, aber include/secrets.h fehlt" >&2
+    exit 1
+  fi
+  cp /src/include/secrets.h include/
+fi
 pio run -e esp32dev_core3
 B=.pio/build/esp32dev_core3
 F="$PIO/packages/framework-arduinoespressif32"
@@ -179,7 +200,13 @@ cp "$B/bootloader.bin" "$B/partitions.bin" "$B/firmware.bin" "$B/fw_version.txt"
   "$F/tools/espota.py" /out/
 # Adressen wie bei pio run -t upload; der NVS-Bereich (WLAN, Server, Token) dazwischen bleibt unberührt
 cat > /out/flash.txt <<'EOF'
-esptool.py --chip esp32 --port PORT write_flash 0x1000 .pio/core3/bootloader.bin 0x8000 .pio/core3/partitions.bin 0xe000 .pio/core3/boot_app0.bin 0x10000 .pio/core3/firmware.bin
+esptool --chip esp32 --port PORT write-flash 0x1000 .pio/core3/bootloader.bin 0x8000 .pio/core3/partitions.bin 0xe000 .pio/core3/boot_app0.bin 0x10000 .pio/core3/firmware.bin
 EOF
-echo "   Firmware $(cat "$B/fw_version.txt"): firmware/.pio/core3/, Flashen per USB (Bauanleitung, Abschnitt 4):"
-echo "   pio pkg exec -p tool-esptoolpy -- $(cat /out/flash.txt)"
+echo "   Firmware $(cat "$B/fw_version.txt") in firmware/.pio/core3/. Flashen per USB mit einem geprüften esptool"
+echo "   (Bauanleitung, Abschnitt 4), im Ordner firmware/:"
+echo "   $(cat /out/flash.txt)"
+if [ "$MIT_SECRETS" = --mit-secrets ]; then
+  echo "   ACHTUNG: firmware.bin enthält WLAN-Passwort, OTA-Passwort und gegebenenfalls das Access-Secret aus"
+  echo "   secrets.h, und firmware/.pio/core3/ liegt im synchronisierten Repo-Ordner. Nach dem Flashen löschen:"
+  echo "   rm -r firmware/.pio/core3"
+fi
