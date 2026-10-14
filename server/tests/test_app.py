@@ -419,6 +419,39 @@ def test_old_files_stay_when_saving_the_import_fails(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_save_keeps_what_each_esp32_reported_in_the_same_transaction(tmp_path, monkeypatch):
+    """panels list zeigt, wann jedes Panel zuletzt abgerufen hat und was sein ESP32 dabei meldete (vier Zahlen):
+    save() schreibt es mit allem anderen in einer Transaktion, und es zählt nicht als Änderung der Einstellungen."""
+    panel_rows(tmp_path, anna=ANNA, ben={})
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+
+    def boom(self):
+        raise RuntimeError("Platte voll")
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            before = app.db.panel_get("anna")["updated"]
+            app.lan.fetched(1000.0, {})                                      # ohne X-Panel: nur der Zeitpunkt
+            app.panels["anna"].fetched(1000.0, {"fw": 2610131200, "up": 60, "rssi": -61, "heap": 45000})
+            with monkeypatch.context() as m:
+                m.setattr(Stats, "save", boom)
+                with pytest.raises(RuntimeError, match="Platte voll"):
+                    app.save()
+            assert app.db.panel_get("home")["seen_at"] is None               # zurückgerollt mit allem anderen
+            app.save()
+            home, anna, ben = (app.db.panel_get(pid) for pid in ("home", "anna", "ben"))
+            assert (anna["seen_at"], anna["fw_version"], anna["uptime_s"], anna["rssi"], anna["min_heap"]) == (
+                1000.0, 2610131200, 60, -61, 45000)
+            assert (home["seen_at"], home["fw_version"], home["rssi"]) == (1000.0, None, None)
+            assert ben["seen_at"] is None                                     # sein ESP32 war noch nicht da
+            assert anna["updated"] == before and app.panels["anna"].updated == before
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
 def test_a_failing_save_writes_nothing_and_the_next_one_writes_everything(tmp_path, monkeypatch):
     """Eine Transaktion für alle Speicher: Scheitert einer, steht von den anderen nichts in der Datenbank,
     und das nächste Speichern holt alles nach."""

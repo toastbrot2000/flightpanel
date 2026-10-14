@@ -6,7 +6,11 @@ Geändertes in die Datenbank schreiben (db.py: DATA_DIR/flightpanel.db). Was die
 Zwischenspeicher, Logos, Wetter, ISS-Bahndaten, der Flughafen: airfield.py), hält App einmal. Die Panels und ihre
 Einstellungen kommen aus der Datenbank, auch im laufenden Betrieb (panels.py). web.py liefert Bilder und Zustand
 des Panels am LAN-Port aus, gerendert wird bei jedem Abruf (render.py). Logos und mitgelieferte Daten liegen in
-DATA_DIR (Docker: ./data)."""
+DATA_DIR (Docker: ./data).
+
+Nur mit den Schaltern für den Zugang von außen (Config.public) lädt start() access.py und öffnet PUBLIC_PORT
+(web.make_public_app) mit dem Türsteher davor (access.Gate); dazu hält eine Schleife die Schlüssel von Access
+aktuell (keys_loop). Ohne die Schalter läuft nichts davon."""
 
 import asyncio
 import logging
@@ -44,11 +48,12 @@ from .origins import Origins
 from .panel import Panel, active_seconds, fetch_circle, fw_channel, union_bbox
 from .stats import Stats
 from .storage import read_json
-from .web import make_web_app
+from .web import make_public_app, make_web_app
 
 log = logging.getLogger("main")
 
 SAVE_EVERY_S = 60           # Geändertes in die Datenbank; auch die Nachtaufräumung hängt daran
+KEYS_EVERY_S = 24 * 3600    # Zugang von außen: die Schlüssel von Access einmal am Tag neu
 METAR_EVERY_S = 20 * 60
 ISS_EVERY_S = 10 * 60       # Bahndaten einmal am Tag, Überflüge stündlich (astro.py)
 REST_S = 60                 # ruhen alle Panels: so oft nachsehen, auch nach Änderungen aus panels.py
@@ -199,6 +204,11 @@ class App:
         self._dream_day: str | None = None
         self._stop = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
+
+        # Zugang von außen: entsteht erst in start(), und nur mit den Schaltern (_start_public)
+        self.keys = None                        # access.KeySet
+        self.gate = None                        # access.Gate
+        self._public: web.AppRunner | None = None
 
         # Die Panels: das am LAN-Port und die mit panels add angelegten
         self.panels: dict[str, Panel] = {}
@@ -489,13 +499,16 @@ class App:
 
     def save(self) -> None:
         """Geändertes in die Datenbank, als eine Transaktion. Vorher die Panels nachziehen: Ein mit panels remove
-        gelöschtes Panel schriebe sonst in Zeilen, die es nicht mehr gibt, und die Transaktion scheiterte für alle."""
+        gelöschtes Panel schriebe sonst in Zeilen, die es nicht mehr gibt, und die Transaktion scheiterte für alle.
+        Je Panel, dessen ESP32 schon abgerufen hat, auch wann zuletzt und was es meldete (panels list)."""
         self._sync_panels()
         with self.db.transaction():
             self.cache.save()
             self.issues.save()
             self.airfield.save()
             for p in self.panels.values():
+                if p.last_frame_fetch:
+                    self.db.panel_seen(p.id, p.last_frame_fetch, p.diag)
                 p.stats.save()
 
     def dream(self, now: float) -> None:
@@ -624,6 +637,8 @@ class App:
                 "alive": esp_age is not None and esp_age < 300,
             },
             "panels": {pid: p.summary(now) for pid, p in self.panels.items()},
+            # Zugang von außen (nur mit den Schaltern): Schlüssel von Access, Absagen je Grund, Gebremstes, Uhr
+            "access": self.gate.report(now) if self.gate is not None else None,
         }
 
     # ----------------------------------------------------------- Lebenslauf --
@@ -641,13 +656,38 @@ class App:
             loops.append(self.metar_loop())
         if self.orbit and not cfg.mock:
             loops.append(self.astro_loop())
+        if cfg.public:
+            loops += await self._start_public()
         self._tasks = [asyncio.create_task(c) for c in loops]
         for t in self._tasks:
             t.add_done_callback(self._task_ended)
-        log.info("flightpanel läuft auf :%d (mock=%s, %dx%d), Panels: %s, am LAN-Port %s (layout=%s)",
+        log.info("flightpanel läuft auf :%d (mock=%s, %dx%d), Panels: %s, am LAN-Port %s (layout=%s)%s",
                  cfg.http_port, cfg.mock, cfg.width, cfg.height, ", ".join(self.panels), cfg.lan_panel,
-                 self.lan.cfg.layout)
+                 self.lan.cfg.layout, f", Zugang von außen auf :{cfg.public_port}" if cfg.public else "")
         return runner
+
+    async def _start_public(self) -> list:
+        """Der Zugang von außen, nur mit den Schaltern (Config.public): Erst hier wird access.py geladen. Eine zweite
+        Anwendung auf PUBLIC_PORT (web.make_public_app) mit dem Türsteher davor (access.Gate), die Schlüssel von
+        Access aus der Datenbank (access.KeySet). Gibt die Schleifen dazu zurück."""
+        from . import access
+        cfg = self.server_cfg
+        self.keys = access.KeySet(self.db, self.session, access.certs_url(cfg.access_team))
+        self.gate = access.Gate(self.keys, cfg.access_team, cfg.access_aud, self.db)
+        self._public = web.AppRunner(make_public_app(self, self.gate), access_log=None)
+        await self._public.setup()
+        await web.TCPSite(self._public, "0.0.0.0", cfg.public_port).start()
+        return [self.keys_loop()]
+
+    async def keys_loop(self) -> None:
+        """Die Signaturschlüssel von Access: beim Start, wenn noch keine in der Datenbank liegen, dann einmal am Tag.
+        Ein unbekannter kid holt sie außerdem sofort (access.Gate, höchstens einmal pro Minute). Scheitert ein
+        Abruf, bleibt die letzte gute Liste (KeySet), /health nennt den Fehler."""
+        if not self.keys.keys:
+            await self.keys.refresh(time.time(), force=True)
+        while not self._stop.is_set():
+            await asyncio.sleep(KEYS_EVERY_S)
+            await self.keys.refresh(time.time(), force=True)
 
     def _task_ended(self, task: asyncio.Task) -> None:
         """Eine Schleife ist abgestürzt (sie fangen ihre Fehler sonst selbst): ins Log
@@ -659,11 +699,14 @@ class App:
         self.issues.note("exception", f"loop {task.get_coro().__name__}", error=error_text(e)[:300])
 
     async def stop(self, runner: web.AppRunner) -> None:
+        """runner: der des LAN-Ports (start); den des Zugangs von außen räumt stop() zuerst selbst ab."""
         self._stop.set()
         for t in self._tasks:
             t.cancel()
         self.save()
-        await runner.cleanup()
+        for r in (self._public, runner):
+            if r is not None:
+                await r.cleanup()
         await self.session.close()
         self.db.close()
 

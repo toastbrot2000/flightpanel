@@ -5,10 +5,14 @@ Panel, und nur, wenn sie freigeschaltet ist. Die Tokens signiert der Testschlüs
 import asyncio
 import itertools
 import json
+import os
 import re
+import subprocess
+import sys
 import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from typing import ClassVar
 
 import pytest
 from aiohttp import web
@@ -63,9 +67,9 @@ def panel(client_id: str = ANNA_PANEL, **kw) -> dict[str, str]:
     return login(TOKEN, client_id, **kw)
 
 
-def rows(tmp_path) -> None:
-    """home (LAN-Port), anna und ben, je mit E-Mail-Adresse und Service-Token; die Schlüssel von Access gespeichert,
-    wie nach dem ersten Abruf (KeySet)."""
+def rows(tmp_path, keys: bool = True) -> None:
+    """home (LAN-Port), anna und ben, je mit E-Mail-Adresse und Service-Token; mit keys die Schlüssel von Access
+    gespeichert, wie nach dem ersten Abruf (KeySet)."""
     db = Db(db_path(str(tmp_path)))
     db.panel_add("home")
     db.panel_add("anna", settings={"LAYOUT": "B", "VIEW_FROM": "111"})
@@ -73,7 +77,8 @@ def rows(tmp_path) -> None:
     for kind, value, pid in ((EMAIL, ANNA, "anna"), (TOKEN, ANNA_PANEL, "anna"), (EMAIL, BEN, "ben"),
                              (TOKEN, BEN_PANEL, "ben")):
         db.identity_add(kind, value, pid)
-    db.state_set("access_keys", {"keys": [JWK], "fetched": time.time()})
+    if keys:
+        db.state_set("access_keys", {"keys": [JWK], "fetched": time.time()})
     db.close()
 
 
@@ -510,5 +515,102 @@ def test_a_panel_added_while_running_is_served_at_once(tmp_path):
             assert "carla" not in app.panels
             assert (await client.get("/panel/frame", headers=panel("c" * 32 + ".access"))).status == 200
             assert app.panels["carla"].frame_count == 1
+
+    asyncio.run(run())
+
+
+# ------------------------------------------------------------------------------------ Start und Stopp --
+class FakeSite:
+    """Statt eines Ports: schreibt nur mit, wo main.App lauschen würde (kein Test belegt 8080)."""
+    opened: ClassVar[list] = []
+
+    def __init__(self, runner, host, port):
+        self.opened.append((runner, host, port))
+
+    async def start(self):
+        pass
+
+
+DEFAULTS_OFF = """
+import asyncio, sys
+from aiohttp import web
+
+opened = []
+
+
+class Site:
+    def __init__(self, runner, host, port):
+        opened.append(port)
+
+    async def start(self):
+        pass
+
+
+web.TCPSite = Site                                  # kein Port wird belegt
+from flightpanel.config import Config
+from flightpanel.main import App
+from flightpanel.web import make_web_app
+
+
+async def run():
+    cfg = Config.from_env()
+    app = App(cfg)
+    make_web_app(app)
+    runner = await app.start()
+    health = app.health()
+    await app.stop(runner)
+    return cfg, health
+
+
+cfg, health = asyncio.run(run())
+assert not cfg.public and opened == [cfg.http_port], opened
+assert health["access"] is None
+loaded = sorted(m for m in ("flightpanel.access", "flightpanel.selfcheck") if m in sys.modules)
+assert not loaded, loaded
+print("ok")
+"""
+
+
+def test_without_the_switches_nothing_of_it_is_loaded_or_listening(tmp_path):
+    """Wer das Panel nur für sich betreibt: Ohne die Schalter lädt der Server access.py und selfcheck.py nicht und
+    öffnet keinen zweiten Port. In einem eigenen Prozess, weil dieser hier access.py längst geladen hat (Tests)."""
+    server = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    env = {"MOCK": "1", "DATA_DIR": str(tmp_path), "LOGO_FETCH": "0", "PYTHONPATH": server}
+    r = subprocess.run([sys.executable, "-c", DEFAULTS_OFF], env=env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0 and r.stdout.strip() == "ok", r.stdout + r.stderr
+
+
+def test_with_the_switches_a_second_site_starts_and_stop_closes_both(tmp_path, monkeypatch):
+    """Mit den Schaltern: der LAN-Port und PUBLIC_PORT, davor der Türsteher. Liegen noch keine Schlüssel in der
+    Datenbank, holt der Start sie; /health zeigt den Zugang von außen; stop() räumt beide Anwendungen ab."""
+    rows(tmp_path, keys=False)
+    server, hits = counting_key_server([JWK])
+    monkeypatch.setattr(FakeSite, "opened", [])
+    monkeypatch.setattr("aiohttp.web.TCPSite", FakeSite)
+
+    async def run():
+        await server.start_server()
+        monkeypatch.setattr("flightpanel.access.certs_url", lambda team: str(server.make_url("/cdn-cgi/access/certs")))
+        cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False,
+                       public_port=8081, access_team=TEAM, access_aud=AUD, public_host=HOST)
+        app = App(cfg, env={})
+        assert app.health()["access"] is None                          # vor dem Start gibt es ihn noch nicht
+        runner = await app.start()
+        try:
+            (lan, _, lan_port), (out, _, out_port) = FakeSite.opened
+            assert (lan, lan_port, out_port) == (runner, 8080, 8081) and out is not runner
+            assert set(out.app[ROUTES].values()) == {EMAIL, TOKEN, PUBLIC}
+            assert set(runner.app[ROUTES].values()) == {None}                 # am LAN-Port: keine Klassen
+            for _ in range(200):                                              # die Schlüssel kommen beim Start
+                if app.keys.keys:
+                    break
+                await asyncio.sleep(0.02)
+            assert set(app.keys.keys) == {"testkey"} and len(hits) == 1
+            access = app.health()["access"]
+            assert access["keys"] == 1 and access["keys_age_h"] == 0.0 and access["auth_failures"] == {}
+        finally:
+            await app.stop(runner)
+            await server.close()
+        assert runner.server is None and out.server is None
 
     asyncio.run(run())
