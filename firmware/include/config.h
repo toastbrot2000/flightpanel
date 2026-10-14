@@ -37,6 +37,10 @@
 #define HUB75_CLKPHASE   false  // bei Geisterbildern/verschobenen Pixeln: true
 #define HUB75_LATCH_BLANKING 0  // 0 = Automatik der Bibliothek; bei Ghosting 2..4 probieren
 #define HUB75_DOUBLE_BUFFER  true
+// Treiberstärke des CLK-Pins: schwach (0 = ca. 5 mA). Bei voller Stärke schwingt die Flanke auf Dupont-Kabeln
+// nach, das Panel zählt doppelt, Zeilen rutschen um ein Pixel (Farbsäume cyan/magenta). Mit kurzen Leitungen
+// oder Pegelwandler geht auch 2 (Vorgabe des ESP32, ca. 20 mA).
+#define HUB75_CLK_DRIVE      0
 
 // ---- Verhalten ------------------------------------------------------------
 #define POLL_MS            2000     // Abstand der /panel/frame-Abrufe

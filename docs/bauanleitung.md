@@ -226,6 +226,7 @@ Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart 
 | Schriftzug "flightpanel" lesbar, oben links | Orientierung stimmt |
 | Schrift gespiegelt oder auf dem Kopf | Panels drehen, nicht die Software |
 | Bunter Schnee, Flackern | Dupont-Kabel prüfen (CLK, LAT, OE, GND), dann `HUB75_CLKPHASE` |
+| Einzelne Zeilen rutschen ein Pixel nach links, Farbsäume cyan/magenta | CLK schwingt nach (lange Dupont-Kabel): `HUB75_CLK_DRIVE 0` (Vorgabe); sonst Pegelwandler (3.4) |
 | Nur obere oder untere Hälfte jedes Panels | R2/G2/B2 oder R1/G1/B1 nicht gesteckt |
 | Rechtes Panel blau statt grün, Schrift rosa statt orange | Panel mit Farbfolge R-B-G (kommt je nach Charge vor): am ESP32 G1 und B1 tauschen (Kabel 2 an G27, Kabel 3 an G26), ebenso G2 und B2 (Kabel 6 an G13, Kabel 7 an G12) |
 

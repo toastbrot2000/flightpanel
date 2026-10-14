@@ -29,6 +29,7 @@ bool begin() {
   cfg.double_buff = HUB75_DOUBLE_BUFFER;
   panel = new MatrixPanel_I2S_DMA(cfg);
   const bool ok = panel->begin();
+  gpio_set_drive_capability((gpio_num_t)CLK_PIN, (gpio_drive_cap_t)HUB75_CLK_DRIVE);   // nach begin(), das die Pins einrichtet
   if (!ok) Serial.println("Panel-Init fehlgeschlagen (zu wenig DMA-Speicher?)");
   panel->setBrightness8(TEST_BRIGHTNESS);
   clear();
