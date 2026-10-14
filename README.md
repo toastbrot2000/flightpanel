@@ -184,8 +184,10 @@ PlatformIO, Board `esp32dev` (klassischer ESP32, WROOM-32), Bibliothek ESP32-HUB
 
 ```bash
 cd firmware
-cp include/secrets.h.example include/secrets.h   # WLAN (2,4 GHz!), Server-URL, OTA-Passwort
-pio run -t upload                                # erstes Mal per USB, danach: pio run -e esp32dev_ota -t upload
+cp include/secrets.h.example include/secrets.h   # WLAN (2,4 GHz!), Server-URL, OTA-Passwort (leer = kein OTA)
+pio run -t upload                                # erstes Mal per USB
+cp platformio_local.ini.example platformio_local.ini   # nur für OTA: dasselbe Passwort eintragen
+pio run -e esp32dev_ota -t upload                # danach per WLAN
 ```
 
 Teile, Strom, Verdrahtung (Pinbelegung), Testbild und Stellschrauben stehen in der [Bauanleitung](docs/bauanleitung.md). Kompilieren ohne lokales PlatformIO: `sh tools/check_firmware.sh` (Docker).

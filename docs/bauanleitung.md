@@ -105,25 +105,26 @@ Falls doch Flackern, Geisterbilder oder Farbrauschen auftreten, die sich mit `HU
 
 ### 3.5 USB und VIN
 
-Nie gleichzeitig über USB und VIN versorgen. Zum Flashen per USB das VIN-Kabel abziehen; die Panels dürfen dabei über das Netzteil laufen, GND bleibt verbunden. Nach dem ersten Flashen geht alles per WLAN (OTA).
+Nie gleichzeitig über USB und VIN versorgen. Zum Flashen per USB das VIN-Kabel abziehen; die Panels dürfen dabei über das Netzteil laufen, GND bleibt verbunden. Nach dem ersten Flashen geht alles per WLAN (OTA), sobald ein OTA-Passwort gesetzt ist (Abschnitt 4).
 
 ---
 
 ## 4. Firmware
 
-PlatformIO, Board `esp32dev`, Arduino-Framework, Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14, Adafruit GFX (nur fürs Testbild), ArduinoOTA. WLAN, Server-URL und OTA-Passwort stehen in `include/secrets.h`, die nicht ins Repo gehört.
+PlatformIO, Board `esp32dev`, Arduino-Framework, Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14, Adafruit GFX (nur fürs Testbild), ArduinoOTA. WLAN, Server-URL und OTA-Passwort stehen in `include/secrets.h`, die nicht ins Repo gehört. Ein leeres OTA-Passwort schaltet OTA ab: Das Panel öffnet dann keinen Port und meldet sich nicht als `flightpanel.local`, geflasht wird per USB. Fürs Hochladen per WLAN kommt dasselbe Passwort noch einmal in `platformio_local.ini` (Vorlage: `platformio_local.ini.example`, ebenfalls nicht im Repo; ohne sie baut die Firmware trotzdem).
 
 ```bash
 cd firmware
-cp include/secrets.h.example include/secrets.h   # WLAN (2,4 GHz!), Server-URL, OTA-Passwort
+cp include/secrets.h.example include/secrets.h   # WLAN (2,4 GHz!), Server-URL, OTA-Passwort (leer = kein OTA)
 pio run -t upload                                # erstes Mal per USB, VIN dabei abziehen
 pio device monitor
+cp platformio_local.ini.example platformio_local.ini   # nur für OTA: dasselbe Passwort eintragen
 pio run -e esp32dev_ota -t upload                # danach per WLAN
 ```
 
 Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert (in Docker). Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
 
-**Ablauf:** Beim Start ein Testbild (Abschnitt 6), dann WLAN, OTA und mDNS (`flightpanel.local`). Danach alle 2 s `GET /frame`, Header prüfen, Helligkeit übernehmen (gedeckelt bei `MAX_BRIGHTNESS`), 4096 Pixel schreiben, Puffer tauschen. Die Bibliothek frischt die Panels per DMA im Hintergrund auf, der Prozessor ist dabei kaum beteiligt. Ohne Server bleibt das letzte Bild stehen; nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu.
+**Ablauf:** Nach dem Einschalten ein Testbild (Abschnitt 6; andere Neustarts bleiben still), dann WLAN und, falls ein OTA-Passwort gesetzt ist, OTA samt mDNS-Name (`flightpanel.local`). Danach alle 2 s `GET /frame`, Header prüfen, Helligkeit übernehmen (gedeckelt bei `MAX_BRIGHTNESS`), 4096 Pixel schreiben, Puffer tauschen. Die Bibliothek frischt die Panels per DMA im Hintergrund auf, der Prozessor ist dabei kaum beteiligt. Ohne Server bleibt das letzte Bild stehen; nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu.
 
 **Schnittstelle:** `GET /frame` liefert 12 292 Byte, `application/octet-stream`:
 
@@ -170,7 +171,7 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 **Montage (ein Nachmittag):**
 
 11. Trägerplatte zuschneiden, Panels montieren, ESP32 und Klemmen befestigen, USB ab, VIN dran.
-12. OTA testen: `pio run -e esp32dev_ota -t upload`.
+12. OTA testen (Passwort in `secrets.h` und `platformio_local.ini`, Abschnitt 4): `pio run -e esp32dev_ota -t upload`.
 13. An die Wand oder ins Regal.
 
 **Dauertest:** 24 h laufen lassen. Netzteil und Panelrückseite nach einer Stunde anfassen: handwarm. `/health` zeigt `esp32.fetches` hochzählen.
@@ -178,6 +179,8 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 ---
 
 ## 6. Testbild und Gesamttest
+
+Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart zwischendurch, etwa dem nach 10 min ohne Daten oder einem OTA-Update, bleibt das Panel still; wer es noch einmal sehen will, schaltet das Netzteil kurz aus und wieder ein.
 
 | Bild | Bedeutung |
 |---|---|
@@ -203,7 +206,7 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 ### Vor dem Umzug auf den Server
 
 1. **Feste Adresse für den Server.** Der ESP32 findet ihn nur über `FRAME_URL` in `secrets.h`. Im Router eine feste DHCP-Zuweisung einrichten oder den Namen nehmen, den der Router auflöst (bei einer FRITZ!Box `http://<name>.fritz.box:8080/frame`). Sonst heißt eine neue IP: neu flashen.
-2. **OTA-Passwort setzen:** `OTA_PASSWORD` in `secrets.h` und `--auth=` in `platformio.ini` statt `changeme`, sonst kann jeder im WLAN die Firmware tauschen.
+2. **OTA-Passwort setzen:** `OTA_PASSWORD` in `secrets.h` und dasselbe Passwort in `firmware/platformio_local.ini` (beide nicht im Repo). Ohne Passwort läuft kein OTA, damit nicht jeder im WLAN die Firmware tauschen kann; das Panel ließe sich dann nur noch per USB flashen.
 3. **Mitnehmen:** `.env` (Flughafen, Quellen, `TZ`), die Datenbank `data/flightpanel.db` (Standort, Sichtfeld, Album; als Kopie, siehe 7) und `data/logos/own/` (eigene Logos samt Originalen in `own/src/`). Den Rest holt der Server selbst.
 4. **Nur im Heimnetz:** Port 8080 nicht nach außen freigeben. `/display.json` zeigt Richtung und Entfernung der Flugzeuge vom Fenster aus; daraus ließe sich der Standort ableiten.
 5. **Updates per cron:** `sh tools/update.sh` wöchentlich, Zeile in der README unter "Betrieb auf dem Server". Der Nutzer des cron-Jobs braucht die Gruppe `docker`.

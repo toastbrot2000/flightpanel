@@ -1,0 +1,20 @@
+; Lokale PlatformIO-Einstellungen, nur auf diesem Rechner (platformio_local.ini steht in .gitignore).
+;
+;   cp platformio_local.ini.example platformio_local.ini
+;
+; platformio.ini liest die Datei über extra_configs, wenn es sie gibt; ohne sie baut die
+; Firmware trotzdem. Gebraucht wird sie nur fürs Hochladen per WLAN:
+;
+;   pio run -e esp32dev_ota -t upload
+;
+; Das Passwort muss zu OTA_PASSWORD in include/secrets.h passen. Ist das dort leer, läuft auf
+; dem Panel kein OTA, und es gibt nichts, wohin hochgeladen werden könnte.
+;
+; Am einfachsten aus Buchstaben und Ziffern. Nicht verwenden: "%" (PlatformIO lehnt dann die
+; ganze Konfiguration ab, auch für normale Builds) und "${" (wird ersetzt). Nach einem
+; Leerzeichen beginnen ";" und "#" einen Kommentar.
+; pio im Ordner firmware/ aufrufen, von dort aus wird die Datei gesucht.
+
+[env:esp32dev_ota]
+upload_flags =
+    --auth=HIER_DAS_OTA_PASSWORT

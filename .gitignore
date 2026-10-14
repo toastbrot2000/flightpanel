@@ -1,6 +1,7 @@
 # Eigene Einstellungen (Standort!) und Zugangsdaten
 .env
 firmware/include/secrets.h
+firmware/platformio_local.ini
 
 # Im Betrieb erzeugt (Docker-Volume ./data)
 data/flightpanel.db*

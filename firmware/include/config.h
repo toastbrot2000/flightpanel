@@ -42,7 +42,7 @@
 #define HTTP_TIMEOUT_MS    3000
 #define OFFLINE_MARK_MS    60000    // nach so lange ohne Frame: roter Punkt unten rechts
 #define RESTART_AFTER_MS   600000   // nach so lange ohne Frame: Neustart
-#define TEST_PATTERN_AT_BOOT true   // Panels einfärben, Rahmen, Schrift
+#define TEST_PATTERN_AT_BOOT true   // Panels einfärben, Rahmen, Schrift; nur nach dem Einschalten, nicht nach Neustarts
 #define TEST_BRIGHTNESS    40
 
 #define FRAME_HEADER       4

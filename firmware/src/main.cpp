@@ -8,9 +8,17 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <esp_system.h>   // esp_reset_reason()
 
 #include "config.h"
 #include "secrets.h"
+
+// OTA gibt es nur mit Passwort. Ohne eines wäre das Flashen im WLAN für jeden offen;
+// dann startet ArduinoOTA gar nicht (kein offener Port, kein mDNS-Name flightpanel.local).
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD ""   // ältere secrets.h ohne diese Zeile: kein OTA
+#endif
+static const bool OTA_ENABLED = OTA_PASSWORD[0] != '\0';   // zur Compile-Zeit bekannt
 
 static MatrixPanel_I2S_DMA* panel = nullptr;
 static uint8_t frame[FRAME_LEN];
@@ -50,9 +58,6 @@ static void testPattern() {
   panel->setTextColor(panel->color565(255, 120, 0));
   panel->setCursor(2, 2);
   panel->print("flightpanel");
-  panel->setTextColor(panel->color565(120, 150, 230));
-  panel->setCursor(2, 14);
-  panel->print(WIFI_SSID);
   show();
   delay(1500);
   panel->fillScreenRGB888(0, 0, 0);
@@ -121,6 +126,12 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.printf("\nflightpanel HUB75 %ux%u (%d Panels)\n", WIDTH, HEIGHT, PANEL_CHAIN);
+  // Das Testbild gibt es nur nach dem Einschalten. Jeder andere Neustart (Software-Reset nach
+  // RESTART_AFTER_MS ohne Daten, OTA, Watchdog, Unterspannung) bleibt still, sonst blitzt das
+  // Panel bei einem Serverausfall die ganze Nacht alle 10 Minuten auf.
+  const esp_reset_reason_t reason = esp_reset_reason();
+  const bool coldBoot = (reason == ESP_RST_POWERON);
+  Serial.printf("Reset-Grund %d%s\n", (int)reason, coldBoot ? " (Einschalten)" : "");
 
   HUB75_I2S_CFG::i2s_pins pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN,
                                   A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
@@ -136,22 +147,26 @@ void setup() {
   panel->clearScreen();
   show();
 
-  if (TEST_PATTERN_AT_BOOT) testPattern();
+  if (TEST_PATTERN_AT_BOOT && coldBoot) testPattern();
 
   wifiConnect();
 
-  ArduinoOTA.setHostname(HOSTNAME);
-  if (strlen(OTA_PASSWORD) > 0) ArduinoOTA.setPassword(OTA_PASSWORD);
-  ArduinoOTA.onStart([]() { panel->clearScreen(); show(); Serial.println("OTA start"); });
-  ArduinoOTA.onEnd([]() { Serial.println("OTA fertig"); });
-  ArduinoOTA.onError([](ota_error_t e) { Serial.printf("OTA Fehler %u\n", e); });
-  ArduinoOTA.begin();
+  if (OTA_ENABLED) {
+    ArduinoOTA.setHostname(HOSTNAME);
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+    ArduinoOTA.onStart([]() { panel->clearScreen(); show(); Serial.println("OTA start"); });
+    ArduinoOTA.onEnd([]() { Serial.println("OTA fertig"); });
+    ArduinoOTA.onError([](ota_error_t e) { Serial.printf("OTA Fehler %u\n", e); });
+    ArduinoOTA.begin();
+  } else {
+    Serial.println("OTA aus (OTA_PASSWORD leer)");
+  }
 
   lastOk = millis();   // Neustart-Zähler erst ab jetzt
 }
 
 void loop() {
-  ArduinoOTA.handle();
+  if (OTA_ENABLED) ArduinoOTA.handle();
   const uint32_t now = millis();
 
   if (WiFi.status() != WL_CONNECTED && now - lastWifiTry > 10000) {
