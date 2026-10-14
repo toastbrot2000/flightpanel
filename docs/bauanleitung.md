@@ -193,7 +193,7 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 
 - `/frame.png` im Browser und das Panel nebeneinander: gleich?
 - `/health`: `esp32.alive` ist `true`, `source.active` ist `adsblol`, `logos` ist gefüllt.
-- Helligkeit: Tagsüber ist 90 in einem Wohnraum deutlich, abends 35. Anpassen in `.env` (`BRIGHTNESS_DAY`, `BRIGHTNESS_EVENING`), ohne Flashen.
+- Helligkeit: Tagsüber ist 90 in einem Wohnraum deutlich, abends 35. Anpassen mit `panels set home BRIGHTNESS_DAY=90 BRIGHTNESS_EVENING=35` und einem Neustart des Servers (README, Abschnitt "Einrichten"), ohne Flashen.
 - Strom: Multimeter in die Plus-Leitung am Schraubadapter, bei normalem Bild. Erwartung: unter 1,5 A.
 
 ---
@@ -204,18 +204,18 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 
 1. **Feste Adresse für den Server.** Der ESP32 findet ihn nur über `FRAME_URL` in `secrets.h`. Im Router eine feste DHCP-Zuweisung einrichten oder den Namen nehmen, den der Router auflöst (bei einer FRITZ!Box `http://<name>.fritz.box:8080/frame`). Sonst heißt eine neue IP: neu flashen.
 2. **OTA-Passwort setzen:** `OTA_PASSWORD` in `secrets.h` und `--auth=` in `platformio.ini` statt `changeme`, sonst kann jeder im WLAN die Firmware tauschen.
-3. **Mitnehmen:** `.env` (Standort, `TZ`) und `data/logos/own/` (eigene Logos samt Originalen in `own/src/`). Den Rest holt der Server selbst.
+3. **Mitnehmen:** `.env` (Flughafen, Quellen, `TZ`), die Datenbank `data/flightpanel.db` (Standort, Sichtfeld, Album; als Kopie, siehe 7) und `data/logos/own/` (eigene Logos samt Originalen in `own/src/`). Den Rest holt der Server selbst.
 4. **Nur im Heimnetz:** Port 8080 nicht nach außen freigeben. `/display.json` zeigt Richtung und Entfernung der Flugzeuge vom Fenster aus; daraus ließe sich der Standort ableiten.
 5. **Updates per cron:** `sh tools/update.sh` wöchentlich, Zeile in der README unter "Betrieb auf dem Server". Der Nutzer des cron-Jobs braucht die Gruppe `docker`.
 6. **Überwachen statt nachsehen:** ein Uptime-Monitor (Uptime Kuma o. ä.) auf `http://<server>:8080/ok`; der meldet sich nur, wenn Daten fehlen, das Panel nichts mehr holt oder der Code Fehler wirft.
-7. **Sichern:** `data/` ins Backup des Servers: eigene Logos, Statistik und Sammelalbum über das ganze Jahr.
+7. **Sichern:** `data/` ins Backup des Servers: eigene Logos, Statistik und Sammelalbum über das ganze Jahr. Die Datenbank nicht im Betrieb kopieren (was noch in `flightpanel.db-wal` steht, fehlt), sondern eine Kopie ziehen: `docker compose exec flightpanel python3 -m flightpanel.panels backup /data/flightpanel.db.bak`.
 
 **Fehlerbilder:**
 
 | Symptom | Ursache | Was tun |
 |---|---|---|
 | Komplett dunkel, Netzteil-LED aus | Netzteil oder Steckverbindung | Stecker, Klemmen |
-| Komplett dunkel, Netzteil an | Quiet Hours, oder keine eingeschaltete Karte hat etwas zu zeigen | `QUIET_HOURS`, `CARD_*` in `.env`, `/idle` |
+| Komplett dunkel, Netzteil an | Quiet Hours, oder keine eingeschaltete Karte hat etwas zu zeigen | `QUIET_HOURS`, `CARD_*` (`panels show home`), `/idle` |
 | Letztes Bild steht, roter Punkt unten rechts | ESP32 erreicht den Server nicht | `/health`, Container-Logs, WLAN, `FRAME_URL` in `secrets.h` |
 | Rechte Hälfte dunkel | Flachband zwischen den Panels | Stecker nachdrücken |
 | Flackern, Farbrauschen nach Monaten | Dupont-Kabel gelockert | nachstecken; bei Dauerproblem Pegelwandler (3.4) |

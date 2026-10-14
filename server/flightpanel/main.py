@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import signal
+import sys
 import time
 import traceback
 from collections.abc import Mapping
@@ -100,6 +101,19 @@ def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, log
     if taken:
         log.info("Aus früheren Fassungen übernommen: %s", ", ".join(os.path.relpath(p, data_dir) for p in taken))
     return taken
+
+
+def check_data_dir(data_dir: str) -> str | None:
+    """Kann der Server in DATA_DIR schreiben? Gibt den Satz fürs Log zurück, sonst None. Der Container läuft als
+    Benutzer 1000: Ein ./data, das ein früherer Container als root angelegt hat, gehört root, und der Start stürbe
+    mit nichts als "unable to open database file", bei restart: unless-stopped in einer Schleife. Geprüft werden
+    DATA_DIR, logos/ und die Datenbank, soweit sie schon da sind; fehlt DATA_DIR ganz, legt der Start es an."""
+    for path, mode in ((data_dir, os.W_OK | os.X_OK), (os.path.join(data_dir, "logos"), os.W_OK | os.X_OK),
+                       (db_path(data_dir), os.W_OK)):
+        if os.path.exists(path) and not os.access(path, mode):
+            return (f"{path} ist nicht beschreibbar (der Container läuft als Benutzer 1000). "
+                    "Auf dem Host im Projektordner: sudo chown -R 1000:1000 data")
+    return None
 
 
 class App:
@@ -495,6 +509,9 @@ async def _main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = Config.from_env()             # Warnungen zur Konfiguration schon im richtigen Format
     logging.getLogger().setLevel(getattr(logging, cfg.log_level.upper(), logging.INFO))
+    if problem := check_data_dir(cfg.data_dir):
+        log.error("%s", problem)
+        sys.exit(2)
     app = App(cfg)
     runner = await app.start()
     stop = asyncio.Event()

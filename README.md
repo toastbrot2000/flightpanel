@@ -39,6 +39,8 @@ docker compose up -d --build
 open http://localhost:8080      # Vorschau, wechselt alle 2 s
 ```
 
+Auf Linux muss `./data` dem Benutzer 1000 gehören (der Container läuft ohne Rechte): `sudo chown -R 1000:1000 data`, auch nach dem Update einer älteren Installation, deren Container als root lief.
+
 Die Vorschauseite hat Links für die Layouts und jede Leerlauf-Karte; `/frame.png?card=radar&scale=8` geht auch direkt.
 
 ## Einrichten
@@ -47,7 +49,7 @@ Serverweites steht in `.env` (nicht im Repo; jede Einstellung ist in [.env.examp
 
 **1. Heimatflughafen** (`.env`). `LOCAL_AIRPORT_IATA` genügt: Position, Höhe und METAR-Station kommen aus `data/airports.json`. Dazu `RUNWAY_COURSE`, der Kurs im Endanflug einer Landerichtung (BER 25: 249°, MUC 26: 263°), und `CURFEW_HOURS` für das Nachtflugverbot. Für einen Flughafen, der nicht in der Liste steht, `AIRPORT_LAT`, `AIRPORT_LON`, `AIRPORT_ALT_M` und `METAR_STATION` setzen.
 
-**2. Starten.** `docker compose up -d --build`. Beim ersten Start entsteht das Panel `home`; eine ältere `.env` mit Standort und Sichtfeld wird dabei einmalig übernommen. `./data` muss dem Benutzer 1000 gehören (der Container läuft ohne Rechte): auf Linux `chown -R 1000:1000 data`, unter Docker Desktop passt es von selbst.
+**2. Starten.** `docker compose up -d --build`. Beim ersten Start entsteht das Panel `home`; eine ältere `.env` mit Standort und Sichtfeld wird dabei einmalig übernommen. Auf Linux muss `./data` dem Benutzer 1000 gehören (der Container läuft ohne Rechte): `sudo chown -R 1000:1000 data`, auch nach dem Update einer älteren Installation, deren Container als root lief; unter Docker Desktop passt es von selbst. Sonst bricht der Start ab, und das Log nennt den Ordner und den Befehl.
 
 **3. Standort und Sichtfeld.**
 
@@ -148,7 +150,7 @@ Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Cache, Logos, Sta
 
 **Abhängigkeiten mit Wartezeit:** Neue Versionen von Python-Paketen, Basis-Image und Werkzeugen kommen erst ins Image, wenn sie seit 7 Tagen veröffentlicht sind; bis dahin sollte ein kompromittiertes Release aufgefallen sein. `server/requirements.lock` hält jede Version mit Prüfsummen (`pip --require-hashes`), das Basis-Image ist per Digest festgelegt, die GitHub-Actions per Commit, die Firmware-Bibliotheken per genauer Version. Einmal pro Woche übernimmt `.github/workflows/escrow.yml`, was alt genug ist, baut und testet wie auf dem Server und checkt nur ein, wenn alles grün ist. Dabei hat der Job, der fremden Code ausführt (die Tests), keine Schreibrechte; der Job, der eincheckt, rechnet die Änderung selbst nach und führt keine fremden Pakete aus. Der Server baut nur aus dem Repo und holt sich nie selbst die neueste Version. Von Hand: `sh tools/escrow.sh` (Docker).
 
-**Ältere `.env`:** `IDLE_OFF` heißt jetzt `CARD_<ID>=0` je Karte, `LOGO_URL` heißt `LOGO_URLS`. `LAYOUT=auto` ist jetzt dasselbe wie `C`. Ausdrücklich gesetzte Werte gehen dem ruhigen Modus vor: Mit `CALM=1` die alte Zeile `PAGE_SECONDS=4` löschen. `AIRPORT_LAT`, `AIRPORT_LON`, `METAR_STATION` nur noch setzen, wenn der Flughafen nicht in `data/airports.json` steht. Der Server sagt beim Start im Log, was davon er gefunden hat.
+**Ältere `.env`:** `IDLE_OFF` heißt jetzt `CARD_<ID>=0` je Karte, `LOGO_URL` heißt `LOGO_URLS`. `LAYOUT=auto` ist jetzt dasselbe wie `C`. Ausdrücklich gesetzte Werte gehen dem ruhigen Modus vor: Mit `CALM=1` die alte Zeile `PAGE_SECONDS=4` löschen (vor dem ersten Start in `.env`, danach mit `panels unset home PAGE_SECONDS`). `AIRPORT_LAT`, `AIRPORT_LON`, `METAR_STATION` nur noch setzen, wenn der Flughafen nicht in `data/airports.json` steht. Der Server sagt beim Start im Log, was davon er gefunden hat.
 
 **Auffälligkeiten (`/issues`)** sammelt der Server im Betrieb, mit Zähler, erstem und letztem Auftreten, Callsigns und einem Beispiel:
 
@@ -198,7 +200,10 @@ Eine neue Abhängigkeit kommt in `server/requirements.txt` (bzw. `requirements-d
 server/flightpanel/
   main.py        Einstieg: App, Abruf-, Wetter-, ISS- und Speicherschleife
   web.py         HTTP-Endpunkte und Vorschauseite
-  config.py      Einstellungen aus .env (Config.from_env), ruhiger Modus, Helligkeit
+  config.py      Server-Einstellungen aus .env (Config.from_env), Panel-Einstellungen aus der
+                 Datenbank (Config.for_panel), ruhiger Modus, Helligkeit
+  db.py          SQLite-Datenbank data/flightpanel.db: Panels, Statistik, Album, Cache, Auffälligkeiten
+  panels.py      Befehl: Panel-Einstellungen setzen, Panels anlegen, Datenbank sichern
   data.py        mitgelieferte Daten laden; storage.py Dateien atomar schreiben
   issues.py      Auffälligkeiten sammeln (/issues); cache.py Antworten mit Ablaufzeit
 
@@ -232,7 +237,7 @@ docs/            bauanleitung.md (Hardware), screens.md (alle Bildschirme), imag
 1. In der passenden Datei unter `server/flightpanel/cards/` zwei Funktionen: `foo_cond(ctx)` gibt `Hit(daten)` zurück oder `None`, wenn die Karte gerade nichts zu sagen hat; `foo_draw(img, ctx, daten, t_in, f)` zeichnet. Optional `foo_demo(ctx)` mit Beispieldaten. Was `ctx` mitbringt: `idle.Ctx`; Texthelfer: `draw.py`.
 2. Eintrag in `CARDS` in `cards/__init__.py`, mit Stufe (`tier`) und Gewicht.
 3. Ansehen: `/frame.png?card=foo`. Der Test `test_every_card_renders_with_demo_data` zeichnet sie automatisch mit.
-4. `CARD_FOO=1` in `.env.example` und eine Zeile in `docs/screens.md`.
+4. Eine Zeile in `docs/screens.md`. Die Karte ist von Haus aus an, `panels set home CARD_FOO=0` schaltet sie ab (die ID kennt `panels` aus `CARDS`; in `.env.example` steht dafür nichts).
 
 ### Eine Airline nachtragen
 

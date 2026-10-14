@@ -1,4 +1,5 @@
-"""Start des Servers: Datenbank, Panel home, einmalige Übernahme alter JSON-Dateien und .env-Werte."""
+"""Start des Servers: Datenbank, Panel home, einmalige Übernahme alter JSON-Dateien und .env-Werte,
+verständliche Meldung, wenn DATA_DIR nicht beschreibbar ist."""
 
 import asyncio
 import json
@@ -12,7 +13,7 @@ from aiohttp import web
 
 from conftest import FIXTURES, make_cfg
 from flightpanel.db import db_path
-from flightpanel.main import App
+from flightpanel.main import App, _main, check_data_dir
 from flightpanel.stats import Stats
 from flightpanel.web import make_web_app
 
@@ -273,3 +274,70 @@ def test_the_lan_panel_is_the_one_named_in_the_config(tmp_path):
             await app.session.close()
 
     asyncio.run(run())
+
+
+@pytest.fixture
+def like_an_ordinary_user(monkeypatch):
+    """os.access nach den Rechtebits des Eigentümers. Die Tests laufen im Container als root, und für root sagt
+    os.access auch bei einem Ordner mit 0o555 ja: Ohne diese Nachbildung prüften die Tests nichts. Die Rechtebits
+    setzen sie selbst, mit os.chmod."""
+    def access(path, mode, **kwargs):
+        try:
+            bits = os.stat(path).st_mode
+        except OSError:
+            return False
+        need = (0o400 if mode & os.R_OK else 0) | (0o200 if mode & os.W_OK else 0) | (0o100 if mode & os.X_OK else 0)
+        return bits & need == need
+
+    monkeypatch.setattr(os, "access", access)
+
+
+def test_a_usable_data_dir_gets_no_complaint(tmp_path):
+    (tmp_path / "logos").mkdir()
+    (tmp_path / "flightpanel.db").write_bytes(b"")
+    assert check_data_dir(str(tmp_path)) is None
+    assert check_data_dir(str(tmp_path / "noch-nicht-da")) is None          # fehlt ganz: der Start legt es an
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="Rechtebits gibt es nur unter Linux und macOS")
+@pytest.mark.parametrize(("name", "mode"), [("", 0o555), ("", 0o600), ("logos", 0o555), ("flightpanel.db", 0o444)],
+                         ids=["data", "data-no-search", "logos", "database"])
+def test_what_the_container_cannot_write_is_named_with_the_fix(tmp_path, like_an_ordinary_user, name, mode):
+    """Was der Container als Benutzer 1000 nicht beschreiben darf (DATA_DIR, logos/, die Datenbank, etwa weil ein
+    früherer Container sie als root anlegte): Der Satz nennt genau diesen Pfad und den Befehl dagegen. Ein Ordner
+    ohne Durchgangsrecht (0o600) taugt so wenig wie einer ohne Schreibrecht."""
+    (tmp_path / "logos").mkdir()
+    (tmp_path / "flightpanel.db").write_bytes(b"")
+    target = tmp_path / name
+    before = os.stat(target).st_mode & 0o777
+    os.chmod(target, mode)
+    try:
+        problem = check_data_dir(str(tmp_path))
+    finally:
+        os.chmod(target, before)                    # sonst räumt pytest tmp_path nicht auf
+    assert problem is not None and problem.startswith(f"{target} ist nicht beschreibbar")
+    assert "Benutzer 1000" in problem and "sudo chown -R 1000:1000 data" in problem
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="Rechtebits gibt es nur unter Linux und macOS")
+def test_the_start_stops_when_data_is_not_writable(tmp_path, monkeypatch, caplog, like_an_ordinary_user):
+    """Eine Meldung mit Pfad und Befehl, Exit-Code 2, und App entsteht gar nicht erst. Ohne die Prüfung käme
+    "unable to open database file" aus dem Datenbankcode, bei jedem Neustart wieder."""
+    def not_reached(cfg):
+        raise AssertionError("App darf bei unbeschreibbarem DATA_DIR gar nicht erst entstehen")
+
+    data = tmp_path / "data"
+    data.mkdir()
+    os.chmod(data, 0o555)
+    monkeypatch.setenv("DATA_DIR", str(data))
+    monkeypatch.setattr("flightpanel.main.App", not_reached)
+    try:
+        with caplog.at_level("ERROR"), pytest.raises(SystemExit) as stopped:
+            asyncio.run(_main())
+    finally:
+        os.chmod(data, 0o755)
+    assert stopped.value.code == 2
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1 and errors[0].startswith(f"{data} ist nicht beschreibbar")
+    assert "sudo chown -R 1000:1000 data" in errors[0]
+    assert not (data / "flightpanel.db").exists()
