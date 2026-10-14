@@ -179,6 +179,42 @@ def test_issues_keep_what_changed_after_saving_but_before_the_commit(tmp_path, m
     assert set(Issues(db).items) == {"exception:c", "exception:d"}
 
 
+def test_issues_old_json_with_odd_entries_keeps_the_good_ones(tmp_path, monkeypatch, caplog):
+    """Eine von Hand veränderte issues.json: Einträge, die report(), forget() und /ok so nicht lesen könnten, fallen
+    weg (eine Warnung nennt, wie viele), die guten bleiben. Ein Beginn, der keine Zahl ist, bleibt der jetzige."""
+    now = clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    since = iss.since
+    good = {"kind": "exception", "key": "x", "seen": 3, "days": 2, "first": now[0] - DAY, "last": now[0],
+            "callsigns": ["EZY1"]}
+    items = {"exception:x": good,
+             "a": 1, "b": "Text", "c": None,                                        # keine Objekte
+             "d": {**good, "kind": None}, "e": {**good, "seen": "viele"},          # falscher Typ
+             "f": {k: v for k, v in good.items() if k != "last"},                   # Feld fehlt
+             "g": {**good, "callsigns": "EZY1"}, "h": {**good, "first": float("nan")}}
+    with caplog.at_level("WARNING"):
+        iss.load_legacy({"since": "gestern", "items": items})
+    assert set(iss.items) == {"exception:x"} and iss.since == since
+    assert "8 von 9" in caplog.text
+    iss.save()
+    again = Issues(db)
+    assert set(again.items) == {"exception:x"}
+    assert again.report()["counts"] == {"exception": 1}         # /issues, /health und /ok bleiben lesbar
+    assert again.forget(now[0]) == 0
+
+
+def test_issues_old_json_without_an_items_object_changes_nothing(tmp_path, monkeypatch):
+    """items ist kein Objekt: ValueError, bevor etwas übernommen ist; absorb_legacy lässt die Datei dann liegen."""
+    clock(monkeypatch, issues_mod)
+    iss = Issues(Db(str(tmp_path / "i.db")))
+    since = iss.since
+    for items in (None, ["kaputt"], "kaputt"):
+        with pytest.raises(ValueError, match="items"):
+            iss.load_legacy({"since": since - 99, "items": items})
+    assert iss.items == {} and iss.since == since
+
+
 def test_issues_ignore_an_old_json_that_is_no_object(tmp_path, monkeypatch):
     clock(monkeypatch, issues_mod)
     iss = Issues(Db(str(tmp_path / "i.db")))
@@ -206,6 +242,27 @@ def test_cache_takes_over_the_old_json(tmp_path, monkeypatch):
     c.load_legacy({"route:A": [now[0] + 100, {"origin": "X"}], "route:B": [now[0] - 1, {}], "kaputt": "x"})
     c.save()
     assert Cache(db).get("route:A") == {"origin": "X"} and Cache(db).get("route:B") is None and len(c) == 1
+
+
+def test_cache_old_json_with_odd_entries_keeps_the_good_ones(tmp_path, monkeypatch, caplog):
+    """Eine von Hand veränderte cache.json: Eine Ablaufzeit als Text wird zur Zahl (als Text scheiterte prune() an
+    jedem Speichern und damit der Start), was keine Liste [Ablaufzeit, Wert] ist, fällt weg; eine Warnung nennt, wie
+    viele."""
+    now = clock(monkeypatch, cache_mod)
+    db = Db(str(tmp_path / "c.db"))
+    c = Cache(db)
+    with caplog.at_level("WARNING"):
+        c.load_legacy({"route:A": [now[0] + 100, {"origin": "X"}],
+                       "route:S": [str(now[0] + 100), {"origin": "S"}],             # Ablaufzeit als Text
+                       "route:E": [now[0] - 1, {}],                                  # abgelaufen: kein Fehler, nur weg
+                       "route:L": [now[0] + 100], "route:T": [now[0] + 100, {}, "zu viel"],      # falsche Länge
+                       "route:N": [None, {}], "route:W": ["morgen", {}],            # keine Zahl
+                       "route:O": {"a": 1, "b": 2}, "route:Z": None,                # keine Liste
+                       "route:I": [float("inf"), {}], "route:B": [10 ** 400, {}]})   # nicht endlich, zu groß
+    assert sorted(c.data) == ["route:A", "route:S"] and "8 Einträge" in caplog.text
+    assert c.data["route:S"][0] == now[0] + 100 and isinstance(c.data["route:S"][0], float)
+    c.save()                                                            # scheitert nicht am Vergleich
+    assert Cache(db).get("route:S") == {"origin": "S"}
 
 
 def test_cache_overwrites_a_saved_entry(tmp_path, monkeypatch):

@@ -32,6 +32,7 @@ import re
 import time
 
 from .db import Db
+from .storage import is_number
 
 log = logging.getLogger("issues")
 
@@ -53,6 +54,14 @@ def _day(t: float) -> str:
 
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
+
+
+def _readable(it) -> bool:
+    """Ein Eintrag in der Form, die note() anlegt und report(), forget() und App.problems() lesen: Art und Schlüssel
+    als Text, Zähler und Zeitpunkte als Zahlen, Callsigns als Liste. days darf fehlen (ältere Dateien)."""
+    return (isinstance(it, dict) and isinstance(it.get("kind"), str) and isinstance(it.get("key"), str)
+            and all(is_number(it.get(f)) for f in ("seen", "first", "last")) and is_number(it.get("days", 1))
+            and isinstance(it.get("callsigns"), list))
 
 
 def names_match(ours: str, theirs: str) -> bool:
@@ -83,13 +92,23 @@ class Issues:
         self._since_dirty = False
 
     def load_legacy(self, raw: dict) -> None:
-        """Alte issues.json übernehmen (main.absorb_legacy, einmalig)."""
+        """Alte issues.json übernehmen (main.absorb_legacy, einmalig). Einträge, die report(), forget() und problems()
+        so nicht lesen könnten (von Hand verändert: kein Objekt, ein Feld fehlt oder ist Text), fallen weg; eine Warnung
+        nennt, wie viele. Ein Beginn, der keine Zahl ist, bleibt der jetzige. Ist items gar kein Objekt, wirft es
+        ValueError, bevor etwas übernommen ist: absorb_legacy lässt die Datei dann liegen."""
         if not isinstance(raw, dict):
             return
         items = raw.get("items", {})
-        self.items.update(items)
-        self._dirty.update(items)
-        self.since = raw.get("since", self.since)
+        if not isinstance(items, dict):
+            raise ValueError("items ist kein Objekt")
+        usable = {k: it for k, it in items.items() if _readable(it)}
+        if len(usable) < len(items):
+            log.warning("issues.json: %d von %d Einträgen unbrauchbar, übergangen",
+                        len(items) - len(usable), len(items))
+        self.items.update(usable)
+        self._dirty.update(usable)
+        if is_number(raw.get("since")):
+            self.since = raw["since"]
         self._since_dirty = True
 
     def note(self, kind: str, key: str, callsign: str = "", **example) -> None:

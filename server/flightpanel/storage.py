@@ -25,6 +25,14 @@ def read_json(path: str) -> Any | None:
         return None
 
 
+def is_number(x) -> bool:
+    """Eine Zahl, mit der sich rechnen und die sich speichern lässt. Alte JSON-Dateien, die jemand von Hand geändert
+    hat (main.absorb_legacy), haben statt Zeitpunkten und Zählern mitunter Text, null, true, nan oder 1e999; bool gilt
+    nicht, auch wenn es in Python eine Zahl ist. Mit abs() < 1e15 fallen nan und inf weg, ohne dass ein riesiges int
+    überläuft."""
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and abs(x) < 1e15
+
+
 def write_atomic(path: str, text: str) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".tmp"

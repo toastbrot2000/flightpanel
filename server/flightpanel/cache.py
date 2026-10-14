@@ -11,6 +11,7 @@ import logging
 import time
 
 from .db import Db
+from .storage import is_number
 
 log = logging.getLogger("cache")
 
@@ -29,16 +30,23 @@ class Cache:
             log.info("Cache geladen: %d Einträge", len(self.data))
 
     def load_legacy(self, raw: dict) -> None:
-        """Alte cache.json übernehmen (main.absorb_legacy, einmalig); Unbrauchbares bleibt weg."""
-        now = time.time()
+        """Alte cache.json übernehmen (main.absorb_legacy, einmalig). Abgelaufenes fällt weg. Was keine Liste
+        [Ablaufzeit, Wert] ist (von Hand verändert), auch; eine Warnung nennt, wie viele. Die Ablaufzeit wird zur Zahl:
+        Bliebe sie Text, scheiterte prune() an jedem Speichern und der Start an der Übernahme."""
+        now, unusable = time.time(), 0
         for k, item in raw.items():
             try:
                 exp, v = item
-                if float(exp) > now:
-                    self.data[k] = (exp, v)
-                    self._dirty.add(k)
-            except (TypeError, ValueError):
-                log.warning("cache.json: Eintrag %s unbrauchbar, ignoriert", k)
+                exp = float(exp)
+            except (TypeError, ValueError, OverflowError):
+                exp = None
+            if exp is None or not is_number(exp):
+                unusable += 1
+            elif exp > now:
+                self.data[k] = (exp, v)
+                self._dirty.add(k)
+        if unusable:
+            log.warning("cache.json: %d Einträge sind keine Liste [Ablaufzeit, Wert], übergangen", unusable)
 
     def prune(self) -> int:
         """Abgelaufenes entfernen, im Speicher und in der Datenbank; gibt zurück, wie viele Einträge."""

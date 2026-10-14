@@ -17,6 +17,7 @@ sich geändert hat."""
 
 import json
 import logging
+import re
 import time
 
 from .airlines import AIRLINER_CATEGORIES, callsign_airline
@@ -25,6 +26,7 @@ from .data import rare_match
 from .db import Db
 from .geo import angle_diff
 from .model import DisplayModel, State
+from .storage import is_number
 from .view import sighting
 
 log = logging.getLogger("stats")
@@ -35,6 +37,7 @@ HISTORY_DAYS = 60
 RARE_KEEP_S = 24 * 3600      # Sichtungen so lange in /stats
 RARE_LOG = 30
 COURSE_CONFIRM = 3           # so viele Abrufe in Folge, bis eine neue Landerichtung gilt
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def _date(t: float) -> str:
@@ -50,6 +53,61 @@ def _counts(d: dict) -> dict:
     """Ein abgeschlossener Tag, wie er in history steht."""
     return {"aircraft": len(d["aircraft"]), "airlines": len(d["airlines"]), "shown": len(d["shown"]),
             "max_alt_m": d["max_alt_m"], "quiet_record_s": d["quiet_record_s"]}
+
+
+def _album_entry(e) -> dict:
+    """Ein Albumeintrag in der Form, die der Rest erwartet (Datenbank und alte Datei); was fehlt (ältere Dateien),
+    bekommt den Wert eines neuen Eintrags."""
+    return {"first": e["first"], "last": e.get("last", e["first"]), "code": e.get("code", ""),
+            "name": e.get("name", ""), "known": bool(e.get("known")), "callsign": e.get("callsign", ""),
+            "fanfare": bool(e.get("fanfare"))}
+
+
+# Was load_legacy aus einer alten stats.json nimmt: Einträge, die so beschaffen sind, wie die Datenbank sie speichert
+# und der Rest sie liest. Von Hand verändert (null, Text statt Zahl, ein Feld fehlt) hielten sie sonst jedes Speichern
+# oder jede Anzeige an. Die ersten drei prüfen (Schlüssel, Eintrag), damit _legacy_part sie gleich aufruft.
+def _usable_album(_key, e) -> bool:
+    return (isinstance(e, dict) and is_number(e.get("first")) and is_number(e.get("last", e["first"]))
+            and all(isinstance(e.get(k, ""), str) for k in ("code", "name", "callsign")))
+
+
+def _usable_counts(date, h) -> bool:
+    """Ein abgeschlossener Tag: ein Datum als Schlüssel, nur Zahlen darin."""
+    return bool(DATE_RE.fullmatch(date)) and isinstance(h, dict) and all(is_number(v) for v in h.values())
+
+
+def _usable_rare(_key, r) -> bool:
+    return isinstance(r, dict) and is_number(r.get("first")) and is_number(r.get("last"))
+
+
+def _usable_course(c: dict) -> bool:
+    return (all(c.get(k) is None or is_number(c[k]) for k in ("now", "prev"))
+            and all(is_number(c.get(k, 0)) for k in ("since", "seen")))
+
+
+def _legacy_part(raw: dict, name: str, usable) -> tuple[dict, int]:
+    """Die brauchbaren Einträge des Abschnitts name einer alten Datei und wie viele wegfielen. Fehlt der Abschnitt,
+    ist er leer; ist er kein Objekt, zählt er als ein weggefallener Eintrag."""
+    part = raw.get(name)
+    if part is None:
+        return {}, 0
+    if not isinstance(part, dict):
+        return {}, 1
+    good = {k: v for k, v in part.items() if usable(k, v)}
+    return good, len(part) - len(good)
+
+
+def _legacy_day(d: dict) -> dict | None:
+    """Der laufende Tag einer alten Datei in der Form von _new_day, None wenn er so nicht brauchbar ist: Datum als
+    Text, Listen von Text, Zahlen."""
+    ids = {k: d.get(k, []) for k in ("aircraft", "airlines", "shown")}
+    if not (isinstance(d.get("date"), str) and DATE_RE.fullmatch(d["date"])
+            and all(isinstance(v, list) and all(isinstance(i, str) for i in v) for v in ids.values())
+            and all(is_number(d.get(k, 0)) for k in ("max_alt_m", "quiet_record_s"))
+            and isinstance(d.get("max_alt_callsign", ""), str)):
+        return None
+    return {**_new_day(d["date"]), "max_alt_m": d.get("max_alt_m", 0), "quiet_record_s": d.get("quiet_record_s", 0),
+            "max_alt_callsign": d.get("max_alt_callsign", ""), **{k: set(v) for k, v in ids.items()}}
 
 
 class Stats:
@@ -83,8 +141,7 @@ class Stats:
         row = self.db.one("SELECT stats_since, last_obs, last_in_view FROM panels WHERE id = ?", (pid,))
         if row is not None and row["stats_since"]:
             self.since, self.last_obs, self.last_in_view = row["stats_since"], row["last_obs"], row["last_in_view"]
-        self.dex = {r["brand"]: {"first": r["first"], "last": r["last"], "code": r["code"], "name": r["name"],
-                                 "known": bool(r["known"]), "callsign": r["callsign"], "fanfare": bool(r["fanfare"])}
+        self.dex = {r["brand"]: _album_entry(dict(r))
                     for r in self.db.query("SELECT * FROM album WHERE panel_id = ?", (pid,))}
         self._merge_listed()
         days = self.db.query("SELECT * FROM days WHERE panel_id = ? ORDER BY date", (pid,))
@@ -108,29 +165,47 @@ class Stats:
         self.course_since, self.course_seen = c.get("since", 0.0), c.get("seen", 0.0)
 
     def load_legacy(self, raw: dict) -> None:
-        """Alte stats.json übernehmen (main.absorb_legacy, einmalig)."""
-        try:
-            self.since = raw.get("since", self.since)
-            for key, e in raw.get("dex", {}).items():
-                self.dex.setdefault(key, e)
-            self._merge_listed()
-            d = raw.get("day") or {}
-            if d.get("date"):
-                day = {**_new_day(d["date"]), **d, **{k: set(d.get(k, [])) for k in ("aircraft", "airlines", "shown")}}
-                if day["date"] >= self.day["date"]:
-                    self.day = day
-                else:
-                    self.history[day["date"]] = _counts(day)
-            self.history.update(raw.get("history", {}))
-            self._finished.update(self.history)
-            self.last_obs = raw.get("last_obs", self.last_obs)
-            self.last_in_view = raw.get("last_in_view", self.last_in_view)
-            self.rare.update(raw.get("rare", {}))
-            c = raw.get("course") or {}
-            self.course, self.prev_course = c.get("now", self.course), c.get("prev", self.prev_course)
-            self.course_since, self.course_seen = c.get("since", self.course_since), c.get("seen", self.course_seen)
-        except Exception as e:
-            log.warning("stats.json unvollständig (%s), übernehme nur einen Teil", e)
+        """Alte stats.json übernehmen (main.absorb_legacy, einmalig). Einzelne Einträge, die so nicht zu gebrauchen
+        sind (von Hand verändert: kein Objekt, ohne Zeitpunkt oder Datum, Zahl als Text), fallen weg, ein Abschnitt, der
+        kein Objekt ist, ganz; eine Warnung nennt, wie viele. Ist die Datei im Ganzen unbrauchbar (kein Objekt, dex kein
+        Objekt), wirft sie ValueError, bevor etwas übernommen ist: absorb_legacy lässt sie dann liegen, statt eine
+        halbe zu übernehmen und umzubenennen."""
+        if not isinstance(raw, dict) or not isinstance(raw.get("dex", {}), dict):
+            raise ValueError("stats.json ist kein Objekt oder dex darin keins")
+        dex, skipped = _legacy_part(raw, "dex", _usable_album)
+        history, bad = _legacy_part(raw, "history", _usable_counts)
+        skipped += bad
+        rare, bad = _legacy_part(raw, "rare", _usable_rare)
+        skipped += bad
+        d, c = raw.get("day"), raw.get("course")
+        day = _legacy_day(d) if isinstance(d, dict) else None
+        course = c if isinstance(c, dict) and _usable_course(c) else None
+        numbers = {k: raw[k] for k in ("since", "last_obs", "last_in_view") if is_number(raw.get(k))}
+        if d and day is None:                           # {} oder fehlend: kein laufender Tag in der Datei
+            skipped += 1
+        if c is not None and course is None:
+            skipped += 1
+        skipped += sum(1 for k in ("since", "last_obs", "last_in_view") if raw.get(k) is not None) - len(numbers)
+
+        for key, e in dex.items():
+            self.dex.setdefault(key, _album_entry(e))
+        self._merge_listed()
+        if day is not None:
+            if day["date"] >= self.day["date"]:
+                self.day = day
+            else:
+                self.history[day["date"]] = _counts(day)
+        self.history.update(history)
+        self._finished.update(self.history)
+        self.rare.update(rare)
+        for attr, value in numbers.items():
+            setattr(self, attr, value)
+        if course is not None:
+            self.course, self.prev_course = course.get("now", self.course), course.get("prev", self.prev_course)
+            self.course_since = course.get("since", self.course_since)
+            self.course_seen = course.get("seen", self.course_seen)
+        if skipped:
+            log.warning("stats.json: %d Einträge unbrauchbar, übergangen", skipped)
         self.dirty = True
 
     def _merge_listed(self) -> None:

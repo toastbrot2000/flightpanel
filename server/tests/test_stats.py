@@ -366,3 +366,55 @@ def test_old_stats_json_that_is_not_complete_keeps_what_it_can(tmp_path):
                     "dex": {"easyJet": {"first": t, "code": "EZY", "name": "easyJet", "known": True}}})
     st.save()
     assert "easyJet" in mk(tmp_path, db).dex
+
+
+def test_old_stats_json_with_odd_entries_keeps_the_good_ones(tmp_path, caplog):
+    """Eine von Hand veränderte stats.json: Album-, History- und Tageseinträge, die so nicht zu lesen sind, fallen
+    einzeln weg (eine Warnung nennt, wie viele), alles andere wird übernommen. Sonst scheiterte jedes Speichern an
+    einem Eintrag ohne Zeitpunkt, und der Start käme nicht über die Übernahme hinaus."""
+    t = time.time()
+    good = {"first": t - 3600, "last": t, "code": "EZY", "name": "easyJet", "known": True, "callsign": "EZY1",
+            "fanfare": False}
+    day = {"aircraft": ["a"], "airlines": [], "shown": []}
+    raw = {"dex": {"easyJet": good, "a": "Text", "b": None, "c": {"code": "X"},          # kein Objekt, kein Zeitpunkt
+                   "d": {**good, "first": "gestern"}, "e": {**good, "name": None}},     # Zeitpunkt als Text, Name null
+           "history": {"2026-10-09": {"aircraft": 5, "airlines": 2, "shown": 1, "max_alt_m": 1, "quiet_record_s": 0},
+                       "2026-10-08": "viel", "2026-10-07": {"aircraft": "fünf"}, "kein Datum": {"aircraft": 1}},
+           "day": day}                                                                  # der Tag hat kein Datum
+    db = make_db(tmp_path)
+    st = mk(tmp_path, db)
+    with caplog.at_level("WARNING"):
+        st.load_legacy(raw)
+    assert "9 Einträge" in caplog.text                                  # 5 im Album, 3 in der History, der Tag
+    st.save()                                                           # scheitert an keinem
+    again = mk(tmp_path, db)
+    assert set(again.dex) == {"easyJet"} and set(again.history) == {"2026-10-09"}
+    assert again.dex["easyJet"] == st.dex["easyJet"] == good
+    assert again.today()["aircraft"] == 0
+    assert again.report()["dex"]["seen"] == 1                           # und /stats bleibt lesbar
+
+
+def test_old_stats_json_with_odd_rare_course_and_numbers_keeps_the_good_ones(tmp_path, caplog):
+    t = time.time()
+    st = mk(tmp_path)
+    since = st.since
+    raw = {"since": "lange her", "last_obs": None, "last_in_view": t - 60,
+           "rare": {"r1": {"first": t, "last": t, "label": "A380", "kind": "type"}, "r2": "Text", "r3": {"first": t}},
+           "course": {"now": "249", "prev": 69}}
+    with caplog.at_level("WARNING"):
+        st.load_legacy(raw)
+    assert "4 Einträge" in caplog.text                                  # since, r2, r3, course
+    assert st.since == since and st.last_obs == 0.0 and st.last_in_view == t - 60
+    assert set(st.rare) == {"r1"} and st.course is None and st.prev_course is None
+
+
+@pytest.mark.parametrize("raw", [[], "Text", {"dex": ["kaputt"], "since": 5}, {"dex": None, "since": 5}],
+                         ids=["list", "text", "dex-list", "dex-null"])
+def test_old_stats_json_that_is_wrong_in_structure_changes_nothing(tmp_path, raw):
+    """Kein Objekt, dex kein Objekt: ValueError, bevor etwas übernommen ist. main.absorb_legacy lässt die Datei dann
+    liegen, statt eine halbe zu übernehmen und umzubenennen."""
+    st = mk(tmp_path)
+    since = st.since
+    with pytest.raises(ValueError):
+        st.load_legacy(raw)
+    assert st.since == since and st.dex == {} and not st.dirty

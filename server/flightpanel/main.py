@@ -183,7 +183,11 @@ class App:
             # Erst gespeichert, dann umbenannt: ein Absturz dazwischen verliert nichts.
             self.save()
             for path in taken:
-                os.replace(path, path + ".imported")
+                try:
+                    os.replace(path, path + ".imported")
+                except OSError as e:                    # etwa von einem Sync-Programm gehalten: weiter starten
+                    log.warning("%s lässt sich nicht in *.imported umbenennen (%s): von Hand umbenennen, sonst "
+                                "übernimmt der nächste Start sie noch einmal", os.path.relpath(path, data), e)
 
         self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=self.metar, astro=self.iss, logos=self.logos,
                                names=self.names)

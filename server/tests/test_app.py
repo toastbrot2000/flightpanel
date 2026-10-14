@@ -213,6 +213,90 @@ def test_a_damaged_old_file_is_left_alone_and_the_start_goes_on(tmp_path, caplog
     asyncio.run(run())
 
 
+def test_hand_edited_old_files_lose_only_their_odd_entries_and_the_start_goes_on(tmp_path):
+    """Alte JSON-Dateien mit je einem Eintrag, den jemand von Hand zerstört hat, zwischen guten: Die guten werden
+    übernommen und gespeichert, der Server startet (sonst wäre es bei restart: unless-stopped eine Neustartschleife),
+    und die Dateien heißen danach *.imported."""
+    t = time.time()
+    issue = {"kind": "exception", "key": "x", "seen": 1, "days": 1, "first": t, "last": t, "callsigns": []}
+    album = {"first": t, "last": t, "code": "EZY", "name": "easyJet", "known": True, "callsign": "EZY1",
+             "fanfare": False}
+    (tmp_path / "cache.json").write_text(json.dumps({"route:A": [t + 3600, {"origin": "LGW"}],
+                                                     "route:S": [str(t + 3600), {"origin": "S"}], "route:X": "Text"}))
+    (tmp_path / "issues.json").write_text(json.dumps({"since": "gestern", "items": {"exception:x": issue, "k": 1}}))
+    (tmp_path / "stats.json").write_text(json.dumps({"since": t - 1000, "dex": {"easyJet": album, "k": {"code": "X"}},
+                                                     "history": {"2026-10-09": "viel"}}))
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            assert app.cache.get("route:A") == {"origin": "LGW"} and app.cache.get("route:S") == {"origin": "S"}
+            assert len(app.cache) == 2 and set(app.issues.items) == {"exception:x"}
+            assert set(app.stats.dex) == {"easyJet"}
+            for name in ("cache.json", "issues.json", "stats.json"):
+                assert not (tmp_path / name).exists() and (tmp_path / f"{name}.imported").exists(), name
+            app.save()                                  # und jedes weitere Speichern geht
+            again = App(cfg, env={})
+            try:
+                assert set(again.stats.dex) == {"easyJet"} and set(again.issues.items) == {"exception:x"}
+                assert again.cache.get("route:S") == {"origin": "S"}
+            finally:
+                await again.session.close()
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_a_stats_file_of_the_wrong_shape_stays_and_nothing_of_it_is_taken(tmp_path, caplog):
+    """Ist der Aufbau der Datei hin (dex kein Objekt), wird nichts übernommen und nichts umbenannt: Eine halbe
+    Übernahme umzubenennen verlöre den Rest, den man von Hand noch retten könnte."""
+    (tmp_path / "stats.json").write_text(json.dumps({"since": 5, "dex": ["kaputt"]}))
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+
+    async def run():
+        with caplog.at_level("WARNING"):
+            app = App(cfg, env={})
+        try:
+            assert (tmp_path / "stats.json").exists() and not (tmp_path / "stats.json.imported").exists()
+            assert app.stats.dex == {} and app.stats.since != 5
+            assert "stats.json nicht übernommen" in caplog.text
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_a_failing_rename_after_the_import_is_a_warning_and_the_start_goes_on(tmp_path, monkeypatch, caplog):
+    """Die Übernahme ist gespeichert; lässt sich eine alte Datei nicht umbenennen (ein Sync-Programm hält sie), ist
+    das eine Warnung und kein Grund, nicht zu starten. Die anderen Dateien werden trotzdem umbenannt."""
+    t = time.time()
+    (tmp_path / "cache.json").write_text(json.dumps({"route:A": [t + 3600, {"origin": "LGW"}]}))
+    (tmp_path / "issues.json").write_text(json.dumps({"since": t, "items": {}}))
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+    real = os.replace
+
+    def replace(src, dst):
+        if str(src).endswith("cache.json"):
+            raise PermissionError("gesperrt")
+        return real(src, dst)
+
+    async def run():
+        with monkeypatch.context() as m, caplog.at_level("WARNING"):
+            m.setattr(os, "replace", replace)
+            app = App(cfg, env={})
+        try:
+            assert app.cache.get("route:A") == {"origin": "LGW"}
+            assert (tmp_path / "cache.json").exists() and not (tmp_path / "cache.json.imported").exists()
+            assert (tmp_path / "issues.json.imported").exists()
+            assert "cache.json" in caplog.text and "gesperrt" in caplog.text
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("content", [b"\xff\xfe\x00 kein Text", b"hier stehen keine Bahndaten"],
                          ids=["binary", "no-orbit"])
 def test_an_unusable_tle_file_is_left_alone_and_the_rest_is_taken(tmp_path, caplog, content):
