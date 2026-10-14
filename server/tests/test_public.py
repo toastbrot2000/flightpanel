@@ -13,6 +13,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -20,7 +21,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from multidict import CIMultiDict
 from test_access import AUD, JWK, TEAM, enc, sign
-from test_web import SECURITY, firmware, inline_free
+from test_web import NOON, SECURITY, firmware, inline_free
 
 from conftest import make_cfg
 from flightpanel import selfcheck
@@ -217,7 +218,9 @@ def test_the_pages_of_a_panel_are_never_cached_outside_either(tmp_path):
     asyncio.run(run())
 
 
-def test_a_panel_gets_its_frame_with_etag(tmp_path):
+def test_a_panel_gets_its_frame_with_etag(tmp_path, monkeypatch):
+    monkeypatch.setattr("flightpanel.web.time", SimpleNamespace(time=lambda: NOON))   # sonst kann das Bild wechseln
+
     async def run():
         async with public(tmp_path) as (app, _gate, client):
             anna, ben = app.panels["anna"], app.panels["ben"]
