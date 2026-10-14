@@ -217,7 +217,7 @@ If the test pattern looks wrong:
 
 **Preparation, without hardware:**
 
-1. Start the server in mock mode (fictional flights): see [Quick start](../README.md#quick-start). Preview at `http://<server>:8080`.
+1. Start the server in mock mode (fictional flights): see [Quick start](../README.md#quick-start-no-hardware-no-network). Preview at `http://<server>:8080`.
 2. Fetch logos, configure your airport, set `MOCK=0`, then set location and view field ([configuration.md](configuration.md)). Watch `/display.json` for a few days: how many flights, how high, how often empty? Use that to tune `RADIUS_KM`, `MAX_ALT_M` and the view field.
 3. Install PlatformIO (VS Code extension or `pip install platformio`). Create `firmware/include/secrets.h` only if you want OTA (section 4.4).
 

@@ -33,7 +33,7 @@ Der LAN-Port hat keine Anmeldung und gehört nur ins LAN. Darum (lan_guard):
   - Ist der Zugang von außen eingerichtet (Config.public), sagt er 403 zu allem, was Cloudflare-Header trägt: Dann
     hängt der Tunnel am falschen Port.
   - Schreiben nur von den Seiten dieses Servers: Origin gleich dem Host der Anfrage (same_origin) und aus dem LAN
-    (lan_origin); POST /issues/clear auch ganz ohne (curl im README).
+    (lan_origin); POST /issues/clear auch ganz ohne (curl in docs/configuration.md).
   - Jede Antwort trägt SECURITY_HEADERS, auch Fehler und statische Dateien: Skripte und Stile kommen nur als Dateien
     vom Server selbst, nie aus der Seite.
 """
