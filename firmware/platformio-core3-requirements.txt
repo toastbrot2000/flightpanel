@@ -1,0 +1,35 @@
+# Werkzeug für die Variante mit Arduino-ESP32 3.x (env:esp32dev_core3, tools/check_firmware_core3.sh); daraus wird
+# platformio-core3.lock. Die Plattform pioarduino läuft nur mit ihrem eigenen PlatformIO-Kern (pioarduino, ein Fork)
+# und installiert ihre Python-Pakete sonst bei jedem Build ungeprüft in der neuesten Version (builder/penv_setup.py
+# der Plattform: python_deps, esptool aus tool-esptoolpy). Hier stehen sie fest, mit Prüfsummen.
+#
+# Nicht im wöchentlichen Escrow (tools/escrow.py): Das Lock ändert sich nur zusammen mit der Plattform und
+# platformio-core3.sha256, von Hand, im Image und mit dem uv aus tools/escrow.lock, Stichtag mindestens 7 Tage zurück:
+#   uv pip compile --universal --python-version 3.12 --generate-hashes --exclude-newer <Stichtag> \
+#     --custom-compile-command "siehe firmware/platformio-core3-requirements.txt" \
+#     -o firmware/platformio-core3.lock firmware/platformio-core3-requirements.txt
+pioarduino==6.2.0
+uv
+# python_deps der Plattform 55.03.312-1, Grenzen wie dort
+littlefs-python>=0.16.0
+fatfs-ng>=0.1.14
+pyyaml>=6.0.2
+rich-click>=1.8.6
+zopfli>=0.2.2
+intelhex>=2.3.0
+rich>=14.0.0
+cryptography>=45.0.3
+certifi>=2025.8.3
+ecdsa>=0.19.1
+bitstring>=4.3.1
+reedsolo>=1.5.3,<1.8
+esp-idf-size>=2.0.0
+esp-coredump>=1.14.0
+pyelftools>=0.32
+# esptool 5.4.0 (tool-esptoolpy, editierbar installiert): seine Abhängigkeiten und setuptools zum Bauen
+bitstring!=4.2.0
+pyserial>=3.3
+click<9
+rich-click<2
+esp-pylib[ide,serial,cli]>=1.0.0
+setuptools>=64
