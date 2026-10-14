@@ -65,6 +65,39 @@ def test_full_issue_list_makes_room_for_news(tmp_path, monkeypatch):
     assert keys == {"X1", "X2", "ValueError main.py:1"}       # das am längsten Ungesehene ist raus
 
 
+def test_a_full_issue_list_never_drops_the_database_warning(tmp_path, monkeypatch):
+    """Die beiseitegelegte Datenbank ist der älteste Eintrag und sonst der erste, der geht: Fiele sie raus, wäre /ok
+    wieder grün, obwohl das Album leer startete, und niemand erführe vom Weg zurück."""
+    monkeypatch.setattr(issues_mod, "MAX_KEYS", 3)
+    now = clock(monkeypatch, issues_mod)
+    db = Db(str(tmp_path / "i.db"))
+    iss = Issues(db)
+    iss.note("database", "flightpanel.db.broken-20261014-0312")
+    for i in range(2):
+        now[0] += 60
+        iss.note("route_implausible", f"X{i}")
+    now[0] += 60
+    iss.note("exception", "ValueError main.py:1")             # voll: X0 geht, die Datenbank bleibt
+    kept = {"database:flightpanel.db.broken-20261014-0312", "route_implausible:X1", "exception:ValueError main.py:1"}
+    assert set(iss.items) == kept
+    iss.save()
+    assert set(Issues(db).items) == kept                       # auch in der Tabelle
+
+
+def test_a_list_full_of_database_warnings_grows_rather_than_drop_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(issues_mod, "MAX_KEYS", 2)
+    now = clock(monkeypatch, issues_mod)
+    iss = Issues(Db(str(tmp_path / "i.db")))
+    for name in ("a", "b"):
+        iss.note("database", name)
+        now[0] += 60
+    iss.note("route_implausible", "x")                         # nichts, was weichen dürfte: lieber einer mehr
+    assert set(iss.items) == {"database:a", "database:b", "route_implausible:x"}
+    now[0] += 60
+    iss.note("route_implausible", "y")                         # jetzt weicht x, nie eine Datenbank
+    assert set(iss.items) == {"database:a", "database:b", "route_implausible:y"}
+
+
 def test_issues_survive_a_restart_and_clear_starts_over(tmp_path, monkeypatch):
     now = clock(monkeypatch, issues_mod)
     db = Db(str(tmp_path / "i.db"))
@@ -381,8 +414,8 @@ def test_dream_tidies_up_and_says_so_in_health(tmp_path):
 
 
 def test_dream_leaves_a_copy_of_the_database_with_the_album(tmp_path):
-    """Die Datenbank liegt auf dem Laptop in einem synchronisierten Ordner und sonst ohne Sicherung: Jede Nacht eine
-    stimmige Kopie flightpanel.db.bak, die die der Vornacht ersetzt. /health sagt, von wann sie ist."""
+    """data/ liegt oft in einem synchronisierten Ordner (OneDrive, Dropbox …) und hat sonst keine Sicherung: Jede
+    Nacht eine stimmige Kopie flightpanel.db.bak, die die der Vornacht ersetzt. /health sagt, von wann sie ist."""
     from flightpanel.main import App
 
     async def run():

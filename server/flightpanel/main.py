@@ -118,15 +118,17 @@ def check_data_dir(data_dir: str) -> str | None:
 
 def _not_writable(path: str) -> str:
     """Der Satz fürs Log: wer der Server ist und was zu tun ist. Der Weg der Wahl ist PUID und PGID in .env auf den
-    Besitzer von data/ (compose.yml): Ein chown auf einen anderen Benutzer machte die mitgelieferten Dateien in data/
-    für das git pull von tools/update.sh unbeschreibbar. chown bleibt für Reste von root (frühere Container) und für
-    docker run ohne compose."""
+    Besitzer von data/ (compose.yml). Ein chown auf den Benutzer des Servers ist es nicht: Ohne PUID und PGID ist das
+    1000, und ist der Benutzer des Hosts ein anderer, machte es die mitgelieferten Dateien in data/ für das git pull
+    von tools/update.sh unbeschreibbar. chown steht darum nur für Reste von root (frühere Container) und auf den
+    Benutzer des Hosts, wie im README; docker run ohne compose, wo es kein PUID gibt, bekommt --user."""
     fix = "Auf Linux in .env PUID und PGID auf den Besitzer von data/ setzen (id -u, id -g), dann docker compose up -d"
     if not hasattr(os, "getuid"):                   # Windows ohne Docker: keine Benutzer-IDs
         return f"{path} ist nicht beschreibbar. {fix}"
     who = f"{os.getuid()}:{os.getgid()}"
+    chown = 'sudo chown -R "$(id -u):$(id -g)" data'        # der Benutzer des Hosts, nicht der des Servers (who)
     return (f"{path} ist nicht beschreibbar (der Server läuft als Benutzer {who}). {fix}. Gehört in data/ noch etwas "
-            f"root (früherer Container) oder läuft der Server ohne compose: sudo chown -R {who} data")
+            f"root (früherer Container): einmal {chown}. Ohne compose gehört --user UID:GID zu docker run")
 
 
 class App:
@@ -214,8 +216,11 @@ class App:
     def _note_aside(self, aside: Aside) -> None:
         """Der Start hat eine kaputte Datenbank beiseitegelegt und leer begonnen (Db). Das Log sagt es schon; hier kommt
         es in /issues, damit /ok rot bleibt und /health die Datei nennt, bis jemand nachgesehen und /issues geleert
-        hat. Der Eintrag liegt in der neuen Datenbank und übersteht Neustarts."""
+        hat. Der Eintrag liegt in der neuen Datenbank und übersteht Neustarts. Er wird sofort gespeichert, nicht erst
+        vom nächsten save(): Käme der Server davor nicht weiter, fände der nächste Start eine gesunde leere Datenbank,
+        /ok wäre grün, und die nächtliche Kopie ersetzte den Weg zurück zum Album."""
         self.issues.note("database", aside.file, error=aside.error, fix=aside.way_back)
+        self.issues.save()      # außerhalb einer Transaktion ist es damit festgeschrieben (Db.after_commit)
 
     def _asides(self) -> list[str]:
         """Die beiseitegelegten Datenbankdateien, die /issues noch meldet."""
@@ -436,10 +441,11 @@ class App:
 
     def _copy(self) -> str:
         """Eine stimmige Kopie der Datenbank nach flightpanel.db.bak, die die der Vornacht ersetzt (Db.backup). Ohne
-        sie gäbe es keine: Auf dem Laptop liegt data/ in einem synchronisierten Ordner, und eine beiseitegelegte
-        Datenbank kostet so einen Tag statt des Albums. Scheitert sie, steht es im Log und in /issues, das Aufräumen
-        geht weiter. Solange /issues eine beiseitegelegte Datenbank meldet, ruht sie: Die Kopie wäre die der fast
-        leeren neuen Datenbank und ersetzte den Weg zurück. Gibt zurück, was geschah, für /health."""
+        sie gäbe es keine: data/ liegt oft in einem synchronisierten Ordner (OneDrive, Dropbox …) und hat sonst keine
+        Sicherung, und eine beiseitegelegte Datenbank kostet so einen Tag statt des Albums. Scheitert sie, steht es
+        im Log und in /issues, das Aufräumen geht weiter. Solange /issues eine beiseitegelegte Datenbank meldet,
+        ruht sie: Die Kopie wäre die der fast leeren neuen Datenbank und ersetzte den Weg zurück. Gibt zurück, was
+        geschah, für /health."""
         name = os.path.basename(self.db.path + COPY)
         if self._asides():
             log.warning("Nächtliche Kopie ausgesetzt: %s bleibt, wie sie ist, solange /issues die beiseitegelegte "

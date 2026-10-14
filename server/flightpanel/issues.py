@@ -24,7 +24,8 @@ Nachts (main.App.dream) vergisst die Liste von selbst: Einmaliges (nur an einem 
 gesehen) nach ONE_OFF_DAYS, alles andere, wenn es FORGET_DAYS nicht mehr aufgetreten
 ist; Fehler im Code (exception) und eine beiseitegelegte Datenbank (database) erst
 dann. Ist sie trotzdem voll, macht der am längsten nicht mehr gesehene Eintrag Platz,
-Neues geht nie verloren."""
+nur nie eine beiseitegelegte Datenbank (database): Sie ist die Warnung, dass das Album
+leer startete. Neues geht nie verloren."""
 
 import json
 import logging
@@ -41,6 +42,7 @@ MAX_CALLSIGNS = 10
 ONE_OFF_DAYS = 7        # nur an einem Tag gesehen: nach einer Woche vergessen
 FORGET_DAYS = 30        # alles andere: nach 30 Tagen ohne neues Auftreten
 KEEP_KINDS = {"exception", "database"}   # auch einmalig erst nach FORGET_DAYS
+PINNED_KINDS = {"database"}              # weichen auch bei vollem /issues nie (eher wächst die Liste über MAX_KEYS)
 DAY_S = 24 * 3600
 
 
@@ -117,10 +119,12 @@ class Issues:
         it = self.items.get(k)
         if it is None:
             if len(self.items) >= MAX_KEYS:
-                oldest = min(self.items, key=lambda i: self.items[i]["last"])
-                del self.items[oldest]
-                self._gone.add(oldest)
-                self._dirty.discard(oldest)
+                oldest = min((i for i, e in self.items.items() if e["kind"] not in PINNED_KINDS),
+                             key=lambda i: self.items[i]["last"], default=None)
+                if oldest is not None:      # sonst nur Angeheftetes: lieber ein Eintrag mehr als eine Warnung weniger
+                    del self.items[oldest]
+                    self._gone.add(oldest)
+                    self._dirty.discard(oldest)
             it = self.items[k] = {"kind": kind, "key": key, "seen": 0, "days": 1, "first": now, "callsigns": []}
             log.info("Auffällig: %s %s %s", k, callsign, example or "")
         elif _day(it["last"]) != _day(now):

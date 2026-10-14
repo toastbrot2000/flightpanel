@@ -58,7 +58,7 @@ docker compose exec flightpanel python3 -m flightpanel.panels set home HOME_LAT=
 ```
 
 ```bash
-docker compose exec flightpanel python3 -m flightpanel.panels set home VIEW_FROM=110 VIEW_TO=190 VIEW_MIN_ELEV=0.5 VIEW_MAX_KM=60 VIEW_ONLY=1
+docker compose exec flightpanel python3 -m flightpanel.panels set home VIEW_FROM=90 VIEW_TO=180 VIEW_MIN_ELEV=1 VIEW_MAX_KM=50 VIEW_ONLY=1
 ```
 
 `HOME_LAT`, `HOME_LON` sind Dezimalgrad, `HOME_ALT_M` die Augenhöhe am Fenster über dem Meer. Angezeigt wird, was höchstens `RADIUS_KM` weit weg und `MAX_ALT_M` hoch ist. Das Sichtfeld: Richtung im Uhrzeigersinn von `VIEW_FROM` bis `VIEW_TO` (0 = Nord, 90 = Ost), Mindesthöhe über dem Horizont `VIEW_MIN_ELEV` (Häuser, Bäume), Obergrenze `VIEW_MAX_ELEV` (Balkon darüber), Sichtweite `VIEW_MAX_KM`; `VIEW_ONLY=1` zeigt nur, was im Sichtfeld ist. Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen Richtung (`az`) und Höhenwinkel (`elev`) ablesen. `… panels keys` zeigt alle Panel-Einstellungen mit Default und Erklärung, `… panels show home` die gesetzten; sie gelten nach `docker compose restart flightpanel`.
@@ -141,6 +141,7 @@ Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dan
 git clone https://github.com/toastbrot2000/flightpanel && cd flightpanel
 cp /pfad/zur/alten/.env .env                            # und data/logos/own/ mitnehmen; Linux: PUID, PGID setzen
 cp /pfad/zur/kopie.db data/flightpanel.db               # die Datenbank vom alten Rechner (s. u.)
+chmod 640 data/flightpanel.db                           # Kopien folgen der umask des Hosts, der Server legt Dateien mit 0640 an
 docker compose up -d --build
 docker compose exec flightpanel python3 -m flightpanel.fetch_logos
 ```

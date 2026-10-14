@@ -176,6 +176,28 @@ def test_a_database_put_aside_at_the_start_shows_in_issues_ok_and_health(tmp_pat
     asyncio.run(run())
 
 
+def test_a_database_put_aside_is_in_the_new_database_before_any_save(tmp_path):
+    """Der Hinweis wird sofort gespeichert, nicht erst vom nächsten save(): Käme der Server davor nicht weiter
+    (Neustartschleife, docker compose down), fände der nächste Start eine gesunde leere Datenbank, /ok wäre grün, und
+    die nächtliche Kopie ersetzte den Weg zurück zum Album."""
+    (tmp_path / "flightpanel.db").write_text("das ist keine Datenbank " * 100)
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+
+    async def run():
+        app = App(cfg, env={})                                  # kein save(): nur, was der Start festgeschrieben hat
+        try:
+            (aside,) = tmp_path.glob("flightpanel.db.broken-*")
+            reader = Db(db_path(str(tmp_path)), put_aside=False)  # eine zweite Verbindung sieht nur Festgeschriebenes
+            try:
+                assert [r["key"] for r in reader.query("SELECT key FROM issues")] == [f"database:{aside.name}"]
+            finally:
+                reader.close()
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
 def test_save_writes_everything_and_the_stores_reload_it(tmp_path):
     cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
 
@@ -494,7 +516,12 @@ def test_what_the_container_cannot_write_is_named_with_the_fix(tmp_path, monkeyp
     assert problem is not None and problem.startswith(f"{target} ist nicht beschreibbar")
     assert "Benutzer 1234:4321" in problem
     assert "PUID" in problem and "PGID" in problem and "id -u" in problem
-    assert "sudo chown -R 1234:4321 data" in problem                # für root-Reste und docker run ohne compose
+    # chown nur für Reste von root und auf den Benutzer des Hosts, nie auf den des Servers (ohne PUID und PGID 1000):
+    # Sonst wäre data/ dem git pull von tools/update.sh verschlossen. PUID und PGID als Weg der Wahl stehen davor.
+    assert 'sudo chown -R "$(id -u):$(id -g)" data' in problem
+    assert "chown -R 1234:4321" not in problem
+    assert problem.index("PUID") < problem.index("chown")
+    assert "docker run" in problem and "--user" in problem          # ohne compose gibt es kein PUID
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid"), reason="Rechtebits gibt es nur unter Linux und macOS")
