@@ -223,3 +223,25 @@ def test_a_broken_database_is_reported_and_left_alone(tmp_path, monkeypatch, cap
     err = capsys.readouterr().err
     assert err.startswith("Fehler: ") and "flightpanel.db" in err and "Traceback" not in err
     assert (tmp_path / "flightpanel.db").read_text() == junk and not list(tmp_path.glob("*.broken*"))
+
+
+def test_added_panels_stay_near_the_airport_with_a_bounded_radius(run):
+    """Weitere Panels stehen höchstens PANEL_MAX_KM vom Flughafen und rufen höchstens PANEL_MAX_RADIUS_KM weit ab;
+    das Panel am LAN-Port nicht."""
+    assert run("add", "anna")[0] == 0
+    code, _, err = run("set", "anna", "HOME_LAT=48.35", "HOME_LON=11.79")         # München, der Flughafen ist BER
+    assert code == 2 and "PANEL_MAX_KM" in err and "BER" in err
+    code, _, err = run("set", "anna", "RADIUS_KM=120")
+    assert code == 2 and "RADIUS_KM='120': für weitere Panels höchstens 80 km (PANEL_MAX_RADIUS_KM)" in err
+    assert run("show", "anna")[1].startswith("anna: nichts gesetzt")              # nichts davon gespeichert
+    assert run("set", "anna", "HOME_LAT=52.40", "HOME_LON=14.05", "RADIUS_KM=30")[0] == 0
+    assert run("set", "home", "HOME_LAT=48.35", "HOME_LON=11.79", "RADIUS_KM=120")[0] == 0   # LAN-Port: frei
+
+
+def test_list_names_a_panel_that_does_not_fetch(run, tmp_path):
+    """Steht ein weiteres Panel trotzdem zu weit weg (PANEL_MAX_KM später verkleinert, Handänderung), sagt list es."""
+    run("add", "anna")
+    Db(str(tmp_path / "flightpanel.db")).panel_set_settings("anna", {"HOME_LAT": "48.35", "HOME_LON": "11.79"})
+    _, out, _ = run("list")
+    assert re.search(r"^anna .*ruft nicht ab: HOME_LAT/HOME_LON liegen \d+ km von BER", out, re.M)
+    assert re.search(r"^home .*LAN-Port", out, re.M)

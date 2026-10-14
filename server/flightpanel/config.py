@@ -263,6 +263,10 @@ class Config:
     data_dir: str = _env("DATA_DIR", "./data")
     http_port: int = _env("HTTP_PORT", 8080, _int(1, 65535))
     lan_panel: str = _env("LAN_PANEL", "home", panel_id)    # das Panel am LAN-Port (:8080)
+    # Weitere Panels (panels add, nicht das am LAN-Port): Ein Abruf deckt alle ab. Damit er klein bleibt, steht ihr
+    # Fenster höchstens PANEL_MAX_KM vom Flughafen, und sie rufen höchstens PANEL_MAX_RADIUS_KM weit ab.
+    panel_max_km: float = _env("PANEL_MAX_KM", 60.0, _km)
+    panel_max_radius_km: float = _env("PANEL_MAX_RADIUS_KM", 80.0, _km)
     stale_after: int = _env("STALE_AFTER", 120, _int(0))    # Sekunden ohne Daten bis gedimmt
     empty_after: int = _env("EMPTY_AFTER", 600, _int(0))    # ... bis leer
     log_level: str = _env("LOG_LEVEL", "INFO")
@@ -281,7 +285,7 @@ class Config:
 
     @classmethod
     def for_panel(cls, server: "Config", settings: Mapping[str, str],
-                  problems: list[tuple[str, str]] | None = None) -> "Config":
+                  problems: list[tuple[str, str]] | None = None, remote: bool = False) -> "Config":
         """server plus die Einstellungen eines Panels: rohe Strings wie in .env, aus der
         Datenbank oder von panels.py, geprüft mit denselben Parsern und Fehlertexten.
         Nicht Gesetztes bleibt wie in server (im Betrieb: die Defaults). Karten gelten,
@@ -290,7 +294,12 @@ class Config:
         Ohne problems bricht ein unbekannter Name oder ein ungültiger Wert ab (panels.py:
         nichts Falsches speichern). Mit einer Liste problems bleibt beides weg und steht
         dort als (NAME, Fehler), der Rest gilt: So startet der Server auch, wenn eine spätere
-        Fassung eine Einstellung nicht mehr kennt oder strenger prüft (App)."""
+        Fassung eine Einstellung nicht mehr kennt oder strenger prüft (App).
+
+        remote: ein weiteres Panel (nicht das am LAN-Port). Dann gelten RADIUS_KM und SCAN_RADIUS_KM höchstens bis
+        PANEL_MAX_RADIUS_KM: Ein größerer Wert ist ein Fehler wie jeder ungültige (ohne problems bricht er ab, mit
+        problems bleibt er weg), und auch was ohne Angabe gälte, bleibt darunter. Ob das Fenster nah genug am
+        Flughafen liegt, sagt too_far()."""
         panel = panel_fields()
         unknown = sorted(k for k in settings if not is_panel_key(k))
         if unknown and problems is None:
@@ -299,8 +308,13 @@ class Config:
         if problems is not None:
             problems += [(k, f"{k}: keine Panel-Einstellung") for k in unknown]
         values = _parse(panel, settings, problems)
+        if remote:
+            _cap_radii(server, settings, values, problems)
         if "radius_km" in values and "scan_radius_km" not in values:
             values["scan_radius_km"] = values["radius_km"]
+        if remote:
+            for key in ("radius_km", "scan_radius_km"):
+                values[key] = min(values.get(key, getattr(server, key)), server.panel_max_radius_km)
         if values.get("calm"):
             kept = [k for k in CALM_PRESET if k in values]
             if kept:
@@ -359,6 +373,31 @@ CALM_PRESET = {"page_seconds": 10, "flight_seconds": 20, "idle_seconds": 30, "bl
 
 def _env_name(field_name: str) -> str:
     return next(f.metadata["env"] for f in fields(Config) if f.name == field_name)
+
+
+def _cap_radii(server: Config, settings: Mapping[str, str], values: dict,
+               problems: list[tuple[str, str]] | None) -> None:
+    """Weitere Panels: ausdrücklich gesetzte Radien über PANEL_MAX_RADIUS_KM sind ungültig, wie in _parse."""
+    cap = server.panel_max_radius_km
+    for key in ("radius_km", "scan_radius_km"):
+        if values.get(key, 0) > cap:
+            name = _env_name(key)
+            msg = f"{name}={_text(settings[name])!r}: für weitere Panels höchstens {cap:g} km (PANEL_MAX_RADIUS_KM)"
+            if problems is None:
+                raise ValueError(msg)
+            problems.append((name, msg))
+            del values[key]
+
+
+def too_far(server: Config, panel: Config) -> str | None:
+    """Liegt das Fenster eines weiteren Panels (nicht das am LAN-Port) zu weit vom Heimatflughafen? Ein Abruf deckt
+    alle Panels ab, und ein Fenster weit weg machte ihn für alle größer. None, wenn es passt; sonst der Satz für
+    panels.py, Log und /issues."""
+    d = haversine_km(server.airport_lat, server.airport_lon, panel.home_lat, panel.home_lon)
+    if d <= server.panel_max_km:
+        return None
+    return (f"HOME_LAT/HOME_LON liegen {d:.0f} km von {server.local_airport_iata}, für weitere Panels höchstens "
+            f"{server.panel_max_km:g} km (PANEL_MAX_KM)")
 
 
 def panel_fields() -> list[Field]:

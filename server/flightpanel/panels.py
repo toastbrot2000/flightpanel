@@ -27,7 +27,7 @@ import sys
 import time
 
 from .cards import CARDS
-from .config import CARD_PREFIX, Config, default_text, panel_fields, panel_id
+from .config import CARD_PREFIX, Config, default_text, panel_fields, panel_id, too_far
 from .db import DatabaseError, Db, db_path
 
 CARD_IDS = sorted(c.id for c in CARDS)
@@ -50,8 +50,16 @@ def _need(db: Db, pid: str) -> dict:
 def cmd_list(db: Db, cfg: Config, args) -> None:
     for p in db.panel_list():
         when = time.strftime("%Y-%m-%d", time.localtime(p["created"]))
-        lan = " (LAN-Port)" if p["id"] == cfg.lan_panel else ""
-        print(f"{p['id']:<12} {p['name']:<20} {len(p['settings']):>2} Einstellungen, seit {when}{lan}")
+        print(f"{p['id']:<12} {p['name']:<20} {len(p['settings']):>2} Einstellungen, seit {when}{_note(cfg, p)}")
+
+
+def _note(cfg: Config, p: dict) -> str:
+    """Für list: das Panel am LAN-Port, oder ein weiteres, das nicht abruft, weil sein Fenster zu weit vom Flughafen
+    liegt (geprüft wie im Server; Einstellungen, die er übergeht, zählen dabei nicht)."""
+    if p["id"] == cfg.lan_panel:
+        return " (LAN-Port)"
+    why = too_far(cfg, Config.for_panel(cfg, p["settings"], [], remote=True))
+    return f" (ruft nicht ab: {why})" if why else ""
 
 
 def cmd_keys(db: Db, cfg: Config, args) -> None:
@@ -95,8 +103,20 @@ def _check_reset(cfg: Config, stored: dict[str, str], names: list[str]) -> None:
     Config.for_panel(cfg, dict.fromkeys(unstored, ""))
 
 
+def _check(cfg: Config, pid: str, settings: dict[str, str]) -> None:
+    """Prüft die Einstellungen eines Panels mit denselben Parsern wie der Server. Für weitere Panels (nicht das am
+    LAN-Port) gelten dazu die Grenzen aus .env: Abrufradius höchstens PANEL_MAX_RADIUS_KM, das Fenster höchstens
+    PANEL_MAX_KM vom Flughafen. ValueError nennt, was nicht passt."""
+    remote = pid != cfg.lan_panel
+    panel = Config.for_panel(cfg, settings, remote=remote)
+    why = too_far(cfg, panel) if remote else None
+    if why:
+        raise ValueError(f"{why}. HOME_LAT und HOME_LON zusammen aufs Fenster setzen, oder PANEL_MAX_KM in .env "
+                         "erhöhen")
+
+
 def _save(db: Db, cfg: Config, p: dict, new: dict[str, str]) -> None:
-    Config.for_panel(cfg, new)                  # prüft; ValueError nennt die Einstellung
+    _check(cfg, p["id"], new)                   # prüft; ValueError nennt die Einstellung
     db.panel_set_settings(p["id"], new)
     print(f"{p['id']}: {len(new)} Einstellungen gesetzt. Gilt nach: docker compose restart flightpanel")
 

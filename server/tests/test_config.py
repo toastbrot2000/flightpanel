@@ -1,11 +1,12 @@
 """Einstellungen: Server-Felder aus der Umgebung, Panel-Felder wie aus der Datenbank (for_panel):
 Typen, Defaults, Karten-Schalter, Heimatflughafen."""
 
+from dataclasses import replace
 from datetime import datetime
 
 import pytest
 
-from conftest import DATA
+from conftest import DATA, make_cfg
 from flightpanel.config import (
     Config,
     default_text,
@@ -14,6 +15,7 @@ from flightpanel.config import (
     panel_fields,
     panel_id,
     panel_settings_from_env,
+    too_far,
 )
 
 
@@ -235,3 +237,38 @@ def test_the_bounds_are_generous():
     assert cfg(HOME_ALT_M="10000", MAX_ALT_M="-500").home_alt_m == 10000
     far = Config.from_env(env(LOCAL_AIRPORT_IATA="QQQ", AIRPORT_LAT="-90", AIRPORT_LON="-180", RUNWAY_COURSE="360"))
     assert (far.airport_lat, far.airport_lon, far.runway_course) == (-90, -180, 360)
+
+
+def test_added_panels_have_a_bounded_radius():
+    """Ein Abruf deckt alle Panels ab: Weitere Panels (für Freunde) rufen höchstens PANEL_MAX_RADIUS_KM weit ab.
+    Das Panel am LAN-Port nicht (remote=False): Wer für sich allein betreibt, bestimmt selbst."""
+    server = make_cfg()
+    assert Config.for_panel(server, {"RADIUS_KM": "80"}, remote=True).radius_km == 80
+    with pytest.raises(ValueError, match=r"RADIUS_KM='81': für weitere Panels höchstens 80 km \(PANEL_MAX_RADIUS_KM\)"):
+        Config.for_panel(server, {"RADIUS_KM": "81"}, remote=True)
+    with pytest.raises(ValueError, match="SCAN_RADIUS_KM='200'"):
+        Config.for_panel(server, {"SCAN_RADIUS_KM": "200"}, remote=True)
+    assert Config.for_panel(server, {"RADIUS_KM": "200"}).radius_km == 200
+    problems: list[tuple[str, str]] = []
+    tolerant = Config.for_panel(server, {"RADIUS_KM": "200", "VIEW_FROM": "90"}, problems, remote=True)
+    assert tolerant.radius_km == server.radius_km and tolerant.view_from == 90
+    assert [k for k, _ in problems] == ["RADIUS_KM"]
+    small = replace(server, panel_max_radius_km=30)
+    assert Config.for_panel(small, {}, remote=True).fetch_radius_km == 30          # auch der Default bleibt drunter
+
+
+def test_added_panels_stay_near_the_airport():
+    server = make_cfg()                                                              # BER
+    near = Config.for_panel(server, {"HOME_LAT": "52.40", "HOME_LON": "14.05"}, remote=True)
+    assert too_far(server, near) is None
+    munich = Config.for_panel(server, {"HOME_LAT": "48.35", "HOME_LON": "11.79"}, remote=True)
+    why = too_far(server, munich)
+    assert "PANEL_MAX_KM" in why and "BER" in why and "km" in why
+    assert too_far(replace(server, panel_max_km=500), munich) is None
+
+
+def test_the_limits_are_server_settings():
+    cfg = Config.from_env({"PANEL_MAX_KM": "30", "PANEL_MAX_RADIUS_KM": "50", "DATA_DIR": DATA})
+    assert (cfg.panel_max_km, cfg.panel_max_radius_km) == (30, 50)
+    with pytest.raises(ValueError, match="keine Panel-Einstellung: PANEL_MAX_KM"):
+        Config.for_panel(cfg, {"PANEL_MAX_KM": "999"})
