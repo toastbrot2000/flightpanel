@@ -12,6 +12,7 @@ from yarl import URL
 from conftest import make_db
 from flightpanel.adsblol import AdsbLol
 from flightpanel.issues import Issues, error_text, without_urls
+from flightpanel.opensky import OpenSky
 
 AC = {"hex": "3c6444", "flight": "DLH4T   ", "lat": 52.4, "lon": 13.6, "alt_baro": 3000, "gs": 200, "track": 250}
 
@@ -36,7 +37,7 @@ class Session:
     def __init__(self, *answers):
         self.answers, self.timeouts = list(answers), []
 
-    def get(self, url, timeout=None):
+    def get(self, url, params=None, headers=None, timeout=None):       # adsb.lol: nur url, OpenSky auch Box und Header
         self.timeouts.append(timeout.total)
         answer = self.answers.pop(0)
         if isinstance(answer, Exception):
@@ -95,3 +96,45 @@ def test_issues_never_store_a_request_url(tmp_path):
     issues.note("source_error", "adsblol", error="https://api.adsb.lol/v2/point/52.5200/13.4000/22")
     text = json.dumps(issues.report())
     assert "52.1234" not in text and "52.5200" not in text and "opensky-network.org" in text
+
+
+def test_issues_from_before_the_change_show_no_address_either(tmp_path):
+    """Einträge von früher tragen die ganze Adresse, in der Datenbank wie in einer alten issues.json. note() kürzt nur,
+    was neu dazukommt; report() und damit /issues kürzt auch das Alte."""
+    window = "https://opensky-network.org/api/states/all?lamin=52.1234&lomin=13.0001&lamax=52.9&lomax=13.9"
+    point = "https://api.adsb.lol/v2/point/52.5200/13.4000/22"
+    rest = {"seen": 3, "days": 2, "first": 1.7e9, "last": 1.7e9, "callsigns": []}
+    db = make_db(tmp_path)
+    db.execute("INSERT INTO issues (key, data) VALUES (?, ?)", ("source_error:opensky", json.dumps(
+        {"kind": "source_error", "key": "opensky", **rest, "example": {"error": f"400, url='{window}'"}})))
+    issues = Issues(db)                                       # lädt die Zeile aus der Datenbank, wie sie steht
+    issues.load_legacy({"items": {"source_error:adsblol": {
+        "kind": "source_error", "key": "adsblol", **rest, "example": {"error": f"Timeout bei {point}"}}}})
+    text = json.dumps(issues.report())
+    assert "52.1234" not in text and "13.0001" not in text    # die Zeile aus der Datenbank
+    assert "52.5200" not in text and "13.4000" not in text    # der Eintrag aus der alten issues.json
+    assert "opensky-network.org" in text and "api.adsb.lol" in text
+
+
+def test_a_connection_timeout_names_the_host_but_not_the_point_of_adsblol(caplog):
+    """aiohttp schreibt die ganze Adresse in den ConnectionTimeoutError, bei adsb.lol samt Mittelpunkt und Umkreis.
+    last_error geht in /health, beim ersten Versuch in die Zeile "zweiter Versuch" im Log."""
+    url = "https://api.adsb.lol/v2/point/52.4000/13.6000/44"
+    session = Session(*(aiohttp.ConnectionTimeoutError(f"Connection timeout to host {url}") for _ in range(2)))
+    lol = AdsbLol(session)
+    with caplog.at_level("INFO"), pytest.raises(aiohttp.ConnectionTimeoutError):
+        asyncio.run(lol.fetch(52.4, 13.6, 80))
+    assert len(session.timeouts) == 2 and "zweiter Versuch" in caplog.text
+    assert "52.4000" not in lol.last_error and "13.6000" not in lol.last_error and "api.adsb.lol" in lol.last_error
+    assert "52.4000" not in caplog.text and "13.6000" not in caplog.text
+
+
+def test_a_connection_timeout_names_the_host_but_not_the_window_of_opensky():
+    """Bei OpenSky stehen die Grenzen der Box in der Adresse, die aiohttp in den ConnectionTimeoutError schreibt.
+    last_error geht in /health."""
+    url = "https://opensky-network.org/api/states/all?lamin=52.1234&lomin=13.0001&lamax=52.9000&lomax=13.9000"
+    sky = OpenSky(Session(aiohttp.ConnectionTimeoutError(f"Connection timeout to host {url}")), "", "")
+    with pytest.raises(aiohttp.ConnectionTimeoutError):
+        asyncio.run(sky.fetch((52.1234, 13.0001, 52.9, 13.9)))
+    assert "52.1234" not in sky.last_error and "13.0001" not in sky.last_error
+    assert "opensky-network.org" in sky.last_error

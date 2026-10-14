@@ -63,6 +63,15 @@ def error_text(e: BaseException) -> str:
     return without_urls(str(e)) or type(e).__name__
 
 
+def _example_without_urls(example):
+    """Die Textwerte eines Beispiels ohne Adressen. note() kürzt sie beim Anlegen, report() noch einmal, damit auch
+    gezeigt wird, was schon mit Adresse gespeichert war (Datenbank, alte issues.json). Was kein Objekt ist (von Hand
+    verändert), bleibt, wie es ist."""
+    if not isinstance(example, dict):
+        return example
+    return {k: without_urls(v) if isinstance(v, str) else v for k, v in example.items()}
+
+
 def _ts(t: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
 
@@ -131,7 +140,7 @@ class Issues:
         self._since_dirty = True
 
     def note(self, kind: str, key: str, callsign: str = "", **example) -> None:
-        example = {k: without_urls(v) if isinstance(v, str) else v for k, v in example.items()}
+        example = _example_without_urls(example)
         k = f"{kind}:{key}"
         now = time.time()
         it = self.items.get(k)
@@ -210,8 +219,8 @@ class Issues:
         for it in sorted(self.items.values(), key=lambda i: -i["seen"]):
             kinds.setdefault(it["kind"], []).append({
                 "key": it["key"], "seen": it["seen"], "days": it.get("days", 1),
-                "first": _ts(it["first"]), "last": _ts(it["last"]),
-                "callsigns": it["callsigns"], **({"example": it["example"]} if "example" in it else {}),
+                "first": _ts(it["first"]), "last": _ts(it["last"]), "callsigns": it["callsigns"],
+                **({"example": _example_without_urls(it["example"])} if "example" in it else {}),
             })
         return {"since": _ts(self.since), "counts": {k: len(v) for k, v in kinds.items()}, **extra,
                 "issues": kinds}
