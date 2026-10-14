@@ -67,7 +67,9 @@ docker compose exec flightpanel python3 -m flightpanel.panels set home VIEW_FROM
 
 Dann einmal die Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`. Unsinnige Werte brechen den Start ab (`.env`) oder werden vom Befehl abgelehnt (`panels set`), jeweils mit dem Namen der Einstellung; was schon in der Datenbank steht und nach einem Update nicht mehr gilt, übergeht der Server mit dem Default und meldet es in Log und `/issues`. Verdächtiges, etwa Koordinaten, die nicht zum Flughafen passen, steht als Warnung im Log. Die Werte unter `/health` zeigen, was wirklich gilt.
 
-**Weitere Panels** (`panels add anna`, gedacht für Freunde; von außen abrufbar werden sie erst mit dem öffentlichen Zugang, der noch aussteht) teilen sich den Abruf des Servers und müssen deshalb nah am Flughafen liegen: ihr Fenster höchstens `PANEL_MAX_KM` (Default 60 km) davon entfernt, `RADIUS_KM` und `SCAN_RADIUS_KM` höchstens `PANEL_MAX_RADIUS_KM` (Default 80 km). Beide Grenzen sind Server-Einstellungen in der `.env`, `panels set` lehnt Werte darüber ab, und das Panel am LAN-Port (`LAN_PANEL`) ist davon frei.
+**Weitere Panels** (`panels add anna`, gedacht für Freunde) teilen sich den Abruf des Servers und müssen deshalb nah am Flughafen liegen: ihr Fenster höchstens `PANEL_MAX_KM` (Default 60 km) davon entfernt, `RADIUS_KM` und `SCAN_RADIUS_KM` höchstens `PANEL_MAX_RADIUS_KM` (Default 80 km). Beide Grenzen sind Server-Einstellungen in der `.env`, `panels set` lehnt Werte darüber ab, und das Panel am LAN-Port (`LAN_PANEL`) ist davon frei.
+
+**Panels für Freunde (optional).** Panels bei Freunden holen ihr Bild über Cloudflare Access und einen Tunnel, jedes mit eigenem Zugangs-Token, im eigenen WLAN und ohne VPN; die Freunde stellen Standort und Sichtfeld selbst auf einer Handy-Seite ein. Das ist ein Zusatz für den, der den Server betreibt: Solange die Schalter in der `.env` fehlen (`PUBLIC_PORT` u. a.), läuft nichts davon, und wer das Panel nur für sich betreibt, braucht es nicht. Einrichtung Schritt für Schritt: [docs/freunde.md](docs/freunde.md).
 
 ## Was angezeigt wird
 
@@ -151,6 +153,8 @@ docker compose exec flightpanel python3 -m flightpanel.fetch_logos
 Die Datenbank zieht mit um: Standort, Sichtfeld, Album und Statistik stehen in `data/flightpanel.db`, nicht in der `.env`. Auf dem alten Rechner eine Kopie ziehen, `docker compose exec flightpanel python3 -m flightpanel.panels backup /data/umzug.db` (die Kopie liegt danach als `data/umzug.db` im Projektordner; in Git Bash unter Windows `MSYS_NO_PATHCONV=1` davor, Näheres in der Bauanleitung), oder bei gestopptem Server (`docker compose stop`) `data/flightpanel.db` kopieren. Auf dem neuen Rechner gehört sie vor dem ersten Start nach `data/flightpanel.db`. Eigene Logos (`data/logos/own/`) nimmt man wie bisher mit, die abgerufenen holt der Server neu.
 
 Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Cache, Statistik, Album und Auffälligkeiten liegen in `data/flightpanel.db`, Logos in `data/logos/` und bleiben über Updates. In den `QUIET_HOURS` ist das Panel schwarz und der Server ruft nichts ab. Die Checkliste für den Umzug steht in der [Bauanleitung](docs/bauanleitung.md#vor-dem-umzug-auf-den-server).
+
+**Port 8080 gehört ins Heimnetz.** Er verlangt keine Anmeldung, und `/display.json` verrät jedem, der ihn erreicht, grob, wo das Fenster liegt (Richtung und Entfernung der Flugzeuge). Nicht im Router freigeben und nicht ohne eigene Anmeldung an einen Reverse-Proxy oder Tunnel hängen. Freunde von außen kommen über einen eigenen Zugang mit Anmeldung ([docs/freunde.md](docs/freunde.md)).
 
 **Datenbank und Sicherung:** `data/flightpanel.db` wird laufend geschrieben (daneben `-wal` und `-shm`) und gehört deshalb nicht in einen synchronisierten Ordner (OneDrive, Dropbox …): Liegt das Projekt in einem, `data/` vom Abgleich ausnehmen. Das Sicherheitsnetz ist die nächtliche Kopie `data/flightpanel.db.bak` (siehe "Dauerbetrieb"). Zurück zu ihr: `docker compose stop`, `data/flightpanel.db.bak` als `data/flightpanel.db` kopieren, `flightpanel.db-wal` und `flightpanel.db-shm` daneben löschen, `docker compose start`. Das ist auch der Weg, wenn der Server eine kaputte Datenbank beiseitegelegt hat (`data/flightpanel.db.broken-<Datum>`, `/ok` ist rot, siehe `/issues`, Art `database`): Er startet dann leer, und das Log nennt diese Schritte. Weitere Kopien zieht `panels backup` (Bauanleitung, Abschnitt "Betrieb"), eine vorhandene Datei ersetzt der Befehl nur mit `--force`.
 
@@ -244,7 +248,7 @@ tools/           make_logo.py, make_airports.py, screenshots.py, check_firmware.
                  escrow.py/.sh (Abhängigkeiten mit Wartezeit), update.sh (Server aktualisieren)
 data/            airlines.json, airports.json, rare.json;
                  im Betrieb logos/ und flightpanel.db (SQLite: Panels, Statistik, Album, Cache, Auffälligkeiten)
-docs/            bauanleitung.md (Hardware), screens.md (alle Bildschirme), images/
+docs/            bauanleitung.md (Hardware), freunde.md (Panels für Freunde), screens.md (alle Bildschirme), images/
 ```
 
 ### Eine Leerlauf-Karte hinzufügen
