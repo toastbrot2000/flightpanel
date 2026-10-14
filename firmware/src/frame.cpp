@@ -14,13 +14,15 @@ static char etag[48] = "";   // ETag des angezeigten Bildes, wie der Server es s
 static bool gotAnswer = false;   // letztes fetch() bekam eine HTTP-Antwort (answered)
 
 // Nimmt den Rumpf auf, den HTTPClient::writeToStream liefert, ob mit Content-Length oder in Chunks. Mehr als
-// passt nimmt sie nicht: write() gibt dann 0 zurück, writeToStream bricht mit Fehler ab. Jedes Paket füttert den
-// Watchdog; wer nach FRAME_DEADLINE_MS noch schickt, ist zu langsam (ein Server, der tröpfelt).
+// passt nimmt sie nicht: write() gibt dann 0 zurück, writeToStream bricht mit Fehler ab. Nur ein Paket mit Daten
+// füttert den Watchdog: Arduino 3.x ruft write() auch leer auf, solange bei offener Verbindung nichts kommt, und
+// füttern dürfte das nicht, sonst hinge loop() dort für immer. Wer nach FRAME_DEADLINE_MS noch schickt, ist zu
+// langsam (ein Server, der tröpfelt).
 class FrameSink : public Stream {
  public:
   FrameSink(uint8_t* buf, size_t cap) : buf_(buf), cap_(cap), t0_(millis()) {}
   size_t write(const uint8_t* data, size_t n) override {
-    watchdog::feed();
+    if (n) watchdog::feed();
     if (n > cap_ - len_ || millis() - t0_ > FRAME_DEADLINE_MS) return 0;
     memcpy(buf_ + len_, data, n);
     len_ += n;

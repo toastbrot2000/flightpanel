@@ -36,11 +36,11 @@ static bool offlineMarked = false;
 // Einschalten selbst startet der ESP32 in den Flash-Modus (GPIO0 ist ein Strapping-Pin); darum zählt ein Drücken,
 // das bis windowEnd beginnt, also während des Testbilds. Gehalten werden muss es BOOT_HOLD_MS.
 static bool bootHeld(uint32_t windowEnd) {
-  pinMode(BOOT_PIN, INPUT_PULLUP);
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
   while ((int32_t)(millis() - windowEnd) < 0) {
-    if (digitalRead(BOOT_PIN) == LOW) {
+    if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
       const uint32_t t0 = millis();
-      while (digitalRead(BOOT_PIN) == LOW) {
+      while (digitalRead(BOOT_BUTTON_PIN) == LOW) {
         if (millis() - t0 >= BOOT_HOLD_MS) return true;
         delay(10);
       }

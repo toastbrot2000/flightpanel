@@ -208,11 +208,12 @@ void confirm() {
 // ---- Abruf ------------------------------------------------------------------------------------------------------
 // Nimmt den Rumpf von firmware.txt auf (HTTPClient::writeToStream, mit Content-Length oder in Chunks). Ein Byte
 // mehr als ein Manifest haben darf, nimmt sie noch, dann nichts mehr: zu lang, das sagt danach manifest::parse.
+// Den Watchdog füttert nur ein Paket mit Daten, nie ein leerer Aufruf (siehe FrameSink in frame.cpp).
 class TextSink : public Stream {
  public:
   TextSink(char* buf, size_t cap) : buf_(buf), cap_(cap) {}
   size_t write(const uint8_t* data, size_t n) override {
-    watchdog::feed();
+    if (n) watchdog::feed();
     const size_t take = n < cap_ - len_ ? n : cap_ - len_;
     memcpy(buf_ + len_, data, take);
     len_ += take;
@@ -231,13 +232,14 @@ class TextSink : public Stream {
 };
 
 // Schreibt das Image in den freien App-Slot (Update) und rechnet dabei SHA-256. Mehr Bytes als im Manifest, ein
-// Schreibfehler oder UPDATE_DEADLINE_MS: write() gibt 0 zurück, writeToStream bricht ab. Jedes Paket füttert den
-// Watchdog; bleibt der Server stumm, startet der ESP32 nach WDT_TIMEOUT_S mit dem alten Image neu.
+// Schreibfehler oder UPDATE_DEADLINE_MS: write() gibt 0 zurück, writeToStream bricht ab. Jedes Paket mit Daten
+// füttert den Watchdog, ein leerer Aufruf nicht (siehe FrameSink in frame.cpp); bleibt der Server stumm, startet der
+// ESP32 nach WDT_TIMEOUT_S mit dem alten Image neu.
 class ImageSink : public Stream {
  public:
   ImageSink(uint32_t size, mbedtls_md_context_t* md) : size_(size), md_(md), t0_(millis()) {}
   size_t write(const uint8_t* data, size_t n) override {
-    watchdog::feed();
+    if (n) watchdog::feed();
     if (failed_ || n > size_ - got_ || millis() - t0_ > UPDATE_DEADLINE_MS) {
       failed_ = true;
       return 0;

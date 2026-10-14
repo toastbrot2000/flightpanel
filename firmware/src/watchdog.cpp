@@ -3,10 +3,11 @@
 // laufendem Watchdog Timeout und Panic) und der loop()-Task kommt dazu. RESTART_AFTER_MS fängt nur einen Server
 // ohne Bilder, keinen Hänger in loop(). 60 s liegen über jeder einzelnen Wartezeit: DNS bis 15 s, Verbindung 5 s,
 // TLS-Handschlag 15 s, Antwort 3 s je Zeile; in setup() WLAN-Aufbau 10 s, Testbild samt BOOT-Fenster 6 s, Suche
-// nach WLANs 4 s. Länger dauern können ein Bild-Download (jedes Paket füttert, FRAME_DEADLINE_MS begrenzt), das
-// Einrichtungs-WLAN (die Schleife füttert) und ein OTA-Upload (jeder Block füttert). Hängt eine Antwort ohne
-// Daten, aber bei offener Verbindung, wartet HTTPClient::writeToStream ohne eigene Frist: Das fängt erst der
-// Watchdog. Arduino 3.x (IDF 5) will die Einstellungen als Struktur: Dafür steht am Ende eine eigene Fassung.
+// nach WLANs 4 s. Länger dauern können ein Bild-Download (jedes Paket mit Daten füttert, FRAME_DEADLINE_MS
+// begrenzt), das Einrichtungs-WLAN (die Schleife füttert) und ein OTA-Upload (jeder Block füttert). Hängt eine
+// Antwort ohne Daten, aber bei offener Verbindung, wartet HTTPClient::writeToStream ohne eigene Frist: Das fängt erst
+// der Watchdog. Unter Arduino 3.x ruft es die Senke dabei leer auf; darum füttern die Senken nur bei Daten.
+// Arduino 3.x (IDF 5) will die Einstellungen des Watchdogs als Struktur: Dafür steht am Ende eine eigene Fassung.
 #include "watchdog.h"
 
 #include <Arduino.h>
