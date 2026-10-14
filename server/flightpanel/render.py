@@ -157,9 +157,11 @@ class Renderer:
         return self.cfg.brightness_evening if b == 0 and self.new_year(now) else b
 
     def frame_bytes(self, img: Image.Image, brightness: int) -> bytes:
-        """Für den ESP32: [Version, Helligkeit, Breite, Höhe] + RGB, zeilenweise."""
+        """Für den ESP32: [Version, Helligkeit, Breite, Höhe] + RGB, zeilenweise. Bei Helligkeit 0 schwarz: Ein
+        Panel lässt das Bild sonst schwach rot durchscheinen."""
         W, H = img.size
-        return bytes([PROTO_VERSION, max(0, min(255, brightness)), W, H]) + img.tobytes()
+        rgb = img.tobytes() if brightness > 0 else bytes(W * H * 3)
+        return bytes([PROTO_VERSION, max(0, min(255, brightness)), W, H]) + rgb
 
     def png(self, img: Image.Image, scale: int = 6, gap: bool = True) -> bytes:
         """Vergrößerte Vorschau. gap=True zeichnet jede LED als Quadrat mit

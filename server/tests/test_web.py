@@ -323,6 +323,18 @@ def test_every_route_goes_through_the_one_helper(tmp_path):
     asyncio.run(run())
 
 
+def test_in_quiet_hours_the_frame_is_black(tmp_path, monkeypatch):
+    """Helligkeit 0 allein reicht nicht: Ein Panel lässt das Bild dann noch schwach rot durchscheinen."""
+    monkeypatch.setattr("flightpanel.web.time", SimpleNamespace(time=lambda: NOON))
+
+    async def run():
+        async with lan(tmp_path, quiet_hours=(0, 24 * 60)) as (app, client):
+            body = await (await client.get("/panel/frame")).read()
+            assert body[1] == 0 and len(body) == 4 + 128 * 32 * 3 and not any(body[4:])
+
+    asyncio.run(run())
+
+
 def test_the_frame_has_an_etag_and_the_same_frame_again_is_a_304(tmp_path, monkeypatch):
     monkeypatch.setattr("flightpanel.web.time", SimpleNamespace(time=lambda: NOON))
 
