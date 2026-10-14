@@ -4,7 +4,7 @@
   name_mismatch      unser Name passt nicht zu adsbdb (alte Daten dort oder Fehler bei uns)
   route_implausible  Route passt nicht zur Position, verworfen
   route_unknown      gezeigter Airline-Flug ohne Route
-  source_error       Fehler einer Quelle (adsb.lol, OpenSky, adsbdb, adsb.im, METAR, ISS)
+  source_error       Fehler einer Quelle (adsb.lol, OpenSky, adsbdb, adsb.im, METAR, ISS, TLS-Selbsttest)
   rate_limit         HTTP 429 einer Quelle
   fallback           adsb.lol aus, OpenSky eingesprungen
   stale              Bild gedimmt oder leer, weil keine frischen Daten kamen
@@ -14,6 +14,9 @@
   backup             die nächtliche Kopie der Datenbank ist gescheitert
   database           die Datenbank war kaputt und liegt beiseite, der Start war leer (db.Db);
                      /ok bleibt rot, solange der Eintrag steht, die nächtliche Kopie ruht
+  tls_roots          nur mit Zugang von außen: Das Zertifikat von PUBLIC_HOST passt nicht mehr zur
+                     Vertrauensliste der Firmware (selfcheck.py, /ok "Root-Liste veraltet"), oder
+                     certs/roots.pem fehlt
 
 Pro Eintrag: wie oft gesehen (je Abruf), an wie vielen Tagen, erstes und letztes
 Mal, bis zu zehn Callsigns, ein Beispiel. Liegt in der Datenbank (Tabelle issues,

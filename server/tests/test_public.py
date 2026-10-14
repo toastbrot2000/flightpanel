@@ -22,6 +22,7 @@ from test_access import AUD, JWK, TEAM, enc, sign
 from test_web import SECURITY, firmware, inline_free
 
 from conftest import make_cfg
+from flightpanel import selfcheck
 from flightpanel.access import EMAIL, PUBLIC, TOKEN, Gate, KeySet
 from flightpanel.db import Db, db_path
 from flightpanel.main import App
@@ -608,6 +609,9 @@ def test_with_the_switches_a_second_site_starts_and_stop_closes_both(tmp_path, m
             assert set(app.keys.keys) == {"testkey"} and len(hits) == 1
             access = app.health()["access"]
             assert access["keys"] == 1 and access["keys_age_h"] == 0.0 and access["auth_failures"] == {}
+            # der tägliche TLS-Selbsttest: der eigene Hostname, mit der Vertrauensliste der Firmware
+            assert app.tls.url == f"https://{HOST}/panel/firmware.txt" and app.tls.roots == selfcheck.ROOTS
+            assert app.tls.stale is None and app.tls.last_ok is None             # der erste erst nach einer Minute
         finally:
             await app.stop(runner)
             await server.close()

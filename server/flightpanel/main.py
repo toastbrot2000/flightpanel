@@ -9,8 +9,9 @@ des Panels am LAN-Port aus, gerendert wird bei jedem Abruf (render.py). Logos un
 DATA_DIR (Docker: ./data).
 
 Nur mit den Schaltern für den Zugang von außen (Config.public) lädt start() access.py und öffnet PUBLIC_PORT
-(web.make_public_app) mit dem Türsteher davor (access.Gate); dazu hält eine Schleife die Schlüssel von Access
-aktuell (keys_loop). Ohne die Schalter läuft nichts davon."""
+(web.make_public_app) mit dem Türsteher davor (access.Gate); dazu halten zwei Schleifen die Schlüssel von Access
+aktuell (keys_loop) und prüfen täglich, ob die Vertrauensliste der Firmware noch zum Zertifikat passt (tls_loop,
+selfcheck.py). Ohne die Schalter läuft nichts davon."""
 
 import asyncio
 import logging
@@ -208,6 +209,7 @@ class App:
         # Zugang von außen: entsteht erst in start(), und nur mit den Schaltern (_start_public)
         self.keys = None                        # access.KeySet
         self.gate = None                        # access.Gate
+        self.tls = None                         # selfcheck.TlsCheck
         self._public: web.AppRunner | None = None
 
         # Die Panels: das am LAN-Port und die mit panels add angelegten
@@ -561,7 +563,9 @@ class App:
     def problems(self, now: float) -> list[str]:
         """Was gerade nicht stimmt, für GET /ok (Docker-Healthcheck, Uptime-Monitor); leer heißt alles gut. Alte
         Flugdaten zählen, solange ein Panel hell ist; ein ESP32, das nicht mehr abruft, nur am LAN-Port: Ein
-        Freund, der den Stecker zieht, macht den Server nicht ungesund. In der Ruhezeit ist dunkel normal."""
+        Freund, der den Stecker zieht, macht den Server nicht ungesund. In der Ruhezeit ist dunkel normal. Mit Zugang
+        von außen auch eine veraltete Root-Liste der Firmware (selfcheck.py): Dann blieben alle Panels der Freunde
+        dunkel."""
         out = []
         if any(p.off is None and p.cfg.brightness(now) > 0 for p in self.panels.values()):
             age = now - (self.last_model_ok or self.started)
@@ -574,6 +578,9 @@ class App:
                 if it["kind"] == "exception" and now - it["last"] < OK_EXCEPTION_S]
         out += [f"Datenbank beiseitegelegt, das Album startete leer: {name} (siehe /issues)"
                 for name in self._asides()]
+        if self.tls is not None and self.tls.stale:
+            out.append(f"Root-Liste veraltet: Die Panels trauen dem Zertifikat von PUBLIC_HOST nicht mehr "
+                       f"({self.tls.stale}), siehe /issues")
         return out
 
     def health(self) -> dict:
@@ -667,17 +674,19 @@ class App:
         return runner
 
     async def _start_public(self) -> list:
-        """Der Zugang von außen, nur mit den Schaltern (Config.public): Erst hier wird access.py geladen. Eine zweite
-        Anwendung auf PUBLIC_PORT (web.make_public_app) mit dem Türsteher davor (access.Gate), die Schlüssel von
-        Access aus der Datenbank (access.KeySet). Gibt die Schleifen dazu zurück."""
-        from . import access
+        """Der Zugang von außen, nur mit den Schaltern (Config.public): Erst hier werden access.py und selfcheck.py
+        geladen. Eine zweite Anwendung auf PUBLIC_PORT (web.make_public_app) mit dem Türsteher davor (access.Gate),
+        die Schlüssel von Access aus der Datenbank (access.KeySet), der TLS-Selbsttest für den eigenen Hostnamen.
+        Gibt die Schleifen dazu zurück."""
+        from . import access, selfcheck
         cfg = self.server_cfg
         self.keys = access.KeySet(self.db, self.session, access.certs_url(cfg.access_team))
         self.gate = access.Gate(self.keys, cfg.access_team, cfg.access_aud, self.db)
+        self.tls = selfcheck.TlsCheck(self.session, self.issues, f"https://{cfg.public_host}/panel/firmware.txt")
         self._public = web.AppRunner(make_public_app(self, self.gate), access_log=None)
         await self._public.setup()
         await web.TCPSite(self._public, "0.0.0.0", cfg.public_port).start()
-        return [self.keys_loop()]
+        return [self.keys_loop(), self.tls_loop()]
 
     async def keys_loop(self) -> None:
         """Die Signaturschlüssel von Access: beim Start, wenn noch keine in der Datenbank liegen, dann einmal am Tag.
@@ -688,6 +697,14 @@ class App:
         while not self._stop.is_set():
             await asyncio.sleep(KEYS_EVERY_S)
             await self.keys.refresh(time.time(), force=True)
+
+    async def tls_loop(self) -> None:
+        """Der TLS-Selbsttest (selfcheck.TlsCheck): etwa eine Minute nach dem Start, dann einmal am Tag. Sein Ergebnis
+        steht in /ok (problems) und /issues."""
+        await asyncio.sleep(self.tls.FIRST_S)
+        while not self._stop.is_set():
+            await self.tls.run(time.time())
+            await asyncio.sleep(self.tls.EVERY_S)
 
     def _task_ended(self, task: asyncio.Task) -> None:
         """Eine Schleife ist abgestürzt (sie fangen ihre Fehler sonst selbst): ins Log

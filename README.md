@@ -133,8 +133,8 @@ Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dan
 | `/frame` | Binär für den ESP32: `[1, Helligkeit, 128, 32]` + 12 288 Byte RGB |
 | `/frame.png` | Vorschau; `layout`, `card`, `scale`, `gap=0` |
 | `/display.json` | Display-Modell, dazu `nearby`: alle Flugzeuge im Radius mit Richtung, Höhenwinkel, Sichtbarkeit, Landefolge |
-| `/health` | Quellen, wirksame Anzeige-Einstellungen, Cache, Logos, letzter ESP32-Abruf (`esp32.alive=false`: Panel hängt), je Panel eine Zeile unter `panels`, `problems`, nächtliches Aufräumen (`dream`), Datenbank (`database.copy`: Zeit der letzten nächtlichen Kopie, `database.put_aside`: beiseitegelegte kaputte Datenbankdateien) |
-| `/ok` | `ok` mit 200, sonst 503 und die Gründe (keine frischen Flugdaten seit 15 min, der ESP32 am LAN-Port holt seit 10 min nichts, Fehler im Code, beiseitegelegte Datenbank); für den Docker-Healthcheck und einen Uptime-Monitor |
+| `/health` | Quellen, wirksame Anzeige-Einstellungen, Cache, Logos, letzter ESP32-Abruf (`esp32.alive=false`: Panel hängt), je Panel eine Zeile unter `panels`, `problems`, nächtliches Aufräumen (`dream`), Datenbank (`database.copy`: Zeit der letzten nächtlichen Kopie, `database.put_aside`: beiseitegelegte kaputte Datenbankdateien), mit Zugang von außen `access` (Schlüssel von Access, Absagen je Grund, gebremste Anfragen, Uhrzeit-Abweichung) |
+| `/ok` | `ok` mit 200, sonst 503 und die Gründe (keine frischen Flugdaten seit 15 min, der ESP32 am LAN-Port holt seit 10 min nichts, Fehler im Code, beiseitegelegte Datenbank, mit Zugang von außen "Root-Liste veraltet"); für den Docker-Healthcheck und einen Uptime-Monitor |
 | `/issues` | gesammelte Auffälligkeiten (siehe unten), `POST /issues/clear` leert |
 | `/stats` | Tagesstatistik, Sammelalbum, seltene Sichtungen, Landerichtung |
 | `/idle` | Leerlauf-Karten: Stufe, ob sie gerade etwas zu sagen haben, welche dran ist |
@@ -179,6 +179,7 @@ Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Cache, Statistik,
 | `setting` | gespeicherte Panel-Einstellung gilt nicht (mehr), etwa nach einem Update; der Server nimmt den Default | den Befehl im Beispiel (`panels unset …`), dann neu setzen |
 | `backup` | nächtliche Kopie der Datenbank gescheitert | Fehler im Beispiel: Platz und Rechte in `data/` prüfen |
 | `database` | die Datenbank war kaputt: Der Server hat sie als `data/flightpanel.db.broken-<Datum>` beiseitegelegt und leer begonnen; `/ok` ist rot, solange der Eintrag steht, und die nächtliche Kopie ruht | der Weg zurück steht im Beispiel (`fix`): `data/flightpanel.db.bak` zurückkopieren; danach `/issues` leeren |
+| `tls_roots` | nur mit Zugang von außen: Das Zertifikat des eigenen Hostnamens passt nicht mehr zur Vertrauensliste der Firmware (`roots.pem`, täglicher Selbsttest), `/ok` meldet "Root-Liste veraltet"; oder `roots.pem` fehlt | Firmware mit aktualisierter `roots.pem` veröffentlichen ([docs/freunde.md](docs/freunde.md), Abschnitt 9) |
 
 Liegt in `data/flightpanel.db`. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`.
 
