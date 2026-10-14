@@ -112,6 +112,9 @@ trap 'exit 1' HUP INT TERM
 # Der öffentliche Schlüssel, so wie die Firmware ihn einbaut
 sed -n '/-----BEGIN PUBLIC KEY-----/,/-----END PUBLIC KEY-----/p' "$pubsrc" | tr -d '\r' > "$tmp/pub.pem"
 [ -s "$tmp/pub.pem" ] || die "kein BEGIN/END PUBLIC KEY in $pubsrc"
+if [ "$dry" = 0 ] && ! openssl pkey -pubin -in "$tmp/pub.pem" -noout 2> /dev/null; then
+  die "$PUB enthält keinen lesbaren öffentlichen Schlüssel (noch der Platzhalter der Vorlage?)"
+fi
 
 # 2. Bauen. -Wl,--require-defined: Ohne die Update-Prüfung (fw_pubkey.h nicht erkannt) scheitert der Build.
 SRC="$(pwd -W 2> /dev/null || pwd)/firmware"   # pwd -W: Git Bash unter Windows
