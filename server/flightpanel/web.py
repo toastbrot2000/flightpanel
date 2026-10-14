@@ -310,8 +310,9 @@ def same_origin(origin: str, req: web.Request) -> bool:
 def lan_guard(app: "App"):
     """Der Schutz des LAN-Ports vor jedem Handler, auch vor 404 (siehe oben). Absagen stehen im Log, höchstens
     einmal pro WARN_EVERY_S: Ein ESP32 oder Uptime-Monitor unter einem fremden Namen fiele sonst still aus. Der Header
-    selbst nie: Was eine fremde Seite schickt, gehört nicht ins Log. Jede 421 zählt in App.refused (Zahl und Zeit,
-    kein Text) und macht /ok rot, solange das Panel nichts holt (App.problems)."""
+    selbst nie: Was eine fremde Seite schickt, gehört nicht ins Log. Eine 421 auf einen Bildabruf mit X-Panel (so fragt
+    nur die Firmware; eine fremde Webseite kann den Header nicht ohne Preflight setzen) zählt in App.refused (Zahl und
+    Zeit, kein Text) und macht /ok rot, solange das Panel nichts holt (App.problems)."""
     cfg = app.server_cfg
     last = {"warned": -WARN_EVERY_S}
 
@@ -326,8 +327,9 @@ def lan_guard(app: "App"):
             warn("Anfrage über Cloudflare am LAN-Port abgelehnt (403): Der Tunnel gehört an PUBLIC_PORT")
             raise web.HTTPForbidden(text=VIA_CLOUDFLARE)
         if not all(lan_host(host, cfg.lan_hosts) for host in req.headers.getall("Host", [])):
-            app.refused += 1
-            app.refused_at = time.time()
+            if req.method == "GET" and req.path in ("/panel/frame", "/frame") and "X-Panel" in req.headers:
+                app.refused += 1
+                app.refused_at = time.time()
             warn("Anfrage unter einem Namen außerhalb des LAN abgelehnt (421). Erreicht ein eigenes Gerät den Server "
                  "unter einem Namen mit Punkt (etwa ein Panel mit nas.fritz.box als Server-Adresse im "
                  "Einrichtungs-WLAN, oder ein Uptime-Monitor), den Namen in .env unter LAN_HOSTS eintragen")

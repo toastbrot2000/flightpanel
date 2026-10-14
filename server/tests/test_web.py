@@ -268,7 +268,7 @@ def test_a_refused_host_turns_ok_red_until_the_panel_fetches_a_frame(tmp_path, m
         return r.status, await r.text()
 
     async def refuse(client, host="nas.lan:8080"):
-        assert (await client.get("/panel/frame", headers={"Host": host})).status == 421
+        assert (await client.get("/panel/frame", headers={"Host": host, "X-Panel": "fw=1"})).status == 421
 
     async def run():
         async with lan(tmp_path, quiet_hours=(0, 0)) as (app, client):
@@ -276,6 +276,9 @@ def test_a_refused_host_turns_ok_red_until_the_panel_fetches_a_frame(tmp_path, m
             assert await ok(client) == (200, "ok\n")
             health = json.loads(await (await client.get("/health")).text())
             assert health["refused_host"] == {"count": 0, "last_age_s": None}
+            for path, headers in (("/", {"X-Panel": "fw=1"}), ("/panel/frame", {})):   # kein Panel: zählt nicht
+                assert (await client.get(path, headers={"Host": "evil.example.com", **headers})).status == 421
+            assert await ok(client) == (200, "ok\n") and app.refused == 0
             await refuse(client)
             await refuse(client, "evil.example.com")
             status, text = await ok(client)                          # abgewiesen, nie ein Bild geholt: rot
@@ -309,7 +312,8 @@ def test_old_refusals_do_not_turn_ok_red(tmp_path, monkeypatch):
 
     async def run():
         async with lan(tmp_path, quiet_hours=(0, 0)) as (app, client):
-            assert (await client.get("/panel/frame", headers={"Host": "nas.lan"})).status == 421
+            headers = {"Host": "nas.lan", "X-Panel": "fw=1"}
+            assert (await client.get("/panel/frame", headers=headers)).status == 421
             clock[0] += 10 * 60 - 1
             app.last_model_ok = clock[0]
             assert (await client.get("/ok")).status == 503               # knapp unter 10 min: noch rot
