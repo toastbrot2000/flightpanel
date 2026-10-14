@@ -104,16 +104,29 @@ def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, log
 
 
 def check_data_dir(data_dir: str) -> str | None:
-    """Kann der Server in DATA_DIR schreiben? Gibt den Satz fürs Log zurück, sonst None. Der Container läuft als
-    Benutzer 1000: Ein ./data, das ein früherer Container als root angelegt hat, gehört root, und der Start stürbe
+    """Kann der Server in DATA_DIR schreiben? Gibt den Satz fürs Log zurück, sonst None. Der Container läuft nicht
+    als root, sondern als PUID:PGID aus der .env (compose.yml, ohne Angabe 1000:1000): Ein ./data, das ein früherer
+    Container als root angelegt hat oder das einem anderen Benutzer gehört, ist ihm verschlossen, und der Start stürbe
     mit nichts als "unable to open database file", bei restart: unless-stopped in einer Schleife. Geprüft werden
     DATA_DIR, logos/ und die Datenbank, soweit sie schon da sind; fehlt DATA_DIR ganz, legt der Start es an."""
     for path, mode in ((data_dir, os.W_OK | os.X_OK), (os.path.join(data_dir, "logos"), os.W_OK | os.X_OK),
                        (db_path(data_dir), os.W_OK)):
         if os.path.exists(path) and not os.access(path, mode):
-            return (f"{path} ist nicht beschreibbar (der Container läuft als Benutzer 1000). "
-                    "Auf dem Host im Projektordner: sudo chown -R 1000:1000 data")
+            return _not_writable(path)
     return None
+
+
+def _not_writable(path: str) -> str:
+    """Der Satz fürs Log: wer der Server ist und was zu tun ist. Der Weg der Wahl ist PUID und PGID in .env auf den
+    Besitzer von data/ (compose.yml): Ein chown auf einen anderen Benutzer machte die mitgelieferten Dateien in data/
+    für das git pull von tools/update.sh unbeschreibbar. chown bleibt für Reste von root (frühere Container) und für
+    docker run ohne compose."""
+    fix = "Auf Linux in .env PUID und PGID auf den Besitzer von data/ setzen (id -u, id -g), dann docker compose up -d"
+    if not hasattr(os, "getuid"):                   # Windows ohne Docker: keine Benutzer-IDs
+        return f"{path} ist nicht beschreibbar. {fix}"
+    who = f"{os.getuid()}:{os.getgid()}"
+    return (f"{path} ist nicht beschreibbar (der Server läuft als Benutzer {who}). {fix}. Gehört in data/ noch etwas "
+            f"root (früherer Container) oder läuft der Server ohne compose: sudo chown -R {who} data")
 
 
 class App:

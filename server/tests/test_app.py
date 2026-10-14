@@ -388,21 +388,44 @@ def test_a_usable_data_dir_gets_no_complaint(tmp_path):
 @pytest.mark.skipif(not hasattr(os, "geteuid"), reason="Rechtebits gibt es nur unter Linux und macOS")
 @pytest.mark.parametrize(("name", "mode"), [("", 0o555), ("", 0o600), ("logos", 0o555), ("flightpanel.db", 0o444)],
                          ids=["data", "data-no-search", "logos", "database"])
-def test_what_the_container_cannot_write_is_named_with_the_fix(tmp_path, like_an_ordinary_user, name, mode):
-    """Was der Container als Benutzer 1000 nicht beschreiben darf (DATA_DIR, logos/, die Datenbank, etwa weil ein
-    früherer Container sie als root anlegte): Der Satz nennt genau diesen Pfad und den Befehl dagegen. Ein Ordner
-    ohne Durchgangsrecht (0o600) taugt so wenig wie einer ohne Schreibrecht."""
+def test_what_the_container_cannot_write_is_named_with_the_fix(tmp_path, monkeypatch, like_an_ordinary_user, name,
+                                                               mode):
+    """Was der Server nicht beschreiben darf (DATA_DIR, logos/, die Datenbank, etwa weil ein früherer Container sie
+    als root anlegte oder data/ einem anderen Benutzer gehört): Der Satz nennt genau diesen Pfad, den Benutzer, als der
+    der Server wirklich läuft (PUID:PGID, nicht fest 1000), und das Mittel dagegen. Ein Ordner ohne Durchgangsrecht
+    (0o600) taugt so wenig wie einer ohne Schreibrecht."""
     (tmp_path / "logos").mkdir()
     (tmp_path / "flightpanel.db").write_bytes(b"")
     target = tmp_path / name
     before = os.stat(target).st_mode & 0o777
     os.chmod(target, mode)
     try:
-        problem = check_data_dir(str(tmp_path))
+        with monkeypatch.context() as m:
+            m.setattr(os, "getuid", lambda: 1234)
+            m.setattr(os, "getgid", lambda: 4321)
+            problem = check_data_dir(str(tmp_path))
     finally:
         os.chmod(target, before)                    # sonst räumt pytest tmp_path nicht auf
     assert problem is not None and problem.startswith(f"{target} ist nicht beschreibbar")
-    assert "Benutzer 1000" in problem and "sudo chown -R 1000:1000 data" in problem
+    assert "Benutzer 1234:4321" in problem
+    assert "PUID" in problem and "PGID" in problem and "id -u" in problem
+    assert "sudo chown -R 1234:4321 data" in problem                # für root-Reste und docker run ohne compose
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="Rechtebits gibt es nur unter Linux und macOS")
+def test_the_message_works_without_unix_user_ids(tmp_path, monkeypatch, like_an_ordinary_user):
+    """Wo es os.getuid nicht gibt, nennt der Satz keinen Benutzer, aber den Pfad und PUID/PGID."""
+    before = os.stat(tmp_path).st_mode & 0o777
+    os.chmod(tmp_path, 0o555)
+    try:
+        with monkeypatch.context() as m:
+            m.delattr(os, "getuid")
+            m.delattr(os, "getgid")
+            problem = check_data_dir(str(tmp_path))
+    finally:
+        os.chmod(tmp_path, before)
+    assert problem is not None and problem.startswith(f"{tmp_path} ist nicht beschreibbar")
+    assert "PUID" in problem and "PGID" in problem and "Benutzer" not in problem and "chown" not in problem
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid"), reason="Rechtebits gibt es nur unter Linux und macOS")
@@ -425,5 +448,5 @@ def test_the_start_stops_when_data_is_not_writable(tmp_path, monkeypatch, caplog
     assert stopped.value.code == 2
     errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
     assert len(errors) == 1 and errors[0].startswith(f"{data} ist nicht beschreibbar")
-    assert "sudo chown -R 1000:1000 data" in errors[0]
+    assert "PUID" in errors[0] and "PGID" in errors[0]
     assert not (data / "flightpanel.db").exists()

@@ -3,11 +3,12 @@ services:
     build: ./server
     container_name: flightpanel
     restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"     # ohne Rechte; auf Linux der Besitzer von ./data (PUID, PGID in .env)
     env_file: .env
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/data        # mitgelieferte Daten (airlines.json ...), Logos, Datenbank; gehört uid 1000
+      - ./data:/data        # mitgelieferte Daten (airlines.json ...), Logos, Datenbank; muss PUID:PGID gehören
     # Härtung: nichts Schreibbares außer /data und /tmp, keine Rechte, keine neuen Rechte
     read_only: true
     tmpfs:

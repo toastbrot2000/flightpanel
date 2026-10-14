@@ -39,7 +39,7 @@ docker compose up -d --build
 open http://localhost:8080      # Vorschau, wechselt alle 2 s
 ```
 
-Auf Linux muss `./data` dem Benutzer 1000 gehören (der Container läuft ohne Rechte): `sudo chown -R 1000:1000 data`, auch nach dem Update einer älteren Installation, deren Container als root lief.
+Auf Linux läuft der Container ohne Rechte, als `PUID:PGID` aus `.env` (ohne Angabe 1000:1000), und muss `./data` beschreiben dürfen: In `.env` `PUID` und `PGID` auf den Besitzer von `data/` setzen (`id -u`, `id -g`; die Zeilen stehen als Kommentar schon in `.env.example`). Unter Docker Desktop (Windows, macOS) passt es von selbst.
 
 Die Vorschauseite hat Links für die Layouts und jede Leerlauf-Karte; `/frame.png?card=radar&scale=8` geht auch direkt.
 
@@ -49,7 +49,7 @@ Serverweites steht in `.env` (nicht im Repo; jede Einstellung ist in [.env.examp
 
 **1. Heimatflughafen** (`.env`). `LOCAL_AIRPORT_IATA` genügt: Position, Höhe und METAR-Station kommen aus `data/airports.json`. Dazu `RUNWAY_COURSE`, der Kurs im Endanflug einer Landerichtung (BER 25: 249°, MUC 26: 263°), und `CURFEW_HOURS` für das Nachtflugverbot. Für einen Flughafen, der nicht in der Liste steht, `AIRPORT_LAT`, `AIRPORT_LON`, `AIRPORT_ALT_M` und `METAR_STATION` setzen.
 
-**2. Starten.** `docker compose up -d --build`. Beim ersten Start entsteht das Panel `home`; eine ältere `.env` mit Standort und Sichtfeld wird dabei einmalig übernommen. Auf Linux muss `./data` dem Benutzer 1000 gehören (der Container läuft ohne Rechte): `sudo chown -R 1000:1000 data`, auch nach dem Update einer älteren Installation, deren Container als root lief; unter Docker Desktop passt es von selbst. Sonst bricht der Start ab, und das Log nennt den Ordner und den Befehl.
+**2. Starten.** `docker compose up -d --build`. Beim ersten Start entsteht das Panel `home`; eine ältere `.env` mit Standort und Sichtfeld wird dabei einmalig übernommen. Auf Linux den Container als den Besitzer von `data/` laufen lassen: vor dem ersten Start in `.env` `PUID` und `PGID` setzen (`id -u`, `id -g`). Das macht ein `chown` überflüssig, und `git pull` (`tools/update.sh`) darf weiter in `data/` schreiben, was nach einem `chown` auf einen anderen Benutzer nicht ginge. Ohne compose (`docker run`) gehört `--user UID:GID` dazu oder `sudo chown -R 1000:1000 data`. Eine ältere Installation, deren Container als root lief, hat in `data/` noch Dateien von root: einmal `sudo chown -R "$(id -u):$(id -g)" data`. Unter Docker Desktop passt es von selbst. Sonst bricht der Start ab, und das Log nennt den Ordner, den Benutzer und was zu tun ist.
 
 **3. Standort und Sichtfeld.**
 
