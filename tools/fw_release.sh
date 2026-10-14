@@ -12,15 +12,19 @@
 #   1. Den Schlüssel prüfen: mit Passphrase verschlüsselt, nicht im Repo, nicht in einem Git-Arbeitsverzeichnis,
 #      nicht in einem synchronisierten Ordner (OneDrive, Dropbox ...). Er gehört nur auf diesen Rechner, mit einer
 #      Sicherung offline.
-#   2. In derselben festen Docker-Toolchain bauen wie tools/check_firmware.sh, ohne include/secrets.h und ohne
-#      platformio_local.ini: firmware.bin ist öffentlich, der Rettungskanal liefert sie ohne Anmeldung. Ohne
-#      include/fw_pubkey.h bricht es ab: Ein Image ohne Update-Prüfung käme nur per USB wieder vom Panel. Passt das
-#      Image nicht in den App-Slot, scheitert schon der Build.
+#   2. In derselben festen Docker-Toolchain bauen wie tools/check_firmware.sh, mit der Vertrauensliste
+#      server/flightpanel/certs/roots.pem, ohne include/secrets.h und ohne platformio_local.ini: firmware.bin ist
+#      öffentlich, der Rettungskanal liefert sie ohne Anmeldung; so hat das Image keine WLAN-Daten und kein OTA.
+#      Ohne include/fw_pubkey.h bricht es ab: Ein Image ohne Update-Prüfung käme nur per USB wieder vom Panel. Passt
+#      das Image nicht in den App-Slot, scheitert schon der Build.
 #   3. Das Manifest schreiben (Format: firmware/include/manifest.h): Version aus dem Build (fw_version.txt, siehe
-#      firmware/scripts/version.py), Größe, SHA-256, nur LF; jede Zeile wird gegen das Format geprüft.
+#      firmware/scripts/version.py), Größe, SHA-256, nur LF; jede Zeile wird gegen das Format geprüft. Die Version
+#      muss im Image stehen: Wiche sie ab, hielte das Panel das gerade installierte Image immer wieder für neu.
 #   4. Die ersten drei Zeilen mit openssl dgst -sha256 -sign signieren, die Signatur gegen den Schlüssel in
 #      include/fw_pubkey.h prüfen, so wie es das Panel tut, und als vierte Zeile anhängen.
-#   5. firmware.bin und firmware.txt nach data/firmware/canary/ legen, erst das Image, dann das Manifest.
+#   5. firmware.bin und firmware.txt nach data/firmware/canary/ legen, erst das Image, dann das Manifest, jedes
+#      erst unter einem anderen Namen und dann umbenannt: Der Server liefert nie eine halbe Datei aus, die
+#      Cloudflare dann einen Tag lang zwischenspeichern würde.
 #
 # Danach holt das eigene Panel (Kanal canary) das Update. Läuft es dort, bekommen es die anderen (Kanal stable):
 #
@@ -117,20 +121,22 @@ if [ "$dry" = 0 ] && ! openssl pkey -pubin -in "$tmp/pub.pem" -noout 2> /dev/nul
 fi
 
 # 2. Bauen. -Wl,--require-defined: Ohne die Update-Prüfung (fw_pubkey.h nicht erkannt) scheitert der Build.
-SRC="$(pwd -W 2> /dev/null || pwd)/firmware"   # pwd -W: Git Bash unter Windows
+ROOT="$(pwd -W 2> /dev/null || pwd)"   # pwd -W: Git Bash unter Windows
 OUT="$(cd "$tmp" && { pwd -W 2> /dev/null || pwd; })"
 echo "== Build in Docker (feste Toolchain wie tools/check_firmware.sh)"
 MSYS_NO_PATHCONV=1 docker run --rm \
-  -v "$SRC:/src:ro" -v "$OUT:/out" -v flightpanel-pio:/root/.platformio \
+  -v "$ROOT/firmware:/src:ro" -v "$ROOT/server/flightpanel/certs:/certs:ro" -v "$OUT:/out" \
+  -v flightpanel-pio:/root/.platformio \
   "$IMAGE" sh -c '
     set -e
     apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git >/dev/null
     pip install -q --root-user-action=ignore --require-hashes -r /src/platformio.lock
-    mkdir /build && cp -r /src/. /build && cd /build
+    mkdir -p /build/firmware /build/server/flightpanel/certs
+    cp -r /src/. /build/firmware && cp /certs/roots.pem /build/server/flightpanel/certs/
+    cd /build/firmware
     rm -rf .pio
     # Nichts Eigenes ins öffentliche Image: keine WLAN-Daten, kein OTA-Passwort (OTA bleibt damit aus).
     rm -f include/secrets.h platformio_local.ini
-    cp include/secrets.h.example include/secrets.h   # nur bis secrets.h optional ist (Schritt 4); nichts Geheimes darin
     [ -f include/fw_pubkey.h ] || cp include/fw_pubkey.h.example include/fw_pubkey.h   # nur bei --dry-run
     PLATFORMIO_BUILD_FLAGS=-Wl,--require-defined=fwsigVerify pio run -e esp32dev
     cp .pio/build/esp32dev/firmware.bin .pio/build/esp32dev/fw_version.txt /out/
@@ -141,6 +147,10 @@ version=$(tr -d '\r\n' < "$tmp/fw_version.txt")
 size=$(wc -c < "$bin" | tr -d ' ')
 sha=$(openssl dgst -sha256 -r "$bin" | cut -d ' ' -f 1)
 commit=$(git describe --always --dirty 2> /dev/null || echo "?")
+printf '%s' "$version" | LC_ALL=C grep -Eq '^[0-9]{10}$' || die "Version aus dem Build ungültig: $version"
+# Die Version des Manifests steht im Image (FW_VERSION, etwa im Header X-Panel). Fehlte sie, liefen Manifest und
+# Image auseinander, und das Panel installierte dasselbe Image nach jedem Neustart wieder.
+LC_ALL=C grep -a -q -F -e "$version" "$bin" || die "firmware.bin enthält die Version $version nicht"
 # Jede Zeile des öffentlichen Schlüssels steht im Image: Die Update-Prüfung ist drin, mit diesem Schlüssel. Nach
 # "BEGIN PUBLIC KEY" allein zu suchen reicht nicht, mbedTLS bringt diese Zeile selbst mit.
 while IFS= read -r l; do
