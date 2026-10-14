@@ -405,7 +405,7 @@ def test_in_quiet_hours_the_frame_is_black(tmp_path, monkeypatch):
     monkeypatch.setattr("flightpanel.web.time", SimpleNamespace(time=lambda: NOON))
 
     async def run():
-        async with lan(tmp_path, quiet_hours=(0, 24 * 60)) as (app, client):
+        async with lan(tmp_path, quiet_hours=(0, 24 * 60)) as (_app, client):
             body = await (await client.get("/panel/frame")).read()
             assert body[1] == 0 and len(body) == 4 + 128 * 32 * 3 and not any(body[4:])
 
