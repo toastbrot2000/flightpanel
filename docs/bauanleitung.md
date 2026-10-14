@@ -119,7 +119,7 @@ pio run -t upload      # per USB, VIN dabei abziehen
 pio device monitor
 ```
 
-Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert, mit und ohne Update-Schlüssel, und lässt die Tests auf dem Rechner laufen (`pio test -e native`, Manifest der signierten Updates); alles in Docker. Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
+Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert (ohne `secrets.h` wie für Freunde), mit und ohne Update-Schlüssel, und lässt die Tests auf dem Rechner laufen (`pio test -e native`, Manifest der signierten Updates); alles in Docker. Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
 
 **Partitionstabelle:** `min_spiffs.csv`, zwei App-Bereiche zu 1,875 MB (vorher `default.csv` mit 1,25 MB): Platz für https, Einrichtungs-WLAN und Updates. Eine neue Tabelle kommt nur per USB aufs Panel. Ein Panel mit älterer Firmware also einmal per USB flashen; WLAN und Einstellungen im NVS bleiben dabei erhalten, danach geht OTA wie gewohnt.
 
@@ -132,8 +132,6 @@ Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kom
 **Prüfstand (freiwillig):** `cp include/secrets.h.example include/secrets.h` liefert Vorgaben für WLAN und Server, solange im Panel nichts gespeichert ist, und das OTA-Passwort. Ein leeres OTA-Passwort (und ein Build ohne `secrets.h`) schaltet OTA ab: Das Panel öffnet dann im WLAN keinen Port und meldet sich nicht als `flightpanel.local`. Fürs Hochladen per WLAN kommt dasselbe Passwort noch einmal in `platformio_local.ini` (Vorlage `platformio_local.ini.example`, nicht im Repo), dann `pio run -e esp32dev_ota -t upload`.
 
 **https:** Die Firmware bettet `server/flightpanel/certs/roots.pem` ein (Wurzeln von Let's Encrypt, Google, SSL.com, Sectigo, dazu Reserve; erzeugt von `tools/make_roots.py`). Das Token geht nur über https hinaus, nie über http.
-
-Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert (in Docker, ohne `secrets.h` wie für Freunde). Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
 
 **Ablauf:** Nach dem Einschalten ein Testbild (Abschnitt 6; andere Neustarts bleiben still), dann WLAN und, falls ein OTA-Passwort gesetzt ist, OTA samt mDNS-Name (`flightpanel.local`). Danach alle 2 s `GET /panel/frame` mit dem letzten ETag: Ein unverändertes Bild kommt als 304 ohne Inhalt und bleibt stehen, ein neues wird geprüft, die Helligkeit übernommen (gedeckelt bei `MAX_BRIGHTNESS`), 4096 Pixel geschrieben, der Puffer getauscht. Die Bibliothek frischt die Panels per DMA im Hintergrund auf, der Prozessor ist dabei kaum beteiligt. Ohne Server bleibt das letzte Bild stehen; nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu. Hängt dagegen `loop()` selbst (WLAN-Stack, Treiber, ein Server, der mitten im Bild verstummt), setzt der Task-Watchdog den ESP32 nach 60 s zurück (`WDT_TIMEOUT_S`); Downloads und ein OTA-Upload füttern ihn mit jedem Paket. Zum Testen lässt `h` und Enter im seriellen Monitor die Schleife 70 s stehen (Abschnitt 6).
 
@@ -159,7 +157,11 @@ Kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefert immer vol
 | Nur jede zweite Zeilengruppe, Bild gestaucht | Panel ist kein 1/16-Scan |
 | Farben vertauscht | R/G/B-Kabel vertauscht |
 
-**Signierte Updates** (im Aufbau: Manifest, Signaturprüfung und Release-Skript gibt es, das Panel holt Updates noch nicht selbst). Panels bei Freunden sind per OTA nicht erreichbar; sie sollen neue Firmware selbst vom Server holen und nur installieren, was mit dem eigenen Schlüssel signiert und neuer ist als ihre Version (`FW_VERSION`, die Bauzeit JJMMTTHHMM in UTC). Format des Manifests: `firmware/include/manifest.h`.
+**Signierte Updates.** Panels bei Freunden sind per OTA nicht erreichbar: Sie holen neue Firmware selbst vom Server und installieren nur, was mit dem eigenen Schlüssel signiert und neuer ist als ihre Version (`FW_VERSION`, die Bauzeit JJMMTTHHMM in UTC; die Konsole nennt sie beim Start). Eingebaut ist das nur mit `firmware/include/fw_pubkey.h`; ohne die Datei holt ein Panel nie Firmware vom Server.
+
+- **Ablauf:** Nach dem ersten Bild und dann alle 6 h holt das Panel `/panel/firmware.txt`, über dieselbe Verbindung wie das Bild (bei https mit Token). Es prüft Form und Signatur (Format: `firmware/include/manifest.h`) und nimmt nur eine neuere Version. Dann lädt es `/panel/firmware.bin?v=<Version>` in den freien App-Bereich, rechnet dabei SHA-256 und vergleicht Größe und Hash, bevor das Image startbar wird; sonst bricht es ab, und das laufende bleibt. Danach startet es neu, still. Während des Downloads (rund eine Minute) bleibt das letzte Bild stehen.
+- **Rollback:** Der vorgebaute Bootloader dieses Kerns kann es (geprüft: `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` in der sdkconfig des SDK; die Rollback-Teile stecken im Bootloader und in der OTA-Bibliothek). Ein neues Image startet unbestätigt, die Konsole zeigt `PENDING_VERIFY`, und bestätigt sich mit dem ersten Bild. Startet es vorher neu (Absturz, Watchdog, 10 min ohne Bild, auch Stecker raus), startet der Bootloader wieder das alte. Dieselbe Version versucht das Panel höchstens dreimal, im Abstand von 6 h; eine neuere jederzeit. Das gilt auch für Uploads per OTA: Auch sie müssen innerhalb von 10 min ein Bild holen.
+- **Rettungsmodus:** Lehnt das Panel das Zertifikat des Servers 24 h lang ab, passt die eingebettete Vertrauensliste nicht mehr zu Cloudflare. Dann holt es, höchstens einmal pro Stunde, nur Manifest und Image ohne Zertifikatsprüfung und ohne Token und vertraut dabei allein Signatur, SHA-256 und steigender Version. Ein Release mit neuer `roots.pem` (`tools/make_roots.py`) holt es so ohne USB zurück. Die 24 h zählen über Neustarts hinweg, nach dem Ausschalten von vorn.
 
 1. **Schlüssel, einmal**, außerhalb des Repos und außerhalb jedes synchronisierten Ordners (OneDrive, Dropbox …; `fw_release.sh` lehnt solche Pfade ab):
    ```bash
@@ -172,6 +174,15 @@ Kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefert immer vol
 3. **canary, dann stable:** Das eigene Panel steht auf `canary` und bekommt das Release zuerst. Läuft es, beide Dateien nach `data/firmware/stable/` kopieren, erst `firmware.bin`, dann `firmware.txt`; die anderen Panels folgen.
 
 Signieren ist Sache eines Menschen: KI-Agenten führen `fw_release.sh` nie aus. Das Skript bricht ohne Terminal und in einer Claude-Code-Sitzung ab, die Passphrase tippt der Besitzer des Schlüssels.
+
+**Prüfstand für Updates**, bevor ein Freund ein Panel bekommt: das eigene Panel per USB mit dem eigenen `fw_pubkey.h` flashen, seriellen Monitor offen, Kanal `canary` (`docker compose exec flightpanel python3 -m flightpanel.panels channel home canary`). Die Konsole meldet jeden Schritt mit `Update:`.
+
+1. **Gültig:** Release bauen. Das Panel lädt, startet neu, zeigt `PENDING_VERIFY` und nach dem ersten Bild `bestätigt`; ein weiterer Neustart bleibt bei der neuen Version (`VALID`).
+2. **Manipuliert:** eine Ziffer in der zweiten Zeile von `data/firmware/canary/firmware.txt` ändern (`Signatur ungültig`) oder ein Byte in `firmware.bin` (`SHA-256 stimmt nicht`). Nichts wird installiert.
+3. **CRLF:** `firmware.txt` mit CRLF speichern (`sed -i 's/$/\r/'`): `Manifest abgelehnt: unerlaubtes Zeichen`.
+4. **Älter:** die Dateien eines früheren Release nach `canary` legen: `Update: keins`.
+5. **Rollback:** ein Release, das nie ein Bild holen kann (vorübergehend `PROTO_VERSION 99` in `config.h`, danach zurück). Das Panel installiert es, zeigt `PENDING_VERIFY`, startet nach 10 min ohne Bild neu und läuft wieder mit der alten Version (`Verworfenes Image`, `kam zurück`). Es versucht dieselbe Version danach höchstens zweimal, im Abstand von 6 h; zum Aufräumen ein gutes, neueres Release bauen.
+6. **Rettungsmodus** (Panel über https): `server/flightpanel/certs/roots.pem` vorübergehend durch eine Liste ersetzen, die nicht zu Cloudflare passt (nicht einchecken), und mit kurzer Schwelle per USB flashen: `PLATFORMIO_BUILD_FLAGS="-DRESCUE_AFTER_MS=300000" pio run -t upload` (5 min). Liste zurück, danach ein Release bauen und nach `stable` kopieren: Ohne Token kommt jede Anfrage als Rettungskanal an und bekommt `stable`, darum nur, solange noch kein Freund ein Panel hat. Das Panel lehnt das Zertifikat ab, meldet nach 5 min `Rettungsmodus`, holt das Release ohne Prüfung, startet neu und holt wieder Bilder.
 
 ---
 
