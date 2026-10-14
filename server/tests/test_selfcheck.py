@@ -75,7 +75,7 @@ def test_a_certificate_outside_the_list_turns_ok_red_until_the_list_fits_again(t
             assert app.tls.stale and hits == []                    # die Prüfung scheitert vor jeder Anfrage
             assert stale_in_ok(app)
             item = app.issues.items["tls_roots:roots.pem"]
-            assert "fw_release.sh" in item["example"]["fix"] and "docs/freunde.md" in item["example"]["fix"]
+            assert "fw_release.sh" in item["example"]["fix"] and "docs/remote-panels.md" in item["example"]["fix"]
             assert "certificate" in item["example"]["error"]
             assert not any(k.startswith(("source_error", "rate_limit")) for k in app.issues.items)
             app.tls.roots = CA                                     # eine Firmware mit passender Liste

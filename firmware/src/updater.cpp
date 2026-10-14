@@ -23,7 +23,7 @@
 // Arduino-Kern (esp32-hal-misc.c, initArduino vor setup()): Mit true bleibt ein neues Image unbestätigt
 // (PENDING_VERIFY), bis confirm() es nach dem ersten Bild bestätigt. Sonst bestätigte der Kern es sofort, und ein
 // Image, das nie ein Bild holt, bliebe für immer. Gilt genauso für ein Image, das per ArduinoOTA kommt. Der
-// vorgebaute Bootloader dieses Kerns kann das (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE, docs/bauanleitung.md).
+// vorgebaute Bootloader dieses Kerns kann das (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE, docs/hardware.md).
 extern "C" bool verifyRollbackLater() { return true; }
 
 namespace {

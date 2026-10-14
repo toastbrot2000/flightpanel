@@ -332,7 +332,7 @@ class Config:
     empty_after: int = _env("EMPTY_AFTER", 600, _int(0))    # ... bis leer
     log_level: str = _env("LOG_LEVEL", "INFO")
 
-    # --- Zugang von außen (optional, docs/freunde.md): ein zweiter Port nur für Cloudflare Access. Alle vier oder
+    # --- Zugang von außen (optional, docs/remote-panels.md): ein zweiter Port nur für Cloudflare Access. Alle vier oder
     # keiner; ohne sie lädt der Server nichts davon (access.py).
     public_port: int = _env("PUBLIC_PORT", 0, _int(0, 65535))
     access_team: str = _env("ACCESS_TEAM", "", _team)
@@ -457,7 +457,7 @@ def _check_public(values: dict) -> None:
     missing = [_env_name(k) for k in PUBLIC_KEYS if k not in have]
     if missing:
         raise ValueError(f"{', '.join(_env_name(k) for k in have)} gesetzt, es fehlt {', '.join(missing)}: für den "
-                         "Zugang von außen alle vier setzen (docs/freunde.md), sonst keinen")
+                         "Zugang von außen alle vier setzen (docs/remote-panels.md), sonst keinen")
     if values["public_port"] == values.get("http_port", Config.http_port):
         raise ValueError("PUBLIC_PORT muss ein anderer Port sein als HTTP_PORT")
 

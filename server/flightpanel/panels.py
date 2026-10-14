@@ -238,7 +238,7 @@ def cmd_email(db: Db, cfg: Config, args) -> None:
         raise ValueError(f"{args.address!r} ist keine E-Mail-Adresse")
     db.identity_add("email", address, p["id"])
     print(f"{address} darf Panel {p['id']} im Browser sehen und einstellen. In Zero Trust die Adresse in die "
-          "Access-Gruppe der flightpanel-Anwendung aufnehmen (docs/freunde.md).")
+          "Access-Gruppe der flightpanel-Anwendung aufnehmen (docs/remote-panels.md).")
 
 
 def cmd_token(db: Db, cfg: Config, args) -> None:

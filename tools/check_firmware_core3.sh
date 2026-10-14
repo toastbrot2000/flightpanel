@@ -1,5 +1,5 @@
 #!/bin/sh
-# Freiwillige Variante mit Arduino-ESP32 3.x (env:esp32dev_core3) prüfen und bauen; Bauanleitung, Abschnitt 4.
+# Freiwillige Variante mit Arduino-ESP32 3.x (env:esp32dev_core3) prüfen und bauen; docs/hardware.md, Abschnitt 8.
 # In Docker wie tools/check_firmware.sh, aber im eigenen Volume flightpanel-pio-core3 (etwa 0,6 GB Download, danach
 # rund 6 GB): Das Werkzeug für 2.0.17 im Volume flightpanel-pio bleibt unberührt, tools/check_firmware.sh baut weiter
 # nur 2.0.17.
@@ -23,7 +23,7 @@
 # Nie im Build: platformio_local.ini (OTA-Passwort; ein eigenes [env:...] darin könnte die Plattform vor der Prüfung
 # tauschen) und include/secrets.h außer mit --mit-secrets in Schritt 5. Ohne eigene Prüfsumme bleiben wie bei 2.0.17:
 # git aus Debian (signiert), die Bibliotheken aus platformio.ini (HUB75 per Git-Commit, Adafruit mit der Prüfsumme der
-# PlatformIO-Registry). Geflasht wird mit einem geprüften esptool, nicht mit pio (Bauanleitung).
+# PlatformIO-Registry). Geflasht wird mit einem geprüften esptool, nicht mit pio (docs/hardware.md).
 set -e
 
 if [ "$1" != "--im-container" ]; then
@@ -207,7 +207,7 @@ cat > /out/flash.txt <<'EOF'
 esptool --chip esp32 --port PORT write-flash 0x1000 .pio/core3/bootloader.bin 0x8000 .pio/core3/partitions.bin 0xe000 .pio/core3/boot_app0.bin 0x10000 .pio/core3/firmware.bin
 EOF
 echo "   Firmware $(cat "$B/fw_version.txt") in firmware/.pio/core3/. Flashen per USB mit einem geprüften esptool"
-echo "   (Bauanleitung, Abschnitt 4), im Ordner firmware/:"
+echo "   (docs/hardware.md, Abschnitt 8), im Ordner firmware/:"
 echo "   $(cat /out/flash.txt)"
 if [ "$MIT_SECRETS" = --mit-secrets ]; then
   echo "   ACHTUNG: firmware.bin enthält WLAN-Passwort, OTA-Passwort und gegebenenfalls das Access-Secret aus"

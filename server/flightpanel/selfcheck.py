@@ -3,9 +3,9 @@
 Die Panels der Freunde vertrauen nicht dem ganzen Web, sondern nur den Wurzelzertifikaten in certs/roots.pem (die
 Firmware bettet dieselbe Datei ein). Stellt Cloudflare seine Zertifikatskette auf eine Wurzel außerhalb dieser Liste
 um, scheitern alle Panels an der Zertifikatsprüfung und bleiben dunkel, bis eine Firmware mit neuer Liste kommt
-(Rettungsmodus, docs/freunde.md, Abschnitt 9). Damit der Betreiber das vor den Freunden merkt, holt der Server einmal
-am Tag https://<PUBLIC_HOST>/panel/firmware.txt so, wie ein Panel es täte: nur mit roots.pem als Vertrauensliste, mit
-Prüfung des Namens, nur TLS 1.2 (mehr kann der ESP32 nicht). Jeder HTTP-Status heißt: TLS passt.
+(Rettungsmodus, docs/remote-panels.md#firmware-updates). Damit der Betreiber das vor den Freunden merkt, holt der
+Server einmal am Tag https://<PUBLIC_HOST>/panel/firmware.txt so, wie ein Panel es täte: nur mit roots.pem als
+Vertrauensliste, mit Prüfung des Namens, nur TLS 1.2 (mehr kann der ESP32 nicht). Jeder HTTP-Status heißt: TLS passt.
 
   - Scheitert die Zertifikatsprüfung: /ok meldet "Root-Liste veraltet" (main.App.problems), /issues trägt tls_roots
     mit dem Weg ein, bis ein Test wieder gelingt.
@@ -27,7 +27,8 @@ ROOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs", "roots
 TIMEOUT_S = 30
 FIX = ("Die Panels vertrauen nur den Wurzelzertifikaten in server/flightpanel/certs/roots.pem, und das Zertifikat von "
        "PUBLIC_HOST passt nicht mehr dazu. roots.pem aktualisieren und eine Firmware damit veröffentlichen "
-       "(tools/fw_release.sh, docs/freunde.md, Abschnitt 9); die Panels holen sie über den Rettungsmodus.")
+       "(tools/fw_release.sh, docs/remote-panels.md#firmware-updates); die Panels holen sie über den "
+       "Rettungsmodus.")
 MISSING = ("Ohne lesbare roots.pem prüft der Server nicht, ob die Panels dem Zertifikat von PUBLIC_HOST noch trauen. "
            "Die Datei gehört nach server/flightpanel/certs/roots.pem, dieselbe, die die Firmware einbettet.")
 

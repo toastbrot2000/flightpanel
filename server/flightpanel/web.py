@@ -98,7 +98,7 @@ NOT_LAN = ("Unter diesem Namen antwortet der LAN-Port nicht: nur unter IP-Adress
            "in seiner secrets.h), in .env unter LAN_HOSTS eintragen, etwa LAN_HOSTS=nas.fritz.box, und den Server neu "
            "starten.\n")
 VIA_CLOUDFLARE = ("Diese Anfrage kam über Cloudflare an den LAN-Port. Der Tunnel gehört an PUBLIC_PORT, nie an den "
-                  "LAN-Port: Der hat keine Anmeldung (docs/freunde.md).\n")
+                  "LAN-Port: Der hat keine Anmeldung (docs/remote-panels.md).\n")
 FOREIGN_ORIGIN = "Schreiben nur von den Seiten dieses Servers aus dem LAN (Origin fremd).\n"
 
 PREVIEW_HTML = """<!doctype html><meta charset="utf-8"><title>flightpanel</title>

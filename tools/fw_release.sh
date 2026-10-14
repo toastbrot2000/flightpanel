@@ -96,7 +96,7 @@ if [ "$dry" = 0 ]; then
     esac
   done
   grep -q -e "-----BEGIN ENCRYPTED PRIVATE KEY-----" -e "^Proc-Type: 4,ENCRYPTED" "$key" \
-    || die "der Schlüssel hat keine Passphrase (erwartet: BEGIN ENCRYPTED PRIVATE KEY); neu anlegen, Bauanleitung Abschnitt 4"
+    || die "der Schlüssel hat keine Passphrase (erwartet: BEGIN ENCRYPTED PRIVATE KEY); neu anlegen, docs/hardware.md Abschnitt 7"
   [ -f "$PUB" ] || die "$PUB fehlt: Ein Release ohne Update-Prüfung käme nie wieder vom Panel (Vorlage: fw_pubkey.h.example)"
   pubsrc=$PUB
 elif [ -f "$PUB" ]; then
