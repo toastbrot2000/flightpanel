@@ -1,8 +1,7 @@
 # Remote panels: example, instructions in docs/remote-panels.md.
 #
 # Usage: copy to compose.override.yml and replace the placeholders in <angle brackets>. Compose reads that file
-# automatically next to compose.yml; it is listed in .gitignore (domain and tunnel don't belong in a public
-# repository):
+# automatically next to compose.yml:
 #
 #   cp compose.public.example.yml compose.override.yml
 #   docker compose up -d
@@ -44,7 +43,7 @@ services:
     env_file:
       - cloudflared.env
     networks:
-      - public          # this network only: cloudflared sees nothing on your network except the server
+      - public          # this network only: the server is the only container cloudflared can reach (it still has internet access, which it needs)
     cap_drop:
       - ALL
     security_opt:

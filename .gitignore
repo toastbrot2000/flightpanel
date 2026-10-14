@@ -11,13 +11,14 @@ data/*.db
 data/*.db-*
 data/*.db.*
 data/*.bak
+data/*.tmp
+data/*.log
+# Files of older versions (imported into the database at first start)
 data/*.imported
 data/cache.json
 data/issues.json
 data/stats.json
 data/tle.txt
-data/*.tmp
-data/*.log
 # Logos are airline trademarks: the server fetches them itself, hand-made ones stay local too
 data/logos/*
 # Firmware releases (tools/fw_release.sh): signed images belong on the server, not in the repository
@@ -34,9 +35,3 @@ __pycache__/
 # Remote panels (docs/remote-panels.md): your compose override (domain, tunnel) and the tunnel token
 compose.override.yml
 cloudflared.env
-
-# Worktrees of Claude Code sessions (separate Git checkouts, never commit)
-.claude/worktrees/
-
-# Internal planning documents
-docs/superpowers/

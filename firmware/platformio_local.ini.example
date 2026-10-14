@@ -17,4 +17,4 @@
 
 [env:esp32dev_ota]
 upload_flags =
-    --auth=HIER_DAS_OTA_PASSWORT
+    --auth=YOUR_OTA_PASSWORD
