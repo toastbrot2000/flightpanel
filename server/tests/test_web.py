@@ -515,6 +515,19 @@ def test_a_page_elsewhere_cannot_clear_issues(tmp_path, origin):
     asyncio.run(run())
 
 
+def test_the_pages_of_a_panel_are_never_cached(tmp_path):
+    """Was diese Seiten zeigen, gehört zu einem Panel (am Zugang von außen: zu einer Anmeldung). Ein Cache davor, etwa
+    eine Regel "Cache Everything" bei Cloudflare, gäbe sonst einem Freund die Seite eines anderen. Beide Ports haben
+    dieselben Handler; die Firmware-Datei darf einen Tag im Cache bleiben (test_firmware_files_...)."""
+    async def run():
+        async with lan(tmp_path) as (_app, client):
+            for path in ("/", "/display.json", "/stats", "/idle", "/frame.png"):
+                r = await client.get(path)
+                assert r.status == 200 and r.headers.get("Cache-Control") == "no-store", path
+
+    asyncio.run(run())
+
+
 def test_the_panel_renders_at_the_largest_allowed_seconds(tmp_path):
     """Sekunden je Infoseite, Flug und Leerlauf-Karte gehen bis zu einem Tag (config.py); auch dann rechnet jedes Bild
     mit der Uhrzeit, ohne Überlauf."""

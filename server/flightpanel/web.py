@@ -88,6 +88,9 @@ PUBLIC_MAX_BODY = 16 * 1024     # größte Anfrage am Zugang von außen (aiohttp
 # einer ist dann einfach kein JSON. Für beide Ports.
 HANDLER_ARGS = {"auto_decompress": False}
 WARN_EVERY_S = 60       # Absagen des Schutzes stehen höchstens so oft im Log
+# Die Seiten eines Panels gehören zu ihm, am Zugang von außen zu einer Anmeldung: Ein Cache davor (etwa eine Regel
+# "Cache Everything" bei Cloudflare) gäbe sonst einem Freund die Seite eines anderen. Nur firmware.bin darf hinein.
+NO_STORE = {"Cache-Control": "no-store"}
 
 NOT_LAN = ("Unter diesem Namen antwortet der LAN-Port nicht: nur unter IP-Adressen, localhost, Namen ohne Punkt und "
            "Namen auf .local, .home.arpa und .internal (Schutz vor DNS-Rebinding). Weitere Namen, auch den, den der "
@@ -401,8 +404,8 @@ def _manifest_version(data_dir: str, channel: str) -> bytes | None:
 
 
 # ------------------------------------------------------------------------------------------- Handler --
-def _pretty(obj) -> web.Response:
-    return web.json_response(obj, dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=1))
+def _pretty(obj, headers: dict[str, str] | None = None) -> web.Response:
+    return web.json_response(obj, dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=1), headers=headers)
 
 
 class Handlers:
@@ -489,10 +492,10 @@ class Handlers:
             links=" ".join(f'<a href="{esc(path)}">{esc(path.lstrip("/"))}</a>' for path in self.links),
             health=' data-health="/health"' if "/health" in self.links else "",
             cards=" ".join(f'<a href="{esc(f"/?layout={layout}&card={c}")}">{esc(c)}</a>' for c in p.idle.cards))
-        return web.Response(text=page, content_type="text/html")
+        return web.Response(text=page, content_type="text/html", headers=NO_STORE)
 
     async def display(self, req: web.Request) -> web.Response:
-        return web.Response(text=self.panel(req).model.to_json(), content_type="application/json")
+        return web.Response(text=self.panel(req).model.to_json(), content_type="application/json", headers=NO_STORE)
 
     async def ok(self, req: web.Request) -> web.Response:
         problems = self.app.problems(time.time())
@@ -514,8 +517,8 @@ class Handlers:
 
     async def stats(self, req: web.Request) -> web.Response:
         # Landerichtung: für alle Panels gleich
-        return _pretty({**self.panel(req).stats.report(), "course": self.app.airfield.report()})
+        return _pretty({**self.panel(req).stats.report(), "course": self.app.airfield.report()}, NO_STORE)
 
     async def idle(self, req: web.Request) -> web.Response:
         p = self.panel(req)
-        return _pretty(p.idle.status(p.model, time.time()))
+        return _pretty(p.idle.status(p.model, time.time()), NO_STORE)

@@ -205,6 +205,18 @@ def test_a_browser_sees_the_preview_of_its_own_panel(tmp_path):
     asyncio.run(run())
 
 
+def test_the_pages_of_a_panel_are_never_cached_outside_either(tmp_path):
+    """Jede Seite gehört zu einer Anmeldung: Auch mit einer Regel "Cache Everything" bei Cloudflare bekäme ein Freund
+    nie die eines anderen."""
+    async def run():
+        async with public(tmp_path) as (_app, _gate, client):
+            for path in ("/", "/display.json", "/stats", "/idle", "/frame.png", "/settings"):
+                r = await client.get(path, headers=browser())
+                assert r.status == 200 and r.headers.get("Cache-Control") == "no-store", path
+
+    asyncio.run(run())
+
+
 def test_a_panel_gets_its_frame_with_etag(tmp_path):
     async def run():
         async with public(tmp_path) as (app, _gate, client):
