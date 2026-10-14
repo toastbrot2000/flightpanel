@@ -4,6 +4,7 @@ verständliche Meldung, wenn DATA_DIR nicht beschreibbar ist."""
 import asyncio
 import json
 import os
+import shlex
 import shutil
 import time
 
@@ -12,6 +13,7 @@ import pytest
 from aiohttp import web
 
 from conftest import FIXTURES, make_cfg
+from flightpanel import panels
 from flightpanel.db import Db, db_path
 from flightpanel.main import App, _main, check_data_dir
 from flightpanel.stats import Stats
@@ -139,6 +141,38 @@ def test_a_stored_value_that_no_longer_parses_is_skipped_and_the_rest_applies(tm
             await app.session.close()
 
     asyncio.run(run())
+
+
+def test_the_command_suggested_for_skipped_settings_works(tmp_path, caplog, monkeypatch):
+    """Der Befehl aus Log und /issues muss gehen, so wie er dasteht: Hier zerlegt ihn shlex wie die Shell, und panels
+    führt ihn aus. Dazu gehören Schlüssel, die von Hand in die Datenbank kamen und die unset nicht fand oder nicht
+    löschen konnte: klein geschrieben (home_lon, auch ein veralteter Name oder eine Karte) oder mit Leerzeichen
+    (Anführungszeichen). Danach meldet der nächste Start nichts mehr, und es gilt, was der Server angenommen hatte."""
+    stored(tmp_path, {"HOME_LAT": "51.0", "home_lon": "13.4", "old_setting": "1", "card_pigeon": "0",
+                      "view from": "45", "RADIUS_KM": "nan"})
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))                       # panels.main() liest die Umgebung
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+
+    async def start() -> set[str]:
+        """Ein Start des Servers; die Befehle, die er für übergangene Einstellungen nennt (ein Befehl für alle)."""
+        with caplog.at_level("WARNING"):
+            app = App(cfg, env={})
+        try:
+            assert app.cfg.home_lat == 51.0
+            return {it["example"]["fix"] for key, it in app.issues.items.items() if key.startswith("setting:")}
+        finally:
+            await app.session.close()
+            app.db.close()
+
+    (fix,) = asyncio.run(start())
+    assert any(fix in r.getMessage() for r in caplog.records)           # dasselbe steht im Log
+    argv = shlex.split(fix)
+    assert argv[:5] == ["python", "-m", "flightpanel.panels", "unset", "home"]
+    assert set(argv[5:]) == {"home_lon", "old_setting", "card_pigeon", "view from", "RADIUS_KM"}
+    assert panels.main(argv[3:]) == 0
+    assert asyncio.run(start()) == set()
+    again = Db(db_path(str(tmp_path)), put_aside=False)
+    assert again.panel_get("home")["settings"] == {"HOME_LAT": "51.0"}
 
 
 def test_a_database_put_aside_at_the_start_shows_in_issues_ok_and_health(tmp_path, caplog):

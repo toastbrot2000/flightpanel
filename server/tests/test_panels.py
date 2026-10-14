@@ -114,6 +114,66 @@ def test_a_stale_stored_key_can_still_be_removed(run, tmp_path):
     assert code == 2 and "keine Panel-Einstellung: OLD_SETTING" in err
 
 
+def _stored(tmp_path, settings: dict) -> None:
+    """Das Panel home mit diesen Einstellungen, wie sie eine Handänderung der Datenbank hinterlässt."""
+    Db(str(tmp_path / "flightpanel.db")).panel_set_settings("home", settings)
+
+
+@pytest.mark.parametrize("typed", ["home_lat", "HOME_LAT", "Home_Lat"])
+def test_unset_removes_a_key_stored_in_another_spelling(run, tmp_path, typed):
+    """Von Hand in die Datenbank geschrieben (home_lat): Der Server liest nur HOME_LAT, übergeht den Schlüssel und rät
+    zu unset mit genau dieser Schreibweise. Der Befehl machte den Namen groß, die gespeicherte Schreibweise blieb
+    dabei stehen, und das strenge Speichern scheiterte an ihr: Sie ließ sich nicht mehr entfernen. Namen gelten in
+    jeder Schreibweise, getippt wie gespeichert."""
+    _stored(tmp_path, {"home_lat": "52.5", "VIEW_FROM": "110"})
+    assert run("unset", "home", typed)[0] == 0
+    assert run("show", "home")[1] == "VIEW_FROM=110\n"
+
+
+def test_unset_removes_every_spelling_of_a_name(run, tmp_path):
+    """Der Name meint die Einstellung, nicht eine Schreibweise: Auch ein richtig geschriebener Schlüssel daneben geht
+    mit (der Server rät zu einem Befehl für alle übergangenen Schlüssel zusammen, danach wird neu gesetzt)."""
+    _stored(tmp_path, {"HOME_LAT": "52.5", "home_lat": "50.0", "VIEW_FROM": "110"})
+    assert run("unset", "home", "home_lat")[0] == 0
+    assert run("show", "home")[1] == "VIEW_FROM=110\n"
+
+
+def test_resetting_with_set_removes_a_key_stored_in_another_spelling(run, tmp_path):
+    """KEY= (leer) setzt zurück wie unset: auch den Schlüssel in anderer Schreibweise, bekannte Namen wie veraltete."""
+    _stored(tmp_path, {"home_lat": "52.5", "old_setting": "1", "VIEW_FROM": "110"})
+    assert run("set", "home", "HOME_LAT=", "old_setting=")[0] == 0
+    assert run("show", "home")[1] == "VIEW_FROM=110\n"
+
+
+def test_setting_a_value_replaces_every_stored_spelling(run, tmp_path):
+    """Sonst bliebe die klein geschriebene Zeile neben dem neuen Wert stehen, und das strenge Speichern lehnte den
+    ganzen Befehl ab."""
+    _stored(tmp_path, {"home_lat": "50.0", "Home_Lat": "51.0", "VIEW_FROM": "110"})
+    assert run("set", "home", "home_lat=52.5")[0] == 0
+    assert run("show", "home")[1] == "HOME_LAT=52.5\nVIEW_FROM=110\n"
+    assert run("set", "home", "HOME_LAT=51", "home_lat=")[0] == 0           # die letzte Angabe gilt: zurückgesetzt
+    assert run("show", "home")[1] == "VIEW_FROM=110\n"
+
+
+def test_a_stale_key_stored_in_lowercase_can_still_be_removed(run, tmp_path):
+    """Veraltetes in anderer Schreibweise (der Name ist keiner, den set annähme) gilt als gespeichert: Es geht weg, und
+    danach ist es wieder nur ein unbekannter Name."""
+    _stored(tmp_path, {"HOME_LAT": "52.5", "old_setting": "1", "card_gone": "0"})
+    assert run("unset", "home", "OLD_SETTING", "card_gone")[0] == 0
+    assert run("show", "home")[1] == "HOME_LAT=52.5\n"
+    code, _, err = run("unset", "home", "old_setting")
+    assert code == 2 and "keine Panel-Einstellung: OLD_SETTING" in err
+
+
+def test_unset_still_refuses_a_name_that_is_stored_in_no_spelling(run, tmp_path):
+    """Ein Tippfehler bleibt ein Fehler, auch wenn daneben Schlüssel in anderer Schreibweise stehen; gespeichert wird
+    nichts."""
+    _stored(tmp_path, {"home_lat": "52.5"})
+    code, _, err = run("unset", "home", "home_latt")
+    assert code == 2 and "keine Panel-Einstellung: HOME_LATT" in err
+    assert run("show", "home")[1] == "home_lat=52.5\n"
+
+
 def test_backup(run, tmp_path):
     assert run("backup", str(tmp_path / "copy.db"))[0] == 0 and (tmp_path / "copy.db").exists()
 

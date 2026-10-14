@@ -14,6 +14,9 @@ Panel-Einstellungen sind Standort, Sichtfeld, Anzeige, Helligkeit und Ruhezeit u
 Leerlauf-Karten (CARD_<ID>=0); sie liegen je Panel in DATA_DIR/flightpanel.db. Alles
 andere (Flughafen, Quellen, Logos, Betrieb) steht in .env.
 
+Namen gelten in jeder Schreibweise (home_lat wie HOME_LAT). set und unset treffen auch einen
+Schlüssel, der von Hand klein geschrieben in die Datenbank kam, und räumen ihn weg.
+
 Im Container:
   docker compose exec flightpanel python3 -m flightpanel.panels set home HOME_LAT=52.52 HOME_LON=13.40
 Der Server liest die Einstellungen beim Start: danach docker compose restart flightpanel."""
@@ -66,11 +69,26 @@ def cmd_show(db: Db, cfg: Config, args) -> None:
         print(f"{p['id']}: nichts gesetzt, alles auf Default (keys zeigt die Defaults)")
 
 
-def _check_reset(cfg: Config, stored: dict[str, str], keys: list[str]) -> None:
-    """Zurücksetzen (KEY= in set, unset) nimmt, was gespeichert ist, auch Veraltetes: So lässt es sich löschen. Alles
-    andere muss ein Name sein, den set annähme; sonst bliebe ein Tippfehler, ein Server-Schlüssel oder KEY=WERT in
-    unset still wirkungslos."""
-    unstored = [k for k in keys if k not in stored]
+def _name(key: str) -> str:
+    """Der Name einer Einstellung, wie die Befehle ihn vergleichen: groß geschrieben und ohne Rand. Getippt gilt jede
+    Schreibweise (home_lat), und genauso für das, was in der Datenbank steht."""
+    return key.strip().upper()
+
+
+def _spellings(stored: dict[str, str], names: set[str]) -> list[str]:
+    """Die gespeicherten Schlüssel zu den Namen, jeder in der Schreibweise, in der er gespeichert ist. Von Hand in die
+    Datenbank geschrieben, steht dort mitunter home_lat statt HOME_LAT: Der Server liest das nicht, übergeht es und rät
+    zu unset mit genau diesem Schlüssel. Setzen und Zurücksetzen müssen ihn treffen, sonst bliebe er stehen, und das
+    strenge Speichern (_save) lehnte jeden Befehl ab, solange er da ist."""
+    return [k for k in stored if _name(k) in names]
+
+
+def _check_reset(cfg: Config, stored: dict[str, str], names: list[str]) -> None:
+    """Zurücksetzen (KEY= in set, unset) nimmt, was gespeichert ist, in jeder Schreibweise, auch Veraltetes: So lässt es
+    sich löschen. Alles andere muss ein Name sein, den set annähme; sonst bliebe ein Tippfehler, ein Server-Schlüssel
+    oder KEY=WERT in unset still wirkungslos. names: Namen im Sinne von _name."""
+    have = {_name(k) for k in stored}
+    unstored = [k for k in names if k not in have]
     for key in unstored:
         _check_card(key)
     # Leer gilt als nicht gesetzt: for_panel meldet nur, welche Namen keine Panel-Einstellung sind
@@ -89,23 +107,25 @@ def cmd_set(db: Db, cfg: Config, args) -> None:
     reset = []
     for item in args.pairs:
         key, sep, value = item.partition("=")
-        key = key.strip().upper()
+        key = _name(key)
         if not sep or not key:
             raise ValueError(f"erwartet KEY=WERT, nicht {item!r}")
+        for spelling in _spellings(new, {key}):     # auch home_lat, wenn HOME_LAT gemeint ist: Die letzte Angabe gilt
+            del new[spelling]
         if value.strip():
             _check_card(key)
             new[key] = value.strip()
         else:
             reset.append(key)
-            new.pop(key, None)
     _check_reset(cfg, p["settings"], reset)
     _save(db, cfg, p, new)
 
 
 def cmd_unset(db: Db, cfg: Config, args) -> None:
     p = _need(db, args.id)
-    gone = {k.strip().upper() for k in args.keys}
-    _check_reset(cfg, p["settings"], sorted(gone))
+    names = {_name(k) for k in args.keys}
+    _check_reset(cfg, p["settings"], sorted(names))
+    gone = _spellings(p["settings"], names)
     _save(db, cfg, p, {k: v for k, v in p["settings"].items() if k not in gone})
 
 

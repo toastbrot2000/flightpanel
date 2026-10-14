@@ -9,6 +9,7 @@ mitgelieferte Daten liegen in DATA_DIR (Docker: ./data)."""
 import asyncio
 import logging
 import os
+import shlex
 import signal
 import sys
 import time
@@ -230,8 +231,10 @@ class App:
         """Gespeicherte Panel-Einstellungen, die nicht (mehr) gelten: Eine spätere Fassung kennt sie nicht oder prüft
         strenger, oder jemand hat die Datenbank von Hand geändert. Der Server startet mit dem Rest, statt in einer
         Neustartschleife zu hängen; Log und /issues nennen sie und einen Befehl für alle zusammen (panels prüft beim
-        Zurücksetzen des einen auch die anderen, einzeln ginge es nicht)."""
-        fix = f"python -m flightpanel.panels unset {pid} {' '.join(key for key, _ in skipped)}"
+        Zurücksetzen des einen auch die anderen, einzeln ginge es nicht). Die Schlüssel stehen so, wie die Shell sie
+        liest (shlex.quote): Von Hand geschriebene haben mitunter Leerzeichen oder Sonderzeichen und blieben sonst nicht
+        ein Argument. Klein oder groß geschrieben, panels findet sie in jedem Fall (panels._name)."""
+        fix = f"python -m flightpanel.panels unset {pid} {' '.join(shlex.quote(key) for key, _ in skipped)}"
         log.warning("Panel %s: übergangen, es gilt der Default: %s. Beheben: %s, danach Gewolltes neu setzen "
                     "(set %s KEY=WERT)", pid, "; ".join(why for _, why in skipped), fix, pid)
         for key, why in skipped:
