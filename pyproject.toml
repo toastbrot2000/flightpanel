@@ -19,7 +19,7 @@ target-version = "py312"
 # S608: SQL nur mit Platzhaltern, nie zusammengebaut (db.py und die Speicher)
 select = ["E", "F", "W", "B", "I", "UP", "RUF", "S608"]
 ignore = [
-    "UP031",    # %-Format in der Vorschauseite: das HTML enthält JavaScript mit geschweiften Klammern
+    "UP031",    # %-Format, wo der Text selbst geschweifte Klammern hat (JSON in den Tests)
 ]
 
 [tool.ruff.lint.isort]

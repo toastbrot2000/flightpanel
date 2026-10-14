@@ -7,14 +7,18 @@ seine Leerlauf-Karten, seine Statistik und sein Album (stats.py) und die ISS-Üb
 (astro.Iss). Das Panel am LAN-Port (LAN_PANEL) ist eines davon; weitere legt panels add an.
 
 Ein Panel ruht in seiner Ruhezeit (QUIET_HOURS) und wenn es aus ist: Ein weiteres Panel, dessen Fenster weiter als
-PANEL_MAX_KM vom Flughafen liegt (config.too_far), ruft nicht ab, statt den Abruf für alle zu vergrößern."""
+PANEL_MAX_KM vom Flughafen liegt (config.too_far), ruft nicht ab, statt den Abruf für alle zu vergrößern.
+
+Sein ESP32 holt das Bild über web.py (/panel/frame): Panel.fetched zählt die Abrufe, meldet Lücken in /issues und
+merkt sich die Diagnose, die es dabei schickt (vier Zahlen, web.parse_diag). Firmware bekommt es aus seinem Kanal
+(channel: stable oder canary, DATA_DIR/firmware/<Kanal>/)."""
 
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from .astro import Iss
 from .cards import CARDS
-from .config import Config, in_hours
+from .config import FW_CHANNELS, Config, in_hours
 from .geo import haversine_km
 from .idle import IdleScreen
 from .model import DisplayModel, State
@@ -26,6 +30,7 @@ if TYPE_CHECKING:
 
 MAX_FETCH_KM = 250 * 1.852      # adsb.lol liefert höchstens 250 nm um einen Punkt
 DAY_MIN = 24 * 60
+ESP32_GAP_S = 30                # so lange ohne Abruf des Bildes: eine Lücke in /issues (esp32_gap)
 
 
 def fetch_circle(cfgs: list[Config]) -> tuple[float, float, float]:
@@ -50,12 +55,18 @@ def active_seconds(cfgs: list[Config]) -> int:
     return 60 * sum(1 for minute in range(DAY_MIN) if any(not in_hours(c.quiet_hours, minute) for c in cfgs))
 
 
+def fw_channel(stored) -> str:
+    """Der Firmware-Kanal aus der Datenbank (Spalte fw_channel): stable oder canary. Alles andere (von Hand
+    geändert) gilt als stable; als Teil eines Pfades (DATA_DIR/firmware/<Kanal>/) kommt nur einer der beiden vor."""
+    return stored if stored in FW_CHANNELS else "stable"
+
+
 class Panel:
     def __init__(self, app: "App", pid: str, cfg: Config, created: float = 0.0, updated: float = 0.0,
-                 off: str | None = None):
+                 off: str | None = None, channel: str = "stable"):
         """app: was alle Panels teilen (db, names, rare, logos, metar, orbit, airfield). created und updated: die
         Zeitstempel seiner Zeile in der Datenbank, an denen main.App Änderungen erkennt. off: warum es nicht
-        abruft (config.too_far), sonst None."""
+        abruft (config.too_far), sonst None. channel: sein Firmware-Kanal (fw_channel)."""
         self.app = app
         self.id = pid
         self.created = created
@@ -63,15 +74,17 @@ class Panel:
         self.iss = Iss(cfg, app.orbit) if app.orbit is not None else None
         self.model = DisplayModel(empty=True, source="startup", landing_course=app.airfield.landing_course)
         self.renderer: Renderer | None = None
-        self.last_frame_fetch = 0.0     # setzt web.py bei jedem /frame
+        self.last_frame_fetch = 0.0     # setzt fetched() bei jedem Abruf des Bildes
         self.frame_count = 0
-        self.configure(cfg, updated, off)
+        self.diag: dict[str, int] = {}  # was sein ESP32 beim letzten Abruf meldete: nur Zahlen (web.parse_diag)
+        self.configure(cfg, updated, off, channel)
 
-    def configure(self, cfg: Config, updated: float = 0.0, off: str | None = None) -> None:
+    def configure(self, cfg: Config, updated: float = 0.0, off: str | None = None, channel: str = "stable") -> None:
         """Einstellungen anwenden: beim Start und wenn panels.py sie geändert hat. Album und Statistik, das letzte
         Modell, die Abrufe des ESP32 und die Seite, die gerade dran ist, bleiben; Leerlauf-Karten und Renderer
         entstehen neu, die ISS-Überflüge rechnet der nächste Lauf von main.App.astro_loop neu."""
         self.cfg, self.updated, self.off = cfg, updated, off
+        self.channel = fw_channel(channel)
         self.stats.cfg = cfg
         if self.iss is not None:
             self.iss.cfg, self.iss.passes_at = cfg, 0
@@ -96,10 +109,21 @@ class Panel:
         für die anderen Panels weiter."""
         return haversine_km(self.cfg.home_lat, self.cfg.home_lon, s.lat, s.lon) <= self.cfg.fetch_radius_km
 
+    def fetched(self, now: float, diag: dict[str, int]) -> None:
+        """Sein ESP32 hat das Bild abgerufen (web.py, /panel/frame; ein 304 zählt auch). Eine Lücke über ESP32_GAP_S
+        kommt nach /issues, beim Panel am LAN-Port wie bisher unter "frames", sonst unter "frames <id>". diag: was es
+        dabei meldete (web.parse_diag); es gilt, was der letzte Abruf schickte."""
+        if self.last_frame_fetch and now - self.last_frame_fetch > ESP32_GAP_S:
+            key = "frames" if self.id == self.cfg.lan_panel else f"frames {self.id}"
+            self.app.issues.note("esp32_gap", key, gap_s=round(now - self.last_frame_fetch))
+        self.last_frame_fetch = now
+        self.frame_count += 1
+        self.diag = diag
+
     def summary(self, now: float) -> dict:
-        """Für /health: was es zeigt, ob es aus ist, wann sein ESP32 zuletzt da war."""
+        """Für /health: was es zeigt, ob es aus ist, wann sein ESP32 zuletzt da war und was es dabei meldete."""
         age = now - self.last_frame_fetch if self.last_frame_fetch else None
         return {"flights": len(self.model.flights), "model_stale": self.model.stale,
                 "brightness_now": self.renderer.brightness(now), "off": self.off,
                 "esp32": {"last_fetch_age_s": round(age) if age is not None else None, "fetches": self.frame_count,
-                          "alive": age is not None and age < 300}}
+                          "alive": age is not None and age < 300, "diag": dict(self.diag)}}

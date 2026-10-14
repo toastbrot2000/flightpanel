@@ -1,134 +1,412 @@
-"""HTTP: Bild für den ESP32, Vorschau im Browser, Zustand und Statistik. Bedient wird das Panel am LAN-Port
-(LAN_PANEL); /health, /ok und /issues gelten für den ganzen Server.
+"""HTTP: Bild für den ESP32, Vorschau im Browser, Zustand und Statistik.
 
-  GET  /              Vorschauseite (lädt /frame.png alle 2 s neu)
-  GET  /frame         Binär für den ESP32: [1, Helligkeit, Breite, Höhe] + RGB
-  GET  /frame.png     Vorschau; ?layout=A|B|C, ?card=<id> erzwingt eine Leerlauf-Karte
-                      (mit Beispieldaten, wenn sie gerade nichts zu sagen hat), ?scale=N, ?gap=0
-  GET  /display.json  aktuelles Display-Modell, mit allen Flugzeugen im Radius (nearby)
-  GET  /health        Zustand der Quellen, Logos, letzter ESP32-Abruf
-  GET  /ok            200 "ok", sonst 503 mit Gründen: für Docker-Healthcheck und Uptime-Monitore
-  GET  /issues        gesammelte Auffälligkeiten (issues.py); POST /issues/clear leert
-  GET  /stats         Statistik und Sammelalbum (stats.py)
-  GET  /idle          Leerlauf-Karten: welche gerade etwas zu sagen haben, welche dran ist
+Ein Satz Handler (Handlers) für jeden Port; welches Panel eine Anfrage meint, sagt ein Resolver (resolve(req) ->
+Panel). Am LAN-Port (make_web_app, HTTP_PORT) ist es immer das Panel am LAN-Port (LAN_PANEL), ohne Anmeldung;
+/health, /ok und /issues gelten für den ganzen Server. Jede Route meldet add() an und vermerkt sie (ROUTES).
+
+  GET  /                    Vorschauseite (lädt /frame.png alle 2 s neu)
+  GET  /panel/frame         Binär für den ESP32: [1, Helligkeit, Breite, Höhe] + RGB. ETag ist ein kurzer Hash der
+                            Bytes, ein gleiches Bild kommt auf If-None-Match als 304 ohne Inhalt. Diagnose im Header
+                            X-Panel (parse_diag). /frame ist dasselbe (ältere Firmware)
+  GET  /panel/firmware.txt  Firmware-Manifest aus dem Kanal des Panels (DATA_DIR/firmware/<Kanal>/), nie gecacht
+  GET  /panel/firmware.bin?v=<Version>
+                            das Image dazu, nur zur Version im Manifest; einen Tag im Cache (Cloudflare)
+  GET  /frame.png           Vorschau; ?layout=A|B|C, ?card=<id> erzwingt eine Leerlauf-Karte
+                            (mit Beispieldaten, wenn sie gerade nichts zu sagen hat), ?scale=N, ?gap=0
+  GET  /display.json        aktuelles Display-Modell, mit allen Flugzeugen im Radius (nearby)
+  GET  /health              Zustand der Quellen, Logos, letzter ESP32-Abruf, eine Zeile je Panel
+  GET  /ok                  200 "ok", sonst 503 mit Gründen: für Docker-Healthcheck und Uptime-Monitore
+  GET  /issues              gesammelte Auffälligkeiten (issues.py); POST /issues/clear leert
+  GET  /stats               Statistik und Sammelalbum (stats.py)
+  GET  /idle                Leerlauf-Karten: welche gerade etwas zu sagen haben, welche dran ist
+  GET  /settings            Einstellungsseite (settings.py), nur mit SETTINGS_PAGE=1; POST speichert
+  GET  /static/<Name>       Skripte und Stile der Seiten: eine feste Liste von Dateien, nie ein Verzeichnis
+
+Der LAN-Port hat keine Anmeldung und gehört nur ins LAN. Darum (lan_guard):
+  - Er antwortet nur unter Namen aus dem LAN (lan_host): IP-Adressen, localhost, Namen ohne Punkt, *.local,
+    *.home.arpa und LAN_HOSTS; sonst 421. Gegen DNS-Rebinding: Eine fremde Website lässt ihren Namen auf den Server
+    zeigen, dann schickt der Browser im LAN ihren Namen als Host.
+  - Ist der Zugang von außen eingerichtet (Config.public), sagt er 403 zu allem, was Cloudflare-Header trägt: Dann
+    hängt der Tunnel am falschen Port.
+  - Schreiben nur mit einem Origin aus dem LAN (lan_origin); POST /issues/clear auch ganz ohne (curl im README).
+  - Jede Antwort trägt SECURITY_HEADERS, auch Fehler und statische Dateien: Skripte und Stile kommen nur als Dateien
+    vom Server selbst, nie aus der Seite.
 """
 
+import hashlib
+import html
+import ipaddress
 import json
+import logging
+import os
+import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from aiohttp import web
 from PIL import Image
 
-from .config import LAYOUTS, parse_layout
+from .config import LAYOUTS, Config, parse_layout
 from .render import Renderer
 
 if TYPE_CHECKING:
     from .main import App
+    from .panel import Panel
 
-ESP32_GAP_S = 30        # so lange ohne /frame: als Lücke in /issues
+log = logging.getLogger("web")
+
+Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
+Resolver = Callable[[web.Request], "Panel | None"]
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+CF_HEADERS = ("Cf-Ray", "Cf-Connecting-Ip", "Cf-Access-Jwt-Assertion")
+LAN_SUFFIXES = (".local", ".home.arpa")
+LAN_LINKS = ("/display.json", "/health", "/issues", "/stats", "/idle")     # was die Vorschau am LAN-Port verlinkt
+WARN_EVERY_S = 60       # Absagen des Schutzes stehen höchstens so oft im Log
+
+NOT_LAN = ("Unter diesem Namen antwortet der LAN-Port nicht: nur unter IP-Adressen, localhost, Namen ohne Punkt, "
+           "*.local und *.home.arpa (Schutz vor DNS-Rebinding). Weitere Namen in .env unter LAN_HOSTS eintragen, "
+           "etwa LAN_HOSTS=nas.fritz.box, und den Server neu starten.\n")
+VIA_CLOUDFLARE = ("Diese Anfrage kam über Cloudflare an den LAN-Port. Der Tunnel gehört an PUBLIC_PORT, nie an den "
+                  "LAN-Port: Der hat keine Anmeldung (docs/freunde.md).\n")
+FOREIGN_ORIGIN = "Schreiben nur von den Seiten dieses Servers aus dem LAN (Origin fremd).\n"
 
 PREVIEW_HTML = """<!doctype html><meta charset="utf-8"><title>flightpanel</title>
-<style>body{background:#111;color:#ccc;font:14px system-ui;margin:24px}
-img{image-rendering:pixelated;display:block;margin:12px 0;border:1px solid #333}
-a{color:#8ab;margin-right:14px}</style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/preview.css">
+<script src="/static/preview.js" defer></script>
 <h2>flightpanel</h2>
-<img id="f" src="/frame.png?layout=%(layout)s&card=%(card)s" alt="frame">
+<img id="f" src="{frame}" alt="frame">
 <div>Layout:
-%(layouts)s
-| <a href="/display.json">display.json</a><a href="/health">health</a><a href="/issues">issues</a>
-<a href="/stats">stats</a><a href="/idle">idle</a></div>
-<p id="s" style="color:#d9a33a"></p>
-<p>Leerlauf-Karte erzwingen (passt die Lage nicht, mit Beispieldaten): <a href="/">aus</a> %(cards)s</p>
-<script>
-setInterval(() => {
-  document.getElementById('f').src = '/frame.png?layout=%(layout)s&card=%(card)s&t=' + Date.now();
-}, 2000);
-const status = () => fetch('/health').then(r => r.json()).then(h => {
-  document.getElementById('s').textContent =
-    h.brightness_now === 0 ? 'Ruhezeit (QUIET_HOURS): Das Panel ist dunkel, der Server ruft nichts ab.'
-    : h.model_stale ? 'Keine frischen Flugdaten: Das Bild ist gedimmt, siehe /health und /issues.' : '';
-}).catch(() => {});
-status();
-setInterval(status, 10000);
-</script>
+{layouts}
+| {links}</div>
+<p id="s"{health}></p>
+<p>Leerlauf-Karte erzwingen (passt die Lage nicht, mit Beispieldaten): <a href="/">aus</a> {cards}</p>
 """
 
 
+# ---------------------------------------------------------------------------------------- statische Dateien --
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+STATIC_TYPES = {".css": "text/css", ".js": "text/javascript"}
+
+
+def read_static(*names: str) -> dict[str, bytes]:
+    """Skripte und Stile aus static/, gelesen beim Import: Ausgeliefert wird nur, was hier mit Namen steht, nie ein
+    Verzeichnis."""
+    out = {}
+    for name in names:
+        with open(os.path.join(STATIC_DIR, name), "rb") as f:
+            out[name] = f.read()
+    return out
+
+
+PREVIEW_STATIC = read_static("preview.css", "preview.js")
+
+
+def add_static(web_app: web.Application, files: dict[str, bytes]) -> None:
+    """Jede Datei als eigene Route /static/<Name> (add)."""
+    for name, body in files.items():
+        add(web_app, "GET", f"/static/{name}", _static(name, body))
+
+
+def _static(name: str, body: bytes) -> Handler:
+    content_type = STATIC_TYPES[os.path.splitext(name)[1]]
+
+    async def serve(req: web.Request) -> web.Response:
+        return web.Response(body=body, content_type=content_type, charset="utf-8",
+                            headers={"Cache-Control": "no-cache"})
+    return serve
+
+
+# ---------------------------------------------------------------------------------------------- Routen --
+ROUTES = web.AppKey("routes", list)
+
+
+def add(web_app: web.Application, method: str, path: str, handler: Handler) -> None:
+    """Eine Route anmelden, GET samt HEAD, und in web_app[ROUTES] vermerken. Jede Route geht hier durch: Der Zugang
+    von außen gibt hier jeder ihre Identitätsklasse, eine Route an diesem Weg vorbei hätte keine."""
+    for m in (method, "HEAD") if method == "GET" else (method,):
+        web_app[ROUTES].append(web_app.router.add_route(m, path, handler))
+
+
+def add_panel_routes(web_app: web.Application, h: "Handlers") -> None:
+    """Was ein Panel ausmacht: Bild, Firmware, Vorschau, Modell, Statistik, Leerlauf-Karten, mit Skripten und Stilen
+    der Vorschau. Für jeden Port gleich; welches Panel, sagt der Resolver von h."""
+    for path in ("/panel/frame", "/frame"):
+        add(web_app, "GET", path, h.frame)
+    add(web_app, "GET", "/panel/firmware.txt", h.firmware_txt)
+    add(web_app, "GET", "/panel/firmware.bin", h.firmware_bin)
+    add(web_app, "GET", "/", h.index)
+    add(web_app, "GET", "/frame.png", h.frame_png)
+    add(web_app, "GET", "/display.json", h.display)
+    add(web_app, "GET", "/stats", h.stats)
+    add(web_app, "GET", "/idle", h.idle)
+    add_static(web_app, PREVIEW_STATIC)
+
+
 def make_web_app(app: "App") -> web.Application:
-    h = _Handlers(app)
-    web_app = web.Application()
-    web_app.add_routes([
-        web.get("/", h.index),
-        web.get("/frame", h.frame),
-        web.get("/frame.png", h.frame_png),
-        web.get("/display.json", h.display),
-        web.get("/health", h.health),
-        web.get("/ok", h.ok),
-        web.get("/issues", h.issues),
-        web.post("/issues/clear", h.issues_clear),
-        web.get("/stats", h.stats),
-        web.get("/idle", h.idle),
-    ])
+    """Der LAN-Port (HTTP_PORT): das Panel am LAN-Port ohne Anmeldung, dazu /health, /ok und /issues für den ganzen
+    Server, mit SETTINGS_PAGE=1 die Einstellungsseite. Geschützt wie oben beschrieben."""
+    cfg = app.server_cfg
+    web_app = web.Application(middlewares=[lan_guard(cfg)])
+    web_app[ROUTES] = []
+    web_app.on_response_prepare.append(security_headers)
+    links = LAN_LINKS + (("/settings",) if cfg.settings_page else ())
+    h = Handlers(app, lambda req: app.lan, lambda origin: lan_origin(origin, cfg.lan_hosts), links)
+    add_panel_routes(web_app, h)
+    add(web_app, "GET", "/health", h.health)
+    add(web_app, "GET", "/ok", h.ok)
+    add(web_app, "GET", "/issues", h.issues)
+    add(web_app, "POST", "/issues/clear", h.issues_clear)
+    if cfg.settings_page:
+        # nur mit dem Schalter geladen
+        from .settings import SettingsPage
+        SettingsPage(h).add_routes(web_app)
     return web_app
 
 
+# ------------------------------------------------------------------------------------------------ Schutz --
+async def security_headers(req: web.Request, resp: web.StreamResponse) -> None:
+    """Für jede Antwort, kurz bevor sie rausgeht (on_response_prepare): auch Fehler, 404 und statische Dateien."""
+    resp.headers.update(SECURITY_HEADERS)
+
+
+_HOST = re.compile(r"\[(?P<v6>[0-9a-f:.]+)\](?::[0-9]{1,5})?|(?P<name>[a-z0-9_.-]+)(?::[0-9]{1,5})?")
+_NAME = re.compile(r"[a-z0-9_-]+(?:\.[a-z0-9_-]+)*")
+
+
+def lan_host(host: str, extra: tuple[str, ...] = ()) -> bool:
+    """Darf ein Browser den LAN-Port unter diesem Namen ansprechen (Host-Header, oder was im Origin hinter :// steht)?
+    IP-Adressen (IPv6 in Klammern), localhost, Namen ohne Punkt (nas), *.local, *.home.arpa und die Namen in
+    extra (LAN_HOSTS), jeweils mit oder ohne Port. Solche Namen kann niemand öffentlich registrieren und auf den
+    Server zeigen lassen; IP-Adressen lassen sich nicht umbiegen. Nur ASCII: Ein Browser schickt Namen mit Umlauten
+    als xn--…, und manches andere Zeichen würde klein geschrieben erst zu einem Buchstaben (K, das Kelvin-Zeichen)."""
+    if not host.isascii():
+        return False
+    m = _HOST.fullmatch(host.strip().lower())
+    if m is None:
+        return False
+    if m["v6"] is not None:
+        return _ip(m["v6"]) == 6
+    name = m["name"]
+    if _ip(name) == 4:
+        return True
+    if not _NAME.fullmatch(name):
+        return False
+    return "." not in name or name.endswith(LAN_SUFFIXES) or name in extra
+
+
+def _ip(text: str) -> int | None:
+    """4 oder 6, wenn text eine IP-Adresse ist, sonst None."""
+    try:
+        return ipaddress.ip_address(text).version
+    except ValueError:
+        return None
+
+
+def lan_origin(origin: str, extra: tuple[str, ...] = ()) -> bool:
+    """Kommt ein Schreibzugriff von einer Seite im LAN? Origin wie http://192.168.1.5:8080: http oder https, dahinter
+    nur ein Name, den lan_host annimmt (kein Pfad, kein Benutzer). "null" (etwa aus einer Datei) ist fremd."""
+    scheme, sep, host = origin.partition("://")
+    return bool(sep) and scheme in ("http", "https") and lan_host(host, extra)
+
+
+def lan_guard(cfg: Config):
+    """Der Schutz des LAN-Ports vor jedem Handler, auch vor 404 (siehe oben). Absagen stehen im Log, höchstens
+    einmal pro WARN_EVERY_S: Ein ESP32 oder Uptime-Monitor unter einem fremden Namen fiele sonst still aus. Der Header
+    selbst nie: Was eine fremde Seite schickt, gehört nicht ins Log."""
+    last = {"warned": -WARN_EVERY_S}
+
+    def warn(msg: str, *args) -> None:
+        if monotonic() - last["warned"] >= WARN_EVERY_S:
+            last["warned"] = monotonic()
+            log.warning(msg, *args)
+
+    @web.middleware
+    async def guard(req: web.Request, handler: Handler) -> web.StreamResponse:
+        if cfg.public and any(name in req.headers for name in CF_HEADERS):
+            warn("Anfrage über Cloudflare am LAN-Port abgelehnt (403): Der Tunnel gehört an PUBLIC_PORT")
+            raise web.HTTPForbidden(text=VIA_CLOUDFLARE)
+        if not all(lan_host(host, cfg.lan_hosts) for host in req.headers.getall("Host", [])):
+            warn("Anfrage unter einem Namen außerhalb des LAN abgelehnt (421). Erreicht ein eigenes Gerät den Server "
+                 "unter einem Namen mit Punkt (etwa für ein ESP32 oder einen Uptime-Monitor), den Namen in .env unter "
+                 "LAN_HOSTS eintragen")
+            raise web.HTTPMisdirectedRequest(text=NOT_LAN)
+        return await handler(req)
+    return guard
+
+
+# ------------------------------------------------------------------------------------- Panel-Diagnose --
+DIAG_MAX = 200          # Zeichen im Header X-Panel; mehr ist kein Panel
+# Feld: (Muster, kleinster, größter Wert). Nur ASCII-Ziffern, ein Minus nur bei rssi.
+_DIAG = {
+    "fw": (re.compile(r"[0-9]{10}"), 0, 9_999_999_999),         # Firmware-Version JJMMTTHHMM
+    "up": (re.compile(r"[0-9]{1,11}"), 0, 10 ** 10),            # Sekunden seit dem Start
+    "rssi": (re.compile(r"-?[0-9]{1,3}"), -127, 0),             # WLAN-Empfang, dBm
+    "heap": (re.compile(r"[0-9]{1,7}"), 0, 9_999_999),          # kleinster freier Speicher seit dem Start, Byte
+}
+
+
+def parse_diag(header: str | None) -> dict[str, int]:
+    """Was ein Panel beim Abruf im Header X-Panel meldet: "fw=2610131200 up=3600 rssi=-61 heap=45000" -> höchstens
+    vier Zahlen in Grenzen. Jedes Feld genau nach Muster und Grenzen; was nicht passt (Müll, Überlauf, Escape-Folgen,
+    unbekannte Felder), fällt weg, Feld für Feld; ein zu langer Header ganz. Von einem doppelten Feld gilt das erste
+    gültige. Nichts davon wird als Text gespeichert oder gezeigt."""
+    if not header or len(header) > DIAG_MAX:
+        return {}
+    out: dict[str, int] = {}
+    for item in header.split():
+        name, _, value = item.partition("=")
+        if name not in _DIAG or name in out:
+            continue
+        pattern, lo, hi = _DIAG[name]
+        if pattern.fullmatch(value) and lo <= int(value) <= hi:
+            out[name] = int(value)
+    return out
+
+
+def _etag_matches(etag: str, header: str | None) -> bool:
+    """If-None-Match: ein oder mehrere ETags, auch schwach (W/)."""
+    return bool(header) and etag in (t.strip().removeprefix("W/") for t in header.split(","))
+
+
+# ------------------------------------------------------------------------------------------- Firmware --
+FW_VERSION = re.compile(r"[0-9]{10}")
+
+
+def _firmware_path(data_dir: str, channel: str, name: str) -> str:
+    return os.path.join(data_dir, "firmware", channel, name)
+
+
+def firmware_manifest(data_dir: str, channel: str) -> web.StreamResponse:
+    """firmware.txt eines Kanals (tools/fw_release.sh legt es ab), nie gecacht: Ein Panel sieht jede neue Version
+    sofort. Ohne Datei 404. channel: stable oder canary (panel.fw_channel); ohne bekanntes Panel stable."""
+    path = _firmware_path(data_dir, channel, "firmware.txt")
+    if not os.path.isfile(path):
+        raise web.HTTPNotFound()
+    return web.FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
+def firmware_image(data_dir: str, channel: str, version: str) -> web.StreamResponse:
+    """firmware.bin eines Kanals, nur für die Version, die gerade in seinem firmware.txt steht (erste Zeile, genau
+    zehn Ziffern): Unter dieser Adresse ist der Inhalt dann fest, und Cloudflare darf ihn einen Tag lang selbst
+    ausliefern, statt dass jedes Panel die 1,8 MB hier holt. Sonst 404."""
+    path = _firmware_path(data_dir, channel, "firmware.bin")
+    if not FW_VERSION.fullmatch(version) or _manifest_version(data_dir, channel) != version.encode():
+        raise web.HTTPNotFound()
+    if not os.path.isfile(path):
+        raise web.HTTPNotFound()
+    return web.FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
+
+
+def _manifest_version(data_dir: str, channel: str) -> bytes | None:
+    """Die erste Zeile von firmware.txt ohne den Zeilenumbruch (LF); None ohne Datei."""
+    try:
+        with open(_firmware_path(data_dir, channel, "firmware.txt"), "rb") as f:
+            return f.readline(16).removesuffix(b"\n")
+    except OSError:
+        return None
+
+
+# ------------------------------------------------------------------------------------------- Handler --
 def _pretty(obj) -> web.Response:
     return web.json_response(obj, dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=1))
 
 
-class _Handlers:
-    def __init__(self, app: "App"):
-        self.app = app
+class Handlers:
+    """Die Handler, für jeden Port dieselben. resolve(req) gibt das Panel der Anfrage (None: keines bekannt, nur am
+    Zugang von außen bei den Firmware-Dateien), origin_ok(origin) sagt, ob eine Seite mit diesem Origin schreiben
+    darf, links, was die Vorschau verlinkt."""
 
-    def _render(self, layout: str | None = None, card: str | None = None) -> Image.Image:
-        p = self.app.lan
+    def __init__(self, app: "App", resolve: Resolver, origin_ok: Callable[[str], bool],
+                 links: tuple[str, ...] = ()):
+        self.app = app
+        self.resolve = resolve
+        self.origin_ok = origin_ok
+        self.links = links
+
+    def panel(self, req: web.Request) -> "Panel":
+        p = self.resolve(req)
+        if p is None:
+            raise web.HTTPForbidden()
+        return p
+
+    def channel(self, req: web.Request) -> str:
+        """Der Firmware-Kanal der Anfrage: der ihres Panels, ohne bekanntes Panel stable (Rettungskanal)."""
+        p = self.resolve(req)
+        return p.channel if p is not None else "stable"
+
+    def foreign(self, req: web.Request) -> bool:
+        """Ein Origin, der nicht schreiben darf? Ohne Origin nicht: Ein Browser schickt bei POST immer einen."""
+        origin = req.headers.get("Origin")
+        return origin is not None and not self.origin_ok(origin)
+
+    def _render(self, p: "Panel", layout: str | None = None, card: str | None = None) -> Image.Image:
         r = (Renderer(replace(p.cfg, layout=layout), self.app.logos, idle=p.idle, rotation=p.renderer.rotation)
              if layout else p.renderer)
         return r.render(p.model, time.time(), card=card or None)
 
     @staticmethod
     def _layout(req: web.Request) -> str | None:
-        """?layout=, wie LAYOUT in .env; Unbekanntes zählt wie nicht angegeben."""
+        """?layout=, wie LAYOUT in den Panel-Einstellungen; Unbekanntes zählt wie nicht angegeben."""
         try:
             return parse_layout(req.query["layout"])
         except (KeyError, ValueError):
             return None
 
     async def frame(self, req: web.Request) -> web.Response:
-        app, p = self.app, self.app.lan
+        p = self.panel(req)
         now = time.time()
-        if p.last_frame_fetch and now - p.last_frame_fetch > ESP32_GAP_S:
-            app.issues.note("esp32_gap", "frames", gap_s=round(now - p.last_frame_fetch))
-        p.last_frame_fetch = now
-        p.frame_count += 1
-        body = p.renderer.frame_bytes(self._render(), p.renderer.brightness(now))
-        return web.Response(body=body, content_type="application/octet-stream", headers={"Cache-Control": "no-store"})
+        diag = req.headers.getall("X-Panel", [])
+        p.fetched(now, parse_diag(diag[0]) if len(diag) == 1 else {})
+        body = p.renderer.frame_bytes(self._render(p), p.renderer.brightness(now))
+        etag = f'"{hashlib.sha256(body).hexdigest()[:16]}"'
+        headers = {"ETag": etag, "Cache-Control": "no-store, no-transform"}
+        if _etag_matches(etag, req.headers.get("If-None-Match")):
+            return web.Response(status=304, headers=headers)
+        return web.Response(body=body, content_type="application/octet-stream", headers=headers)
+
+    async def firmware_txt(self, req: web.Request) -> web.StreamResponse:
+        return firmware_manifest(self.app.server_cfg.data_dir, self.channel(req))
+
+    async def firmware_bin(self, req: web.Request) -> web.StreamResponse:
+        return firmware_image(self.app.server_cfg.data_dir, self.channel(req), req.query.get("v", ""))
 
     async def frame_png(self, req: web.Request) -> web.Response:
-        img = self._render(self._layout(req), req.query.get("card"))
+        p = self.panel(req)
+        img = self._render(p, self._layout(req), req.query.get("card"))
         try:
             scale = max(1, min(40, int(req.query.get("scale", "6"))))
         except ValueError:
             scale = 6
         gap = req.query.get("gap", "1") != "0"
-        return web.Response(body=self.app.lan.renderer.png(img, scale, gap), content_type="image/png",
+        return web.Response(body=p.renderer.png(img, scale, gap), content_type="image/png",
                             headers={"Cache-Control": "no-store"})
 
     async def index(self, req: web.Request) -> web.Response:
-        p = self.app.lan
+        p = self.panel(req)
         layout = self._layout(req) or p.cfg.layout
         card = req.query.get("card", "")
         if card not in p.idle.cards:
             card = ""
-        links = "".join(f'<a href="/?layout={layout}&card={c}">{c}</a>' for c in p.idle.cards)
-        layouts = "".join(f'<a href="/?layout={x}">{x}</a>' for x in LAYOUTS)
-        return web.Response(text=PREVIEW_HTML % {"layout": layout, "card": card, "cards": links,
-                                                 "layouts": layouts}, content_type="text/html")
+        esc = html.escape
+        page = PREVIEW_HTML.format(     # Links mit Leerzeichen dazwischen: Auf dem Telefon brechen sie um
+            frame=esc(f"/frame.png?layout={layout}&card={card}"),
+            layouts=" ".join(f'<a href="{esc(f"/?layout={x}")}">{esc(x)}</a>' for x in LAYOUTS),
+            links=" ".join(f'<a href="{esc(path)}">{esc(path.lstrip("/"))}</a>' for path in self.links),
+            health=' data-health="/health"' if "/health" in self.links else "",
+            cards=" ".join(f'<a href="{esc(f"/?layout={layout}&card={c}")}">{esc(c)}</a>' for c in p.idle.cards))
+        return web.Response(text=page, content_type="text/html")
 
     async def display(self, req: web.Request) -> web.Response:
-        return web.Response(text=self.app.lan.model.to_json(), content_type="application/json")
+        return web.Response(text=self.panel(req).model.to_json(), content_type="application/json")
 
     async def ok(self, req: web.Request) -> web.Response:
         problems = self.app.problems(time.time())
@@ -142,14 +420,16 @@ class _Handlers:
         return _pretty(self.app.issues_report())
 
     async def issues_clear(self, req: web.Request) -> web.Response:
+        if self.foreign(req):
+            raise web.HTTPForbidden(text=FOREIGN_ORIGIN)
         self.app.issues.clear()
         self.app.issues.save()
         return web.json_response(self.app.issues_report())
 
     async def stats(self, req: web.Request) -> web.Response:
         # Landerichtung: für alle Panels gleich
-        return _pretty({**self.app.lan.stats.report(), "course": self.app.airfield.report()})
+        return _pretty({**self.panel(req).stats.report(), "course": self.app.airfield.report()})
 
     async def idle(self, req: web.Request) -> web.Response:
-        p = self.app.lan
+        p = self.panel(req)
         return _pretty(p.idle.status(p.model, time.time()))

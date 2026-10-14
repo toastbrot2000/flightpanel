@@ -1,0 +1,6 @@
+/* Vorschauseite (web.py, GET /). Eine Datei statt Stilen in der Seite: Die Content-Security-Policy erlaubt nur, was
+   der Server selbst ausliefert. */
+body{background:#111;color:#ccc;font:14px system-ui;margin:24px}
+img{image-rendering:pixelated;display:block;margin:12px 0;border:1px solid #333;max-width:100%;height:auto}
+a{color:#8ab;margin-right:14px}
+#s{color:#d9a33a}

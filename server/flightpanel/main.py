@@ -41,7 +41,7 @@ from .mock import mock_model
 from .model import State
 from .opensky import OpenSky
 from .origins import Origins
-from .panel import Panel, active_seconds, fetch_circle, union_bbox
+from .panel import Panel, active_seconds, fetch_circle, fw_channel, union_bbox
 from .stats import Stats
 from .storage import read_json
 from .web import make_web_app
@@ -219,7 +219,7 @@ class App:
 
     @property
     def lan(self) -> Panel:
-        """Das Panel am LAN-Port (LAN_PANEL): /frame, die Vorschau, /stats und /idle auf :8080."""
+        """Das Panel am LAN-Port (LAN_PANEL): /panel/frame, die Vorschau, /stats und /idle auf :8080."""
         return self.panels[self.server_cfg.lan_panel]
 
     def _sync_panels(self) -> None:
@@ -246,11 +246,14 @@ class App:
             off = too_far(self.server_cfg, cfg) if remote else None
             if off:
                 self._note_off(pid, off)
+            channel = row["fw_channel"]
+            if fw_channel(channel) != channel:
+                log.warning("Panel %s: Firmware-Kanal %r gibt es nicht, es gilt stable (panels channel)", pid, channel)
             if p is None or p.created != row["created"]:
-                self.panels[pid] = Panel(self, pid, cfg, row["created"], row["updated"], off)
+                self.panels[pid] = Panel(self, pid, cfg, row["created"], row["updated"], off, channel)
                 log.info("Panel %s: %d Einstellungen", pid, len(row["settings"]))
             else:
-                p.configure(cfg, row["updated"], off)
+                p.configure(cfg, row["updated"], off, channel)
                 log.info("Panel %s: Einstellungen übernommen", pid)
 
     def _note_off(self, pid: str, why: str) -> None:

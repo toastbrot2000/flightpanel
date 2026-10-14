@@ -46,8 +46,11 @@ def _hhmm(s: str) -> int:
 
 def _hours(s: str) -> tuple[int, int]:
     """"23:00-06:30" -> (1380, 390): Minuten des Tages, von bis."""
-    a, b = s.split("-")
-    return _hhmm(a), _hhmm(b)
+    try:
+        a, b = s.split("-")
+        return _hhmm(a), _hhmm(b)
+    except ValueError:
+        raise ValueError("erwartet von-bis, etwa 08:00-19:00") from None
 
 
 LAYOUTS = ("A", "B", "C")                           # Fluglayouts, siehe render.py
@@ -78,15 +81,33 @@ def _pages(s: str) -> tuple[str, ...]:
 def _int(lo: int, hi: int | None = None):
     """Ganzzahl in Grenzen, z. B. Sekunden pro Infoseite mindestens 1."""
     def parse(s: str) -> int:
-        v = int(s)
+        try:
+            v = int(s)
+        except ValueError:
+            raise ValueError("keine ganze Zahl") from None
         if v < lo or (hi is not None and v > hi):
             raise ValueError(f"erlaubt: {lo} bis {hi}" if hi is not None else f"mindestens {lo}")
         return v
     return parse
 
 
+def _number(s: str) -> float:
+    """Text als Kommazahl. Ein Komma statt des Punkts ist der häufigste Tippfehler (deutsche Tastatur, Telefon): Dann
+    nennt der Fehler die Schreibweise mit Punkt, statt ihn still umzudeuten."""
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    dotted = s.strip().replace(",", ".")
+    try:
+        float(dotted)
+    except ValueError:
+        raise ValueError("keine Zahl") from None
+    raise ValueError(f"keine Zahl; mit Punkt statt Komma: {dotted}")
+
+
 def _share(s: str) -> float:
-    v = float(s)
+    v = _number(s)
     if not 0 <= v <= 1:
         raise ValueError("erlaubt: 0 bis 1")
     return v
@@ -98,7 +119,7 @@ def _float(lo: float, hi: float, above: bool = False):
     allowed = f"erlaubt: {'über ' if above else ''}{lo:g} bis {hi:g}"
 
     def parse(s: str) -> float:
-        v = float(s)
+        v = _number(s)
         if not math.isfinite(v) or v > hi or (v <= lo if above else v < lo):
             raise ValueError(allowed)
         return v
@@ -113,6 +134,30 @@ _deg = _float(0, 360)                   # Richtung, 0 = Nord
 _elev = _float(-90, 90)                 # Höhenwinkel über dem Horizont
 
 
+def _matching(pattern: str, hint: str):
+    """Text in Kleinbuchstaben, der ganz auf pattern passt, sonst ValueError mit hint (wie die anderen Parser)."""
+    rx = re.compile(pattern)
+
+    def parse(s: str) -> str:
+        v = s.strip().lower()
+        if not rx.fullmatch(v):
+            raise ValueError(hint)
+        return v
+    return parse
+
+
+_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+_team = _matching(_LABEL, "der Team-Name aus Zero Trust, etwa beispiel (aus beispiel.cloudflareaccess.com)")
+_aud = _matching(r"[0-9a-f]{64}", "das Application Audience (AUD) Tag der Access-Anwendung, 64 Hexziffern")
+_host = _matching(rf"(?:{_LABEL}\.)+[a-z]{{2,63}}", "ein Hostname mit Punkt, etwa flightpanel.example.com, ohne https://")
+_name = _matching(rf"{_LABEL}(?:\.{_LABEL})*", "ein Hostname wie nas oder nas.fritz.box")
+
+
+def _names(s: str) -> tuple[str, ...]:
+    """"nas.fritz.box, Laptop" -> ("nas.fritz.box", "laptop")."""
+    return tuple(_name(x) for x in s.split(",") if x.strip())
+
+
 PANEL_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
@@ -121,6 +166,10 @@ def panel_id(text: str) -> str:
     if not PANEL_ID.fullmatch(text):                # fullmatch: $ ließe einen Zeilenumbruch am Ende durch
         raise ValueError("Kleinbuchstaben, Ziffern, - und _, höchstens 32 Zeichen")
     return text
+
+
+# Firmware-Kanäle: je Panel einer (Spalte fw_channel, Default stable), die Dateien in DATA_DIR/firmware/<Kanal>/
+FW_CHANNELS = ("stable", "canary")
 
 
 def in_hours(rng: tuple[int, int], minute: int) -> bool:
@@ -146,6 +195,13 @@ def _text(v) -> str:
     """Ein Rohwert als Text. In der Datenbank stehen Strings; eine Zahl aus einer Handänderung gilt wie ihr Text,
     statt den Start an einem AttributeError scheitern zu lassen."""
     return "" if v is None else str(v).strip()
+
+
+def card_off(raw) -> bool:
+    """Schaltet der Wert einer Zeile CARD_<ID> die Karte ab? Ja bei 0, false, aus und allem anderen, was kein Ja ist;
+    leer oder nicht gesetzt heißt an. Für for_panel, die alte .env und die Einstellungsseite."""
+    text = _text(raw)
+    return bool(text) and not _bool(text)
 
 
 def _parse(fs: Iterable[Field], src: Mapping[str, str], problems: list[tuple[str, str]] | None = None) -> dict:
@@ -271,6 +327,15 @@ class Config:
     empty_after: int = _env("EMPTY_AFTER", 600, _int(0))    # ... bis leer
     log_level: str = _env("LOG_LEVEL", "INFO")
 
+    # --- Zugang von außen (optional, docs/freunde.md): ein zweiter Port nur für Cloudflare Access. Alle vier oder
+    # keiner; ohne sie lädt der Server nichts davon (access.py).
+    public_port: int = _env("PUBLIC_PORT", 0, _int(0, 65535))
+    access_team: str = _env("ACCESS_TEAM", "", _team)
+    access_aud: str = _env("ACCESS_AUD", "", _aud)
+    public_host: str = _env("PUBLIC_HOST", "", _host)
+    settings_page: bool = _env("SETTINGS_PAGE", False)          # Einstellungsseite /settings
+    lan_hosts: tuple[str, ...] = _env("LAN_HOSTS", (), _names)  # weitere Namen, unter denen :8080 erreichbar ist
+
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Config":
         """Server-Einstellungen aus Umgebungsvariablen; leere zählen wie nicht gesetzte.
@@ -281,6 +346,7 @@ class Config:
             if (env.get(name) or "").strip():
                 log.warning("%s gibt es nicht mehr und wird ignoriert; stattdessen %s", name, instead)
         _airport_from_list(values, values.get("data_dir", cls.data_dir))
+        _check_public(values)
         return cls(**values)
 
     @classmethod
@@ -324,14 +390,18 @@ class Config:
                 values.setdefault(k, v)
         cards = [k for k in settings if k.startswith(CARD_PREFIX)]
         if cards:
-            values["cards_off"] = frozenset(k[len(CARD_PREFIX):].lower() for k in cards
-                                            if _text(settings[k]) and not _bool(_text(settings[k])))
+            values["cards_off"] = frozenset(k[len(CARD_PREFIX):].lower() for k in cards if card_off(settings[k]))
         return replace(server, **values)
 
     # ------------------------------------------------------------- abgeleitet --
     @property
     def fetch_radius_km(self) -> float:
         return max(self.radius_km, self.scan_radius_km)
+
+    @property
+    def public(self) -> bool:
+        """Ist der Zugang von außen eingerichtet (PUBLIC_PORT und die drei anderen, _check_public)?"""
+        return bool(self.public_port)
 
     @property
     def view_span(self) -> float:
@@ -368,6 +438,23 @@ CALM_PRESET = {"page_seconds": 10, "flight_seconds": 20, "idle_seconds": 30, "bl
 
 def _env_name(field_name: str) -> str:
     return next(f.metadata["env"] for f in fields(Config) if f.name == field_name)
+
+
+PUBLIC_KEYS = ("public_port", "access_team", "access_aud", "public_host")
+
+
+def _check_public(values: dict) -> None:
+    """Der Zugang von außen braucht alle vier Angaben. Ein Teil davon ist ein Tippfehler oder eine halbe
+    Einrichtung: lieber nicht starten als still ohne oder halb offen laufen."""
+    have = [k for k in PUBLIC_KEYS if values.get(k)]
+    if not have:
+        return
+    missing = [_env_name(k) for k in PUBLIC_KEYS if k not in have]
+    if missing:
+        raise ValueError(f"{', '.join(_env_name(k) for k in have)} gesetzt, es fehlt {', '.join(missing)}: für den "
+                         "Zugang von außen alle vier setzen (docs/freunde.md), sonst keinen")
+    if values["public_port"] == values.get("http_port", Config.http_port):
+        raise ValueError("PUBLIC_PORT muss ein anderer Port sein als HTTP_PORT")
 
 
 def _cap_radii(server: Config, settings: Mapping[str, str], values: dict,
@@ -423,7 +510,7 @@ def panel_settings_from_env(env: Mapping[str, str]) -> dict[str, str]:
     out = {f.metadata["env"]: env[f.metadata["env"]].strip() for f in panel_fields()
            if (env.get(f.metadata["env"]) or "").strip()}
     out.update({k: v.strip() for k, v in env.items()
-                if k.startswith(CARD_PREFIX) and len(k) > len(CARD_PREFIX) and v.strip() and not _bool(v)})
+                if k.startswith(CARD_PREFIX) and len(k) > len(CARD_PREFIX) and card_off(v)})
     return out
 
 

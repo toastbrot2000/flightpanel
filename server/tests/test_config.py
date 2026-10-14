@@ -9,6 +9,7 @@ import pytest
 from conftest import DATA, make_cfg
 from flightpanel.config import (
     Config,
+    card_off,
     default_text,
     in_hours,
     is_panel_key,
@@ -216,6 +217,29 @@ def test_numbers_that_cannot_work_are_refused_with_the_name(name, raw, why):
     assert str(refused.value) == f"{name}={raw!r}: {why}"
 
 
+@pytest.mark.parametrize(("name", "raw", "why"), [
+    ("HOME_LAT", "52,52", "keine Zahl; mit Punkt statt Komma: 52.52"),
+    ("IDLE_CLOCK_SHARE", "0,5", "keine Zahl; mit Punkt statt Komma: 0.5"),
+    ("HOME_LAT", "52,5,2", "keine Zahl"),
+    ("VIEW_MAX_KM", "weit", "keine Zahl"),
+    ("MAX_FLIGHTS", "2.5", "keine ganze Zahl"),
+    ("PAGE_SECONDS", "vier", "keine ganze Zahl"),
+    ("QUIET_HOURS", "22 bis 6", "erwartet von-bis, etwa 08:00-19:00"),
+    ("DAY_HOURS", "8-19", "erwartet von-bis, etwa 08:00-19:00"),
+])
+def test_what_is_no_number_is_named_in_german(name, raw, why):
+    """Die Einstellungsseite zeigt den Satz am Feld, auf dem Telefon: kein "could not convert string to float".
+    Das Komma statt des Punkts ist dort der häufigste Fehler (deutsche Tastatur), der Satz nennt die Schreibweise."""
+    with pytest.raises(ValueError) as refused:
+        Config.for_panel(Config.from_env(env()), {name: raw})
+    assert str(refused.value) == f"{name}={raw!r}: {why}"
+
+
+def test_a_card_is_off_with_any_false_value_and_on_when_empty():
+    assert [card_off(v) for v in ("0", "false", "aus", " 0 ", 0)] == [True] * 5
+    assert [card_off(v) for v in ("1", "true", "on", "", "  ", None)] == [False] * 6
+
+
 @pytest.mark.parametrize(("name", "raw"), [("AIRPORT_LAT", "nan"), ("AIRPORT_LAT", "91"), ("AIRPORT_LON", "-inf"),
                                            ("AIRPORT_LON", "181"), ("RUNWAY_COURSE", "inf"), ("RUNWAY_COURSE", "-1"),
                                            ("RUNWAY_COURSE", "361")])
@@ -271,3 +295,39 @@ def test_the_limits_are_server_settings():
     assert (cfg.panel_max_km, cfg.panel_max_radius_km) == (30, 50)
     with pytest.raises(ValueError, match="keine Panel-Einstellung: PANEL_MAX_KM"):
         Config.for_panel(cfg, {"PANEL_MAX_KM": "999"})
+
+
+PUBLIC = {"PUBLIC_PORT": "8081", "ACCESS_TEAM": "Beispiel", "ACCESS_AUD": "a" * 64,
+          "PUBLIC_HOST": "flightpanel.example.com"}
+
+
+def test_the_public_listener_is_off_by_default():
+    cfg = Config.from_env({"DATA_DIR": DATA})
+    assert not cfg.public and not cfg.settings_page and cfg.lan_hosts == ()
+
+
+def test_the_public_listener_needs_all_four_settings():
+    cfg = Config.from_env({**PUBLIC, "DATA_DIR": DATA})
+    assert cfg.public and cfg.public_port == 8081
+    assert (cfg.access_team, cfg.public_host) == ("beispiel", "flightpanel.example.com")   # klein geschrieben
+    for missing in PUBLIC:
+        partial = {k: v for k, v in PUBLIC.items() if k != missing}
+        with pytest.raises(ValueError, match=f"es fehlt {missing}"):
+            Config.from_env({**partial, "DATA_DIR": DATA})
+    with pytest.raises(ValueError, match="anderer Port"):
+        Config.from_env({**PUBLIC, "PUBLIC_PORT": "8080", "DATA_DIR": DATA})
+
+
+@pytest.mark.parametrize(("key", "raw"), [("ACCESS_AUD", "abc"), ("ACCESS_AUD", "g" * 64),
+                                          ("ACCESS_TEAM", "zwei worte"), ("ACCESS_TEAM", "-x"),
+                                          ("PUBLIC_HOST", "localhost"), ("PUBLIC_HOST", "https://x.example.com")])
+def test_public_settings_are_checked(key, raw):
+    with pytest.raises(ValueError, match=f"{key}="):
+        Config.from_env({**PUBLIC, key: raw, "DATA_DIR": DATA})
+
+
+def test_lan_hosts_are_a_list_of_names():
+    cfg = Config.from_env({"LAN_HOSTS": "nas.fritz.box, Laptop", "DATA_DIR": DATA})
+    assert cfg.lan_hosts == ("nas.fritz.box", "laptop")
+    with pytest.raises(ValueError, match="LAN_HOSTS="):
+        Config.from_env({"LAN_HOSTS": "nas/x", "DATA_DIR": DATA})

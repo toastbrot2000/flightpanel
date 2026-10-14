@@ -36,13 +36,13 @@ import sys
 import time
 
 from .cards import CARDS
-from .config import CARD_PREFIX, Config, default_text, panel_fields, panel_id, too_far
+from .config import CARD_PREFIX, FW_CHANNELS, Config, default_text, panel_fields, panel_id, too_far
 from .db import DatabaseError, Db, db_path
 
 CARD_IDS = sorted(c.id for c in CARDS)
 EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 CLIENT_ID = re.compile(r"[0-9a-f]{32}\.access")          # wie Zero Trust sie anzeigt
-CHANNELS = ("stable", "canary")
+CHANNELS = FW_CHANNELS                                   # wie der Server sie kennt (config.py)
 
 
 def _todo(rows: list[dict]) -> None:
@@ -55,8 +55,9 @@ def _todo(rows: list[dict]) -> None:
               "Der Token steht unverschlüsselt in seinem Speicher.")
 
 
-def _check_card(key: str) -> None:
-    """CARD_<ID> nur für Karten, die es gibt: ein Tippfehler bliebe sonst still wirkungslos."""
+def check_card(key: str) -> None:
+    """CARD_<ID> nur für Karten, die es gibt: ein Tippfehler bliebe sonst still wirkungslos. Auch für die
+    Einstellungsseite (settings.py)."""
     if key.startswith(CARD_PREFIX) and key[len(CARD_PREFIX):].lower() not in CARD_IDS:
         raise ValueError(f"unbekannte Karte: {key}; bekannt: {', '.join(CARD_IDS)}")
 
@@ -139,15 +140,16 @@ def _check_reset(cfg: Config, stored: dict[str, str], names: list[str]) -> None:
     have = {_name(k) for k in stored}
     unstored = [k for k in names if k not in have]
     for key in unstored:
-        _check_card(key)
+        check_card(key)
     # Leer gilt als nicht gesetzt: for_panel meldet nur, welche Namen keine Panel-Einstellung sind
     Config.for_panel(cfg, dict.fromkeys(unstored, ""))
 
 
-def _check(cfg: Config, pid: str, settings: dict[str, str]) -> None:
+def check(cfg: Config, pid: str, settings: dict[str, str]) -> None:
     """Prüft die Einstellungen eines Panels mit denselben Parsern wie der Server. Für weitere Panels (nicht das am
     LAN-Port) gelten dazu die Grenzen aus .env: Abrufradius höchstens PANEL_MAX_RADIUS_KM, das Fenster höchstens
-    PANEL_MAX_KM vom Flughafen. ValueError nennt, was nicht passt."""
+    PANEL_MAX_KM vom Flughafen. ValueError nennt, was nicht passt. Auch für die Einstellungsseite (settings.py): Sie
+    prüft genau wie set."""
     remote = pid != cfg.lan_panel
     panel = Config.for_panel(cfg, settings, remote=remote)
     why = too_far(cfg, panel) if remote else None
@@ -157,7 +159,7 @@ def _check(cfg: Config, pid: str, settings: dict[str, str]) -> None:
 
 
 def _save(db: Db, cfg: Config, p: dict, new: dict[str, str]) -> None:
-    _check(cfg, p["id"], new)                   # prüft; ValueError nennt die Einstellung
+    check(cfg, p["id"], new)                    # prüft; ValueError nennt die Einstellung
     db.panel_set_settings(p["id"], new)
     print(f"{p['id']}: {len(new)} Einstellungen gesetzt; der Server übernimmt sie spätestens nach einer Minute")
 
@@ -174,7 +176,7 @@ def cmd_set(db: Db, cfg: Config, args) -> None:
         for spelling in _spellings(new, {key}):     # auch home_lat, wenn HOME_LAT gemeint ist: Die letzte Angabe gilt
             del new[spelling]
         if value.strip():
-            _check_card(key)
+            check_card(key)
             new[key] = value.strip()
         else:
             reset.append(key)

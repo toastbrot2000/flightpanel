@@ -1,0 +1,174 @@
+/* Einstellungsseite (settings.py). Fürs Telefon zuerst: eine Spalte, Felder in 16 px (sonst zoomt iOS beim
+   Antippen), alles Antippbare mindestens 44 px hoch, nichts breiter als 360 px, Speichern unten in Daumennähe.
+   Farben wie die Vorschau (preview.css). Eine Datei statt Stilen in der Seite: Die Content-Security-Policy erlaubt
+   nur, was der Server selbst ausliefert, darum auch keine Bilder als data:-Adresse. */
+
+:root {
+  color-scheme: dark;
+  --bg: #111;
+  --raised: #1a1a1a;          /* Felder, Eichen */
+  --line: #2e2e2e;
+  --edge: #4a4a4a;            /* Rand der Felder */
+  --edge-hover: #6a6a6a;
+  --text: #ccc;
+  --strong: #eee;
+  --muted: #a3a3a3;           /* Erklärungen: 7,5:1 auf --bg */
+  --placeholder: #8c8c8c;     /* Standardwerte im Feld: 5,2:1 auf --raised */
+  --link: #8ab;
+  --accent: #d9a33a;          /* Speichern, im Sichtfeld */
+  --accent-hover: #e6b44f;
+  --accent-active: #c4902c;
+  --bad: #f08a80;
+  --good: #8fca8f;
+  --radius: 8px;
+  --ease: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 1rem/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+a { color: var(--link); }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+
+.page { max-width: 42rem; margin: 0 auto; padding: 0 16px; }
+
+/* --- Kopf */
+.top { padding: 4px 0 12px; }
+.back {
+  display: inline-flex; align-items: center; min-height: 44px; padding-right: 12px;
+  text-decoration: none;
+}
+.back:hover { text-decoration: underline; }
+h1 { margin: 4px 0 6px; font-size: 1.5rem; line-height: 1.25; color: var(--strong); text-wrap: balance; }
+.lead, .intro, .hint { max-width: 65ch; color: var(--muted); text-wrap: pretty; }
+.lead { margin: 0; }
+
+/* --- Gruppen zum Aufklappen */
+.group { border-top: 1px solid var(--line); }
+.group > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 56px; cursor: pointer; list-style: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.group > summary::-webkit-details-marker { display: none; }
+.group > summary::after {             /* Winkel: zu nach unten, auf nach oben */
+  content: ""; flex: none; width: 9px; height: 9px; margin: 0 6px 4px 0;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg); transition: transform 200ms var(--ease);
+}
+.group[open] > summary::after { margin: 4px 6px 0 0; transform: rotate(-135deg); }
+.group > summary:hover::after { border-color: var(--strong); }
+.group h2 { margin: 0; font-size: 1.25rem; line-height: 1.3; font-weight: 600; color: var(--strong); }
+.group[open] { padding-bottom: 24px; }
+.intro { margin: 0 0 4px; }
+
+/* --- Felder */
+.field { margin-top: 20px; }
+.field > label { display: block; margin-bottom: 6px; }
+.key {
+  white-space: nowrap; color: var(--muted);
+  font: 0.8125rem/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+input[type="text"], select {
+  display: block; width: 100%; min-height: 48px; margin: 0; padding: 10px 12px;
+  font: inherit; font-size: 1rem; color: var(--strong);
+  background: var(--raised); border: 1px solid var(--edge); border-radius: var(--radius);
+  transition: border-color 150ms var(--ease);
+}
+input[type="text"]:hover, select:hover { border-color: var(--edge-hover); }
+input[type="text"]:focus, select:focus { outline: 2px solid var(--link); outline-offset: -1px; border-color: var(--link); }
+input::placeholder { color: var(--placeholder); opacity: 1; }
+.select { position: relative; display: block; }
+.select select { appearance: none; -webkit-appearance: none; padding-right: 44px; cursor: pointer; }
+.select::after {
+  content: ""; position: absolute; top: 50%; right: 18px; width: 8px; height: 8px; pointer-events: none;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: translateY(-70%) rotate(45deg);
+}
+.hint { margin: 6px 0 0; font-size: 0.875rem; }
+.hint.good { color: var(--good); }
+.hint.bad, .error { color: var(--bad); }
+.error { margin: 6px 0 0; font-size: 0.9375rem; overflow-wrap: anywhere; }
+.invalid input[type="text"], .invalid select { border-color: var(--bad); }
+.invalid > label { color: var(--bad); }
+
+/* --- Karten an und aus */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); column-gap: 24px; }
+.switch-row { border-bottom: 1px solid var(--line); }
+.switch {
+  display: flex; align-items: center; gap: 12px; min-height: 48px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.switch input { flex: none; width: 22px; height: 22px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.card-id { color: var(--strong); overflow-wrap: anywhere; }
+.card-group { margin-left: auto; padding-left: 8px; font-size: 0.875rem; color: var(--muted); }
+.switch-row .error { margin: 0 0 10px; }
+
+/* --- Eichen am Fenster */
+.calib { margin-top: 28px; padding: 16px; background: var(--raised); border-radius: 12px; }
+.calib h3 { margin: 0; font-size: 1.0625rem; line-height: 1.35; color: var(--strong); }
+.calib > .hint:first-of-type { margin-top: 4px; }
+.planes { margin: 12px 0 0; padding: 0; list-style: none; }
+.plane { padding: 12px 0; border-top: 1px solid var(--line); }
+.plane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.cs { font-weight: 600; color: var(--strong); overflow-wrap: anywhere; }
+.type { color: var(--muted); }
+.view { margin-left: auto; font-size: 0.875rem; color: var(--muted); }
+.view.now { color: var(--accent); }
+.view.soon { color: var(--text); }
+.plane-data { margin: 2px 0 10px; font-variant-numeric: tabular-nums; }
+.fact { white-space: nowrap; }
+.plane-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.plane-actions button {
+  flex: 1 1 auto; min-height: 44px; margin: 0; padding: 8px 12px;
+  font: inherit; font-size: 0.9375rem; line-height: 1.2; color: var(--strong);
+  background: #242424; border: 1px solid var(--edge); border-radius: var(--radius); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color 150ms var(--ease), background-color 150ms var(--ease);
+}
+.plane-actions button:hover { border-color: var(--link); }
+.plane-actions button:active { background: #303030; }
+.calib-note:empty { display: none; }
+.calib-note { margin: 12px 0 0; color: var(--accent); }
+
+/* --- Speichern: unten am Bildschirm, solange das Formular zu sehen ist */
+.bar {
+  position: sticky; bottom: 0; z-index: 10;
+  display: flex; align-items: center; gap: 12px;
+  margin: 8px -16px 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg); border-top: 1px solid var(--line);
+}
+.status { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 0.9375rem; color: var(--muted); overflow-wrap: anywhere; }
+.status.dirty { color: var(--accent); }
+.status.good { color: var(--good); }
+.status.bad { color: var(--bad); }
+.save {
+  flex: none; min-height: 48px; min-width: 8.5rem; margin: 0; padding: 0 20px;
+  font: inherit; font-weight: 600; color: #111;
+  background: var(--accent); border: 0; border-radius: var(--radius); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 150ms var(--ease), opacity 150ms var(--ease);
+}
+.save:hover { background: var(--accent-hover); }
+.save:active { background: var(--accent-active); }
+.save:disabled { opacity: 0.6; cursor: progress; }
+
+/* --- Breiter Bildschirm: dieselbe Spalte, mehr Luft */
+@media (min-width: 48rem) {
+  .page { padding: 0 24px; }
+  .top { padding-top: 16px; }
+  h1 { font-size: 1.75rem; }
+  .bar { margin-inline: -24px; padding-inline: 24px; }
+  .calib { padding: 20px 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}
