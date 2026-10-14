@@ -65,3 +65,13 @@ class FakeAdsb:
 @pytest.fixture
 def cfg():
     return make_cfg()
+
+
+@pytest.fixture(autouse=True)
+def keep_the_umask():
+    """main._main() setzt umask 027 für den ganzen Prozess. Ein Test, der _main() aufruft, soll sie den übrigen nicht
+    verstellen."""
+    before = os.umask(0o022)
+    os.umask(before)
+    yield
+    os.umask(before)

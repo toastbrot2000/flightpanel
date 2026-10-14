@@ -577,6 +577,7 @@ class App:
 
 
 async def _main() -> None:
+    os.umask(0o027)                     # Datenbank, Kopien und Logos nicht für alle lesbar: Standort und Album
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = Config.from_env()             # Warnungen zur Konfiguration schon im richtigen Format
     logging.getLogger().setLevel(getattr(logging, cfg.log_level.upper(), logging.INFO))

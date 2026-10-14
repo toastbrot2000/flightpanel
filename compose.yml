@@ -9,10 +9,11 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data        # mitgelieferte Daten (airlines.json ...), Logos, Datenbank; muss PUID:PGID gehören
-    # Härtung: nichts Schreibbares außer /data und /tmp, keine Rechte, keine neuen Rechte
+    # Härtung: nichts Schreibbares außer /data und /tmp (klein), keine Rechte, keine neuen Rechte, wenige Prozesse
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:size=64m
+    pids_limit: 256
     cap_drop:
       - ALL
     security_opt:

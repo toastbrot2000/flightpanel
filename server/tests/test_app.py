@@ -450,3 +450,17 @@ def test_the_start_stops_when_data_is_not_writable(tmp_path, monkeypatch, caplog
     assert len(errors) == 1 and errors[0].startswith(f"{data} ist nicht beschreibbar")
     assert "PUID" in errors[0] and "PGID" in errors[0]
     assert not (data / "flightpanel.db").exists()
+
+
+def test_the_server_starts_with_a_restrictive_umask(tmp_path, monkeypatch):
+    """Datenbank, ihre Kopien und die Logos entstehen mit dem, was die umask übrig lässt: 027 heißt, andere Benutzer
+    des Rechners lesen sie nicht (Standort, Album). Gesetzt wird sie beim Start (_main), nicht beim Import."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("flightpanel.main.check_data_dir", lambda data_dir: "für den Test abgebrochen")
+    before = os.umask(0o022)
+    try:
+        with pytest.raises(SystemExit):
+            asyncio.run(_main())
+        assert os.umask(before) == 0o027
+    finally:
+        os.umask(before)

@@ -139,6 +139,7 @@ def cmd_backup(db: Db, cfg: Config, args) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    os.umask(0o027)         # wie der Server (main._main): eine Kopie mit Standort und Album ist nicht für alle lesbar
     parser = argparse.ArgumentParser(prog="python -m flightpanel.panels", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)

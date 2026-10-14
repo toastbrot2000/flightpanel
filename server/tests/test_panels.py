@@ -1,5 +1,6 @@
 """panels.py: Einstellungen je Panel setzen und prüfen, Panels anlegen und löschen."""
 
+import os
 import re
 from dataclasses import fields
 
@@ -127,6 +128,17 @@ def test_backup_never_overwrites_a_file_without_force(run, tmp_path):
     assert target.read_text() == "schon da"
     assert run("backup", str(target), "--force")[0] == 0
     assert Db(str(target), put_aside=False).panel_get("home") is not None
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="Dateirechte gibt es nur unter Linux und macOS")
+def test_a_backup_is_not_readable_by_everyone(run, tmp_path):
+    """Die Kopie enthält Standort und Album. Wie der Server (main._main) setzt der Befehl umask 027, damit auch eine
+    Kopie, die er anlegt, für andere Benutzer des Rechners unlesbar ist, selbst wenn die umask am Terminal offener
+    ist (022). conftest.keep_the_umask stellt sie nach dem Test zurück."""
+    os.umask(0o022)
+    target = tmp_path / "copy.db"
+    assert run("backup", str(target))[0] == 0
+    assert target.stat().st_mode & 0o007 == 0, oct(target.stat().st_mode)
 
 
 @pytest.mark.parametrize("name", ["flightpanel.db", "flightpanel.db-wal", "flightpanel.db-shm"])

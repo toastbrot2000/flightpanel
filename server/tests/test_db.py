@@ -1,5 +1,6 @@
 """Datenbank: Schema anlegen und fortschreiben, kaputte Datei beiseitelegen, Panels, Zustand."""
 
+import os
 import re
 from pathlib import Path
 
@@ -21,6 +22,24 @@ def test_fresh_file_gets_the_schema_once(tmp_path):
     again = Db(path)                                    # zweites Öffnen: nichts doppelt
     assert again.one("PRAGMA user_version")[0] == len(MIGRATIONS)
     again.close()
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="Dateirechte gibt es nur unter Linux und macOS")
+def test_database_and_copy_follow_the_umask(tmp_path):
+    """Der Server setzt beim Start umask 027 (main._main). Die Datenbank, ihr -wal und -shm (SQLite gibt ihnen die
+    Rechte der Datenbank) und die Kopie (Db.backup, entsteht daneben und wird umbenannt) sind dann für andere Benutzer
+    des Rechners unlesbar."""
+    before = os.umask(0o027)
+    try:
+        db = Db(str(tmp_path / "f.db"))
+        db.state_set("k", 1)
+        db.backup(str(tmp_path / "f.db.bak"))
+        modes = {p.name: p.stat().st_mode & 0o777 for p in tmp_path.iterdir()}
+    finally:
+        os.umask(before)
+    db.close()
+    assert {"f.db", "f.db-wal", "f.db-shm", "f.db.bak"} <= set(modes)
+    assert all(mode & 0o007 == 0 for mode in modes.values()), modes
 
 
 def test_state_roundtrip(tmp_path):
