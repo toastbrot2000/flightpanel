@@ -232,3 +232,23 @@ def test_adsbdb_operator_lookup(tmp_path):
 
     assert asyncio.run(run()) == ["Aerowest GmbH", "Aerowest GmbH", "", "", ""]
     assert len(asked) == 2                                       # je Code einmal, Unsinn gar nicht
+
+
+def test_panels_in_one_poll_count_each_issue_once(tmp_path):
+    """Mehrere Panels bauen im selben Abruf ihr Modell (main.App._poll) mit einem gemeinsamen noted: Jede
+    Auffälligkeit zählt einmal je Abruf, nicht einmal je Panel."""
+    from flightpanel.issues import Issues
+    issues = Issues(Db(str(tmp_path / "i.db")))
+    fck = state(icao="3cce71", cs="FCK2FT", lat=52.3239, lon=12.8735, alt=690, track=43, vrate=0.3,
+                category="A1", actype="B350")                                     # unbekannter Betreiber
+    odd = state(icao="3c0002", cs="EZY77", lat=52.45, lon=13.45, alt=2000)       # Route passt nicht zur Position
+    adsb = FakeAdsb({"EZY77": {"origin": "LIS", "dest": "MAD", "origin_pos": [38.77, -9.13],
+                               "dest_pos": [40.47, -3.56], "airline": "easyJet", "airline_icao": "EZY"}})
+    noted: set[str] = set()
+    for cfg in (make_cfg(), make_cfg(home_lat=52.40, home_lon=13.30)):
+        asyncio.run(build_model(cfg, [fck, odd], adsb, NAMES, issues=issues, noted=noted))
+    assert issues.items["unknown_operator:FCK"]["seen"] == 1
+    assert issues.items["route_implausible:EZY77"]["seen"] == 1
+    assert issues.items["route_unknown:EZY"]["seen"] == 1
+    asyncio.run(build_model(make_cfg(), [fck, odd], adsb, NAMES, issues=issues))     # der nächste Abruf: wieder
+    assert issues.items["unknown_operator:FCK"]["seen"] == 2

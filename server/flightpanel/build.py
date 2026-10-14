@@ -46,7 +46,7 @@ Candidate = tuple[State, Sighting, int]          # Flugzeug, Sichtung, Sichtbark
 async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, dict],
                       horizon_s: float = 0, prev_course: float | None = None, issues: Issues | None = None,
                       adsbim=None, origins=None, source: str = "live", recent: Recent | None = None,
-                      rare: dict | None = None) -> DisplayModel:
+                      rare: dict | None = None, noted: set[str] | None = None) -> DisplayModel:
     """adsb: adsbdb.AdsbDb (Routen, Flugzeugtypen). names: data/airlines.json.
     horizon_s: Zeit bis zum nächsten Abruf, für die Sichtfeld-Vorschau.
     prev_course: Landerichtung vom letzten Abruf, falls gerade niemand landet.
@@ -54,8 +54,10 @@ async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, d
     recent: wer zuletzt hier landete oder startete, über Abrufe hinweg (airport.Recent). Nachgeführt wird es
     danach, einmal je Abruf (airfield.Airfield.observe): Bauen mehrere Panels im selben Abruf, sehen alle denselben
     Stand.
-    rare: seltene Typen und Betreiber (data.load_rare), für Flight.rare."""
-    b = _Builder(cfg, adsb, names, issues, origins, recent, rare)
+    rare: seltene Typen und Betreiber (data.load_rare), für Flight.rare.
+    noted: was in diesem Abruf schon nach /issues gemeldet ist. Panels, die im selben Abruf ihr Modell bauen, teilen es
+    (main.App._poll): So zählt jede Auffälligkeit einmal je Abruf, nicht je Panel."""
+    b = _Builder(cfg, adsb, names, issues, origins, recent, rare, noted)
     if adsbim is not None:
         # nur, wer eine Route brauchen kann, nicht der ganze Statistik-Abruf (SCAN_RADIUS_KM)
         b.im = await adsbim.routes([s for s in states if callsign_airline(s.callsign) and needs_route(cfg, s)])
@@ -186,7 +188,7 @@ class _Builder:
     """Was alle Schritte eines Abrufs brauchen: Quellen, Routen von adsb.im, Landefolge."""
 
     def __init__(self, cfg: Config, adsb, names: dict[str, dict], issues: Issues | None, origins,
-                 recent: Recent | None = None, rare: dict | None = None):
+                 recent: Recent | None = None, rare: dict | None = None, noted: set[str] | None = None):
         self.cfg = cfg
         self.adsb = adsb
         self.names = names
@@ -197,7 +199,7 @@ class _Builder:
         self.im: dict[str, list] = {}        # Stationen von adsb.im, pro Callsign
         self.seq: dict[str, int] = {}        # icao24 -> Platz in der Landefolge
         self.etas: dict[str, float] = {}     # icao24 -> Sekunden bis zum Aufsetzen
-        self._noted: set[str] = set()        # schon nach /issues gemeldet
+        self._noted: set[str] = set() if noted is None else noted   # in diesem Abruf schon nach /issues gemeldet
 
     async def route_for(self, s: State) -> dict:
         """Route von adsbdb, Teilstrecke von adsb.im, wenn sie zur Position passt. Eine
@@ -244,12 +246,18 @@ class _Builder:
         origin, dest = (route.get("origin", ""), route.get("dest", "")) if ok else ("", "")
         return classify(s, origin, dest, self.cfg.local_airport_iata, guess=airline) != OVF
 
+    def _once(self, key: str) -> bool:
+        """Zum ersten Mal in diesem Abruf (für alle Panels, die ihn teilen)? Dann gilt es ab jetzt als gemeldet."""
+        if key in self._noted:
+            return False
+        self._noted.add(key)
+        return True
+
     def note(self, s: State, route: dict) -> bool:
         """Airline oder nicht; unbekannte oder anders benannte Betreiber einmal pro
         Abruf nach /issues (Kandidaten für airlines.json)."""
         airline = is_airline(s.callsign, route, self.names, s.category)
-        if self.issues is not None and s.icao24 not in self._noted:
-            self._noted.add(s.icao24)
+        if self.issues is not None and self._once(s.icao24):
             note_operator(self.issues, s, route, self.names, airline)
         return airline
 
@@ -282,7 +290,7 @@ class _Builder:
         origin, dest = route.get("origin", ""), route.get("dest", "")
         if not route_plausible(route, s.lat, s.lon):
             log.info("Route %s %s-%s passt nicht zur Position, verworfen", s.callsign, origin, dest)
-            if issues is not None:
+            if issues is not None and self._once(f"route_implausible:{s.callsign}"):
                 issues.note("route_implausible", s.callsign, s.callsign, route=f"{origin}-{dest}",
                             pos=[round(s.lat, 2), round(s.lon, 2)])
             origin = dest = ""
@@ -294,7 +302,7 @@ class _Builder:
                 origin = o["origin"]
                 if not dest and s.icao24 in self.seq:
                     dest = cfg.local_airport_iata
-        if airline and not (origin or dest) and issues is not None:
+        if airline and not (origin or dest) and issues is not None and self._once(f"route_unknown:{s.callsign}"):
             issues.note("route_unknown", callsign_airline(s.callsign) or s.callsign, s.callsign)
         # Betreiber auch ohne Ziffer im Callsign (BPOBER -> Bundespolizei), nur für den Namen
         airline_icao = (route.get("airline_icao") or callsign_airline(s.callsign)
