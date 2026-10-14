@@ -2,8 +2,9 @@
 
 App verbindet alles: Flugzeuge abrufen (adsb.lol, sonst OpenSky), daraus das
 Display-Modell bauen (build.py), Statistik führen, Wetter und ISS nachladen,
-Zwischenstände speichern. web.py liefert Bilder und Zustand aus, gerendert wird
-bei jedem Abruf (render.py). Alle Dateien liegen in DATA_DIR (Docker: ./data)."""
+Geändertes in die Datenbank schreiben (db.py: DATA_DIR/flightpanel.db). web.py liefert
+Bilder und Zustand aus, gerendert wird bei jedem Abruf (render.py). Logos und
+mitgelieferte Daten liegen in DATA_DIR (Docker: ./data)."""
 
 import asyncio
 import logging
@@ -11,6 +12,7 @@ import os
 import signal
 import time
 import traceback
+from collections.abc import Mapping
 from dataclasses import replace
 
 import aiohttp
@@ -26,11 +28,12 @@ from .astro import Iss
 from .build import build_model
 from .cache import Cache
 from .cards import CARDS
-from .config import Config
+from .config import Config, panel_settings_from_env
 from .data import load_airlines, load_airports, load_rare
+from .db import Db, db_path
 from .idle import IdleScreen
 from .issues import Issues
-from .logos import make_logo_store
+from .logos import LogoStore, make_logo_store
 from .metar import MetarSource
 from .mock import mock_model
 from .model import DisplayModel, State
@@ -38,11 +41,12 @@ from .opensky import OpenSky
 from .origins import Origins
 from .render import Renderer
 from .stats import Stats
+from .storage import read_json
 from .web import make_web_app
 
 log = logging.getLogger("main")
 
-SAVE_EVERY_S = 10 * 60      # Cache, Auffälligkeiten und Statistik auf die Platte
+SAVE_EVERY_S = 60           # Geändertes in die Datenbank; auch die Nachtaufräumung hängt daran
 METAR_EVERY_S = 20 * 60
 ISS_EVERY_S = 10 * 60       # Bahndaten einmal am Tag, Überflüge stündlich (astro.py)
 LANDED_S = 90               # Landezeit darunter zählt als Bewegung am Platz
@@ -61,15 +65,67 @@ def dream_due(cfg: Config, last_day: str | None, now: float) -> bool:
             and t.tm_hour * 60 + t.tm_min >= (start if start != end else DREAM_FALLBACK_MIN))
 
 
-class App:
-    """Muss in der laufenden Event-Loop entstehen (aiohttp-Session)."""
+def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, logos: LogoStore,
+                  iss: Iss | None) -> list[str]:
+    """Zustand aus den JSON-Dateien früherer Fassungen (bis Oktober 2026) einmalig übernehmen.
+    Gibt die übernommenen Dateien zurück; App benennt sie in *.imported um, sobald das
+    Übernommene gespeichert ist. Eine unlesbare oder unbrauchbare Datei bleibt, wie sie ist,
+    und steht im Log; der Start geht weiter."""
+    taken = []
+    for name, store in (("cache.json", cache), ("issues.json", issues), ("stats.json", stats),
+                        (os.path.join("logos", ".missing.json"), logos)):
+        path = os.path.join(data_dir, name)
+        if not os.path.exists(path):
+            continue
+        raw = read_json(path)
+        if not isinstance(raw, dict):                   # unlesbar (read_json hat es geloggt) oder kein Objekt
+            log.warning("%s nicht übernommen, bleibt liegen", name)
+            continue
+        try:
+            store.load_legacy(raw)
+        except Exception as e:                          # von Hand verändert: lieber ohne als gar nicht starten
+            log.warning("%s nicht übernommen (%s), bleibt liegen", name, e)
+            continue
+        taken.append(path)
+    path = os.path.join(data_dir, "tle.txt")
+    if iss is not None and os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                if not iss.set_tle_text(f.read(), os.path.getmtime(path)):
+                    raise ValueError("keine Bahndaten darin")
+        except Exception as e:                          # kein Text oder keine Bahndaten darin
+            log.warning("tle.txt nicht übernommen (%s), bleibt liegen", e)
+        else:
+            taken.append(path)
+    if taken:
+        log.info("Aus früheren Fassungen übernommen: %s", ", ".join(os.path.relpath(p, data_dir) for p in taken))
+    return taken
 
-    def __init__(self, cfg: Config):
-        self.cfg = cfg
+
+class App:
+    """Muss in der laufenden Event-Loop entstehen (aiohttp-Session). Die Datenbankverbindung gehört dem Thread
+    der Loop: Nichts, was in asyncio.to_thread läuft, darf sie benutzen."""
+
+    def __init__(self, cfg: Config, env: Mapping[str, str] | None = None):
+        """cfg: die Server-Einstellungen (Config.from_env). Das Panel am LAN-Port (LAN_PANEL)
+        bekommt dazu seine Einstellungen aus der Datenbank; eine ältere .env mit Standort und
+        Sichtfeld (env, sonst os.environ) wird beim ersten Start einmalig übernommen."""
+        self.server_cfg = cfg
         data = cfg.data_dir
+        self.db = Db(db_path(data))
+        leftover = panel_settings_from_env(os.environ if env is None else env)
+        if self.db.panel_get(cfg.lan_panel) is None:
+            Config.for_panel(cfg, leftover)     # prüft: Unsinn in der alten .env bricht ab, ohne gespeichert zu werden
+            self.db.panel_add(cfg.lan_panel, settings=leftover)
+            if leftover:
+                log.info("Panel-Einstellungen aus .env übernommen: %s", ", ".join(sorted(leftover)))
+        elif leftover:
+            log.warning("%s in .env gilt nicht mehr, Panel-Einstellungen liegen in der Datenbank. Ändern mit: "
+                        "python -m flightpanel.panels set %s KEY=WERT", ", ".join(sorted(leftover)), cfg.lan_panel)
+        self.cfg = cfg = Config.for_panel(cfg, self.db.panel_get(cfg.lan_panel)["settings"])
         self.session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT})
-        self.issues = Issues(os.path.join(data, "issues.json"))
-        self.cache = Cache(os.path.join(data, "cache.json"))
+        self.issues = Issues(self.db)
+        self.cache = Cache(self.db)
         self.names = load_airlines(data)
 
         # Quellen
@@ -81,12 +137,22 @@ class App:
                                 auth=None if self.opensky.anonymous else self.opensky.auth_headers)
                         if cfg.track_origin else None)
         self.metar = MetarSource(self.session, cfg.metar_station, self.issues) if cfg.metar else None
-        self.iss = Iss(cfg, os.path.join(data, "tle.txt"), self.session, self.issues) if cfg.iss else None
+        self.iss = Iss(cfg, self.db, self.session, self.issues) if cfg.iss else None
 
         # Anzeige
-        self.logos = make_logo_store(cfg, self.session)
+        self.logos = make_logo_store(cfg, self.session, self.db)
         self.rare = load_rare(data, self.names)
-        self.stats = Stats(os.path.join(data, "stats.json"), cfg, self.names, self.rare)
+        self.stats = Stats(self.db, cfg.lan_panel, cfg, self.names, self.rare)
+
+        # Alte JSON-Dateien einmalig übernehmen. Das muss vor dem Modell geschehen: Dessen Landerichtung
+        # zu Beginn kommt aus der Statistik.
+        taken = absorb_legacy(data, self.cache, self.issues, self.stats, self.logos, self.iss)
+        if taken:
+            # Erst gespeichert, dann umbenannt: ein Absturz dazwischen verliert nichts.
+            self.save()
+            for path in taken:
+                os.replace(path, path + ".imported")
+
         self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=self.metar, astro=self.iss, logos=self.logos,
                                names=self.names)
         self.renderer = Renderer(cfg, self.logos, idle=self.idle)
@@ -289,9 +355,11 @@ class App:
                 log.warning("Speichern: %s", e)
 
     def save(self) -> None:
-        self.cache.save()
-        self.issues.save()
-        self.stats.save()
+        """Geändertes in die Datenbank, als eine Transaktion."""
+        with self.db.transaction():
+            self.cache.save()
+            self.issues.save()
+            self.stats.save()
 
     def dream(self, now: float) -> None:
         """Nachts aufräumen ("träumen"), damit der Server auch nach einem Jahr am Stück
@@ -420,6 +488,7 @@ class App:
         self.save()
         await runner.cleanup()
         await self.session.close()
+        self.db.close()
 
 
 async def _main() -> None:

@@ -33,6 +33,14 @@ from contextlib import contextmanager
 
 log = logging.getLogger("db")
 
+DB_FILE = "flightpanel.db"
+
+
+def db_path(data_dir: str) -> str:
+    """Die Datenbank in DATA_DIR; Server, fetch_logos und panels öffnen dieselbe Datei."""
+    return os.path.join(data_dir, DB_FILE)
+
+
 BUSY_MS = 5000        # so lange wartet SQLite auf eine fremde Sperre, bevor es "database is locked" meldet
 
 MIGRATIONS = [

@@ -19,7 +19,7 @@ import aiohttp
 from . import USER_AGENT
 from .config import Config
 from .data import load_airlines
-from .db import Db
+from .db import Db, db_path
 from .logos import make_logo_store
 
 
@@ -28,7 +28,7 @@ async def run(cfg: Config, codes: list[tuple[str, str]], force: bool) -> int:
     ok = skipped = own = 0
     failed: list[str] = []
     async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
-        db = Db(os.path.join(cfg.data_dir, "flightpanel.db"), put_aside=False)   # neben dem Server: nichts beiseite
+        db = Db(db_path(cfg.data_dir), put_aside=False)   # neben dem Server: nichts beiseite
         store = make_logo_store(cfg, session, db)
         store.fetch_enabled = True
         for iata, icao in codes:
