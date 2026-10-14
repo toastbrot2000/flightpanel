@@ -17,6 +17,7 @@
 #include "fw_version.h"
 #include "manifest.h"
 #include "net.h"
+#include "rescue.h"
 #include "watchdog.h"
 
 // Arduino-Kern (esp32-hal-misc.c, initArduino vor setup()): Mit true bleibt ein neues Image unbestätigt
@@ -72,12 +73,36 @@ void clearTries() {
   tries = Tries();
 }
 
-// ---- Rettungs-Uhr (RTC-Speicher) --------------------------------------------------------------------------------
+// ---- Rettungs-Uhr (RTC-Speicher, grob im NVS) -------------------------------------------------------------------
 // Wie lange das Panel das Zertifikat des Servers schon ablehnt, über Neustarts hinweg: Ohne Bilder startet es alle
 // 10 min neu (RESTART_AFTER_MS), eine Uhr im RAM käme nie auf 24 h. RTC_NOINIT übersteht Neustart, Watchdog und
-// Absturz, nicht das Ausschalten; danach beginnt sie von vorn. Gezählt wird Laufzeit, keine Uhrzeit (das Panel
-// kennt keine). Andere Fehler (WLAN, DNS, HTTP) halten die Uhr nicht an, nur ein Bild setzt sie zurück.
+// Absturz, nicht das Ausschalten; dafür steht ihr Stand stündlich im NVS (rescue.h), und nach dem Einschalten zählt
+// sie von dort weiter. Gezählt wird Laufzeit, keine Uhrzeit (das Panel kennt keine). Andere Fehler (WLAN, DNS, HTTP)
+// halten die Uhr nicht an. Auf 0 geht sie, sobald das Zertifikat wieder durchgeht: mit einem Bild oder einer anderen
+// Antwort über die geprüfte Verbindung.
 const uint32_t CLOCK_MAGIC = 0x46505243;   // "FPRC"
+const char* const RESCUE_NS = "fwrescue";  // eigener NVS-Namensraum: clearTries() leert "fwupdate" ganz
+uint8_t savedSteps = 0;                    // Stand im NVS (rescue::steps)
+
+uint8_t loadSteps() {
+  uint8_t s = 0;
+  Preferences p;
+  if (p.begin(RESCUE_NS, false)) {   // schreibbar: legt den Namensraum an (lesend: Fehler im Log, solange er fehlt)
+    s = p.getUChar("steps", 0);
+    p.end();
+  }
+  return s;
+}
+
+// savedSteps folgt auch, wenn das Schreiben scheitert: kein neuer Versuch bei jedem Abruf, erst beim nächsten Schritt
+void saveSteps(uint8_t s) {
+  Preferences p;
+  if (p.begin(RESCUE_NS, false)) {
+    p.putUChar("steps", s);
+    p.end();
+  }
+  savedSteps = s;
+}
 
 struct RescueClock {
   uint32_t magic;
@@ -107,11 +132,14 @@ uint64_t streakTick(uint32_t now) {
   const uint64_t streak = rtcClock.streakMs ? rtcClock.streakMs + (uint32_t)(now - streakT0) : 1;
   streakT0 = now;
   saveClock(streak, rtcClock.lastTryMs);
+  const uint8_t steps = rescue::steps(streak, RESCUE_AFTER_MS);
+  if (steps > savedSteps) saveSteps(steps);   // ins NVS nur mit jedem vollen Schritt, höchstens 24-mal
   return streak;
 }
 
 void streakReset() {
   if (rtcClock.streakMs || rtcClock.lastTryMs) saveClock(0, 0);
+  if (savedSteps) saveSteps(0);
 }
 
 // ---- Laufendes Image --------------------------------------------------------------------------------------------
@@ -368,10 +396,11 @@ bool rescueUpdate(manifest::Manifest& m) {
 namespace updater {
 
 void begin() {
-  // Rettungs-Uhr: nach dem Einschalten steht Zufall im RTC-Speicher
+  // Rettungs-Uhr: nach dem Einschalten steht Zufall im RTC-Speicher, dann gilt der grobe Stand aus dem NVS
+  savedSteps = loadSteps();
   const bool clockOk = esp_reset_reason() != ESP_RST_POWERON && rtcClock.magic == CLOCK_MAGIC &&
                        rtcClock.check == clockCheck(rtcClock);
-  if (!clockOk) saveClock(0, 0);
+  if (!clockOk) saveClock(rescue::restore(savedSteps, RESCUE_AFTER_MS), 0);
   streakT0 = millis();
   if (rtcClock.streakMs) {
     Serial.printf("Zertifikat des Servers seit %lu min abgelehnt, Rettungsmodus ab %lu min\n",
@@ -417,7 +446,12 @@ void afterFrame(frame::Result r) {
     return;
   }
 
-  // Rettungsmodus: Nur ein abgelehntes Zertifikat des Servers zählt, kein Verbindungs- oder HTTP-Fehler.
+  // Rettungsmodus: Nur ein abgelehntes Zertifikat des Servers zählt, kein Verbindungs- oder HTTP-Fehler. Kam eine
+  // Antwort über die geprüfte Verbindung, nur eben kein Bild (etwa 403 oder 503), ging das Zertifikat durch.
+  if (frame::answered()) {
+    streakReset();
+    return;
+  }
   if (!net::isHttps() || net::tlsError(nullptr, 0) != MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) return;
   const uint64_t streak = streakTick(now);
   if (streak < RESCUE_AFTER_MS) return;

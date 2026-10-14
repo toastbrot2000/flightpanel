@@ -11,6 +11,7 @@
 #include "watchdog.h"
 
 static char etag[48] = "";   // ETag des angezeigten Bildes, wie der Server es schickt (mit Anführungszeichen)
+static bool gotAnswer = false;   // letztes fetch() bekam eine HTTP-Antwort (answered)
 
 // Nimmt den Rumpf auf, den HTTPClient::writeToStream liefert, ob mit Content-Length oder in Chunks. Mehr als
 // passt nimmt sie nicht: write() gibt dann 0 zurück, writeToStream bricht mit Fehler ab. Jedes Paket füttert den
@@ -53,7 +54,10 @@ namespace frame {
 
 void forgetEtag() { etag[0] = '\0'; }
 
+bool answered() { return gotAnswer; }
+
 Result fetch(uint8_t* buf) {
+  gotAnswer = false;
   if (WiFi.status() != WL_CONNECTED) return Result::Failed;
   if (!net::beginRequest("/panel/frame")) {
     net::endRequest(false);
@@ -71,6 +75,7 @@ Result fetch(uint8_t* buf) {
   http.addHeader("X-Panel", diag);
 
   const int code = net::get();
+  gotAnswer = code > 0;   // bei https nur über eine geprüfte Verbindung (der Rettungsmodus geht nicht hier durch)
   if (code == HTTP_CODE_NOT_MODIFIED && etag[0]) {   // ohne Rumpf: die Verbindung bleibt brauchbar
     net::endRequest(true);
     return Result::Same;

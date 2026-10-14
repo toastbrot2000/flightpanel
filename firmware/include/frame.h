@@ -7,4 +7,6 @@ namespace frame {
 enum class Result { Fresh, Same, Failed };   // neues Bild in buf, unverändert (304), Fehler
 Result fetch(uint8_t* buf);                   // buf: FRAME_LEN Byte; bei Fehler kann er halb beschrieben sein
 void forgetEtag();                            // wenn etwas anderes gezeichnet wurde: nächstes Mal ganzes Bild
+bool answered();                              // letztes fetch(): eine HTTP-Antwort, bei https über die geprüfte
+                                              // Verbindung (auch wenn kein Bild kam, etwa 403)
 }  // namespace frame
