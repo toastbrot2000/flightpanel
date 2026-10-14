@@ -122,7 +122,7 @@ cp platformio_local.ini.example platformio_local.ini   # nur für OTA: dasselbe 
 pio run -e esp32dev_ota -t upload                # danach per WLAN
 ```
 
-Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert (in Docker). Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
+Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert, mit und ohne Update-Schlüssel, und lässt die Tests auf dem Rechner laufen (`pio test -e native`, Manifest der signierten Updates); alles in Docker. Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
 
 **Ablauf:** Nach dem Einschalten ein Testbild (Abschnitt 6; andere Neustarts bleiben still), dann WLAN und, falls ein OTA-Passwort gesetzt ist, OTA samt mDNS-Name (`flightpanel.local`). Danach alle 2 s `GET /frame`, Header prüfen, Helligkeit übernehmen (gedeckelt bei `MAX_BRIGHTNESS`), 4096 Pixel schreiben, Puffer tauschen. Die Bibliothek frischt die Panels per DMA im Hintergrund auf, der Prozessor ist dabei kaum beteiligt. Ohne Server bleibt das letzte Bild stehen; nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu. Hängt dagegen `loop()` selbst (WLAN-Stack, Treiber), setzt der Task-Watchdog den ESP32 nach 60 s zurück (`WDT_TIMEOUT_S`); ein OTA-Upload füttert ihn mit jedem Block. Zum Testen lässt `h` und Enter im seriellen Monitor die Schleife 70 s stehen (Abschnitt 6).
 
@@ -147,6 +147,20 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 | Leichtes Nachleuchten in dunklen Zeilen | `HUB75_LATCH_BLANKING 2` bis `4` |
 | Nur jede zweite Zeilengruppe, Bild gestaucht | Panel ist kein 1/16-Scan |
 | Farben vertauscht | R/G/B-Kabel vertauscht |
+
+**Signierte Updates** (im Aufbau: Manifest, Signaturprüfung und Release-Skript gibt es, das Panel holt Updates noch nicht selbst). Panels bei Freunden sind per OTA nicht erreichbar; sie sollen neue Firmware selbst vom Server holen und nur installieren, was mit dem eigenen Schlüssel signiert und neuer ist als ihre Version (`FW_VERSION`, die Bauzeit JJMMTTHHMM in UTC). Format des Manifests: `firmware/include/manifest.h`.
+
+1. **Schlüssel, einmal**, außerhalb des Repos und außerhalb jedes synchronisierten Ordners (OneDrive, Dropbox …; `fw_release.sh` lehnt solche Pfade ab):
+   ```bash
+   mkdir -p ~/flightpanel-signing
+   openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -aes-256-cbc -out ~/flightpanel-signing/fw_signing.pem
+   openssl pkey -in ~/flightpanel-signing/fw_signing.pem -pubout
+   ```
+   openssl fragt nach einer Passphrase; ohne sie nimmt `fw_release.sh` den Schlüssel nicht. Die Ausgabe des letzten Befehls kommt in `firmware/include/fw_pubkey.h` (Vorlage `fw_pubkey.h.example`, nicht im Repo); gibt es die Datei, baut die Firmware die Update-Prüfung ein. Sicherung offline: die verschlüsselte Schlüsseldatei auf einen USB-Stick, die Passphrase getrennt davon. Ist der Schlüssel weg, kommt neue Firmware nur noch per USB aufs Panel.
+2. **Release:** `sh tools/fw_release.sh ~/flightpanel-signing/fw_signing.pem` in einem eigenen Terminal. Es baut in Docker ohne `secrets.h` (die Images sind öffentlich), schreibt das Manifest, fragt nach der Passphrase, signiert, prüft die Signatur gegen `fw_pubkey.h` und legt `firmware.txt` und `firmware.bin` nach `data/firmware/canary/`. `--dry-run` baut nur und zeigt das Manifest, ohne Schlüssel.
+3. **canary, dann stable:** Das eigene Panel steht auf `canary` und bekommt das Release zuerst. Läuft es, beide Dateien nach `data/firmware/stable/` kopieren, erst `firmware.bin`, dann `firmware.txt`; die anderen Panels folgen.
+
+Signieren ist Sache eines Menschen: KI-Agenten führen `fw_release.sh` nie aus. Das Skript bricht ohne Terminal und in einer Claude-Code-Sitzung ab, die Passphrase tippt der Besitzer des Schlüssels.
 
 ---
 
