@@ -16,7 +16,8 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "B", "I", "UP", "RUF"]
+# S608: SQL nur mit Platzhaltern, nie zusammengebaut (db.py und die Speicher)
+select = ["E", "F", "W", "B", "I", "UP", "RUF", "S608"]
 ignore = [
     "UP031",    # %-Format in der Vorschauseite: das HTML enthält JavaScript mit geschweiften Klammern
 ]

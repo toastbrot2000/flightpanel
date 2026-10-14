@@ -4,7 +4,7 @@ Was das Panel zeigt, in festen Stufen: Eine Stufe kommt nur dran, wenn keine hö
 
 **Auswahl:** Innerhalb einer Stufe wechseln die Karten alle `IDLE_SECONDS` (12 s, ruhiger Modus 30 s): Dringendes zuerst (mehrere wechseln sich ab), sonst gewichteter Zufall, ohne die zuletzt gezeigten. Die Uhr läuft in jeder Leerlauf-Stufe mit, in etwa einem Drittel der Fälle (`IDLE_CLOCK_SHARE`). Dringend sind: neue Airline (2 min), Flieger in unter 3 min, seltener Typ oder hoher Besuch (2 min), ISS gerade über dem Haus.
 
-**Abschalten:** Jede Karte mit `CARD_<ID>=0` in `.env`, auch Uhr und Notfall. Hat keine eingeschaltete Karte etwas zu zeigen, bleibt das Panel dunkel.
+**Abschalten:** Jede Karte mit `panels set home CARD_<ID>=0` (siehe README), auch Uhr und Notfall. Hat keine eingeschaltete Karte etwas zu zeigen, bleibt das Panel dunkel.
 
 **Neujahr:** Um 0 Uhr gehört das Panel fünf Minuten dem Feuerwerk, vor Flügen und auch in der Ruhezeit (dann so hell wie abends); nur ein Notfall geht vor. Den restlichen 1. Januar ist das Feuerwerk eine Karte unter vielen in Stufe 3. An Silvester kommt es nicht.
 

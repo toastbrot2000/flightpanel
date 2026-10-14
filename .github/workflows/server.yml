@@ -16,7 +16,8 @@ jobs:
       - name: Container bauen
         run: docker build -t flightpanel server
       - name: Lint und Tests im Container
+        # Als root: Das Image läuft ohne Rechte (uid 1000) und dürfte die Entwicklungspakete sonst nicht installieren.
         run: >
-          docker run --rm -v "$PWD:/repo" -w /repo flightpanel sh -c
+          docker run --rm --user root -v "$PWD:/repo" -w /repo flightpanel sh -c
           "pip install -q --root-user-action=ignore --require-hashes -r server/requirements-dev.lock
           && ruff check . && python -m pytest -p no:cacheprovider"

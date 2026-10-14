@@ -7,7 +7,17 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/data        # mitgelieferte Daten (airlines.json ...), Logos, Cache, Statistik
+      - ./data:/data        # mitgelieferte Daten (airlines.json ...), Logos, Datenbank; gehört uid 1000
+    # Härtung: nichts Schreibbares außer /data und /tmp, keine Rechte, keine neuen Rechte
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:                 # ein Traefik mit Docker-Provider soll den Port ohne Anmeldung nicht veröffentlichen
+      - traefik.enable=false
     logging:                # Docker-Log begrenzen (rund 1 MB am Tag), sonst wächst es ohne Ende
       driver: json-file
       options:

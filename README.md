@@ -43,17 +43,27 @@ Die Vorschauseite hat Links für die Layouts und jede Leerlauf-Karte; `/frame.pn
 
 ## Einrichten
 
-Alles Ortsabhängige steht in `.env` (nicht im Repo; jede Einstellung ist in [.env.example](.env.example) erklärt). Für echte Daten: `MOCK=0`, dann vier Dinge.
+Serverweites steht in `.env` (nicht im Repo; jede Einstellung ist in [.env.example](.env.example) erklärt): Heimatflughafen, Datenquellen, Logos, Betrieb. Für echte Daten `MOCK=0`. Alles, was zum einzelnen Panel gehört (Standort, Sichtfeld, Anzeige, Helligkeit, Ruhezeit, Karten), liegt in `data/flightpanel.db` und wird nach dem Start mit einem Befehl gesetzt.
 
-**1. Standort.** `HOME_LAT`, `HOME_LON` (Dezimalgrad), `HOME_ALT_M` (Augenhöhe am Fenster über dem Meer). Angezeigt wird, was höchstens `RADIUS_KM` weit weg und `MAX_ALT_M` hoch ist.
+**1. Heimatflughafen** (`.env`). `LOCAL_AIRPORT_IATA` genügt: Position, Höhe und METAR-Station kommen aus `data/airports.json`. Dazu `RUNWAY_COURSE`, der Kurs im Endanflug einer Landerichtung (BER 25: 249°, MUC 26: 263°), und `CURFEW_HOURS` für das Nachtflugverbot. Für einen Flughafen, der nicht in der Liste steht, `AIRPORT_LAT`, `AIRPORT_LON`, `AIRPORT_ALT_M` und `METAR_STATION` setzen.
 
-**2. Sichtfeld.** Was man vom Fenster aus sieht: Richtung im Uhrzeigersinn von `VIEW_FROM` bis `VIEW_TO` (0 = Nord, 90 = Ost), Mindesthöhe über dem Horizont `VIEW_MIN_ELEV` (Häuser, Bäume), Obergrenze `VIEW_MAX_ELEV` (Balkon darüber), Sichtweite `VIEW_MAX_KM`. `VIEW_ONLY=1` zeigt nur, was im Sichtfeld ist. Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen Richtung (`az`) und Höhenwinkel (`elev`) ablesen.
+**2. Starten.** `docker compose up -d --build`. Beim ersten Start entsteht das Panel `home`; eine ältere `.env` mit Standort und Sichtfeld wird dabei einmalig übernommen. `./data` muss dem Benutzer 1000 gehören (der Container läuft ohne Rechte): auf Linux `chown -R 1000:1000 data`, unter Docker Desktop passt es von selbst.
 
-**3. Heimatflughafen.** `LOCAL_AIRPORT_IATA` genügt: Position, Höhe und METAR-Station kommen aus `data/airports.json`. Dazu `RUNWAY_COURSE`, der Kurs im Endanflug einer Landerichtung (BER 25: 249°, MUC 26: 263°), und `CURFEW_HOURS` für das Nachtflugverbot. Für einen Flughafen, der nicht in der Liste steht, `AIRPORT_LAT`, `AIRPORT_LON`, `AIRPORT_ALT_M` und `METAR_STATION` setzen.
+**3. Standort und Sichtfeld.**
 
-**4. Karten und Ruhe.** Jede Leerlauf-Karte lässt sich abschalten: `CARD_<ID>=0`, z. B. `CARD_PIGEON=0`. `CALM=1` ist der ruhige Modus: nichts blinkt außer einem Notfall, Infoseiten wechseln alle 10 s statt 4 s, unten stehen nur Landezeit und Höhe/Tempo. Jede dieser Einzelheiten ist auch einzeln einstellbar (`PAGE_SECONDS`, `FLIGHT_SECONDS`, `INFO_PAGES`, `BLINK`, `IDLE_SECONDS`).
+```bash
+docker compose exec flightpanel python3 -m flightpanel.panels set home HOME_LAT=52.52 HOME_LON=13.40 HOME_ALT_M=40
+```
 
-Dann `docker compose up -d --build` und einmal die Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`. Unsinnige Werte (`PAGE_SECONDS=0`, `POLL_INTERVAL=oft`) brechen den Start mit dem Namen der Variablen ab; Verdächtiges, etwa Koordinaten, die nicht zum Flughafen passen, steht als Warnung im Log. Falsch geschriebene Namen fallen nicht auf: Die Werte unter `/health` zeigen, was wirklich gilt.
+```bash
+docker compose exec flightpanel python3 -m flightpanel.panels set home VIEW_FROM=110 VIEW_TO=190 VIEW_MIN_ELEV=0.5 VIEW_MAX_KM=60 VIEW_ONLY=1
+```
+
+`HOME_LAT`, `HOME_LON` sind Dezimalgrad, `HOME_ALT_M` die Augenhöhe am Fenster über dem Meer. Angezeigt wird, was höchstens `RADIUS_KM` weit weg und `MAX_ALT_M` hoch ist. Das Sichtfeld: Richtung im Uhrzeigersinn von `VIEW_FROM` bis `VIEW_TO` (0 = Nord, 90 = Ost), Mindesthöhe über dem Horizont `VIEW_MIN_ELEV` (Häuser, Bäume), Obergrenze `VIEW_MAX_ELEV` (Balkon darüber), Sichtweite `VIEW_MAX_KM`; `VIEW_ONLY=1` zeigt nur, was im Sichtfeld ist. Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen Richtung (`az`) und Höhenwinkel (`elev`) ablesen. `… panels keys` zeigt alle Panel-Einstellungen mit Default und Erklärung, `… panels show home` die gesetzten; sie gelten nach `docker compose restart flightpanel`.
+
+**4. Karten und Ruhe.** Ebenso per `set home`: `CARD_<ID>=0` schaltet eine Leerlauf-Karte ab, z. B. `CARD_PIGEON=0`. `CALM=1` ist der ruhige Modus: nichts blinkt außer einem Notfall, Infoseiten wechseln alle 10 s statt 4 s, unten stehen nur Landezeit und Höhe/Tempo. Jede dieser Einzelheiten ist auch einzeln einstellbar (`PAGE_SECONDS`, `FLIGHT_SECONDS`, `INFO_PAGES`, `BLINK`, `IDLE_SECONDS`), ebenso Helligkeit und Ruhezeit (`BRIGHTNESS_DAY`, `BRIGHTNESS_EVENING`, `DAY_HOURS`, `QUIET_HOURS`).
+
+Dann einmal die Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`. Unsinnige Werte brechen den Start ab (`.env`) oder werden vom Befehl abgelehnt (`panels set`), jeweils mit dem Namen der Einstellung; Verdächtiges, etwa Koordinaten, die nicht zum Flughafen passen, steht als Warnung im Log. Die Werte unter `/health` zeigen, was wirklich gilt.
 
 ## Was angezeigt wird
 
@@ -153,7 +163,7 @@ Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Cache, Logos, Sta
 | `esp32_gap` | ESP32 hat länger keinen Frame geholt | WLAN, Stromversorgung |
 | `exception` | Fehler im Code, mit Datei und Zeile | Bug, Traceback im Container-Log |
 
-Liegt in `data/issues.json`. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`.
+Liegt in `data/flightpanel.db`. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`.
 
 **Dauerbetrieb:** Der Server ist darauf ausgelegt, monatelang ohne Neustart zu laufen. Einmal pro Nacht, zu Beginn der `QUIET_HOURS` (ohne Ruhezeit um 4 Uhr), räumt er auf: `/issues` vergisst Einmaliges (nur an einem Tag gesehen) nach 7 Tagen und alles andere, wenn es 30 Tage nicht mehr aufgetreten ist; Fehler im Code bleiben mindestens 30 Tage. Ist `/issues` trotzdem voll (1000 Einträge), macht der älteste Platz. Der Cache wirft Abgelaufenes bei jedem Speichern weg. Was die letzte Nacht getan hat, steht in `/health` unter `dream`. Das Docker-Log ist auf 15 MB begrenzt (`compose.yml`), alte Images räumt `tools/update.sh` weg. Damit man nicht nachsehen muss: Ein Uptime-Monitor im Homelab (Uptime Kuma o. ä.) auf `http://server:8080/ok` meldet sich nur, wenn wirklich etwas klemmt; `docker ps` zeigt den Container dann als `unhealthy`.
 
@@ -213,7 +223,7 @@ firmware/        ESP32: platformio.ini, src/main.cpp, include/config.h, secrets.
 tools/           make_logo.py, make_airports.py, screenshots.py, check_firmware.sh,
                  escrow.py/.sh (Abhängigkeiten mit Wartezeit), update.sh (Server aktualisieren)
 data/            airlines.json, airports.json, rare.json;
-                 im Betrieb logos/, cache.json, issues.json, stats.json, tle.txt
+                 im Betrieb logos/ und flightpanel.db (SQLite: Panels, Statistik, Album, Cache, Auffälligkeiten)
 docs/            bauanleitung.md (Hardware), screens.md (alle Bildschirme), images/
 ```
 

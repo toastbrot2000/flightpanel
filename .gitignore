@@ -3,6 +3,8 @@
 firmware/include/secrets.h
 
 # Im Betrieb erzeugt (Docker-Volume ./data)
+data/flightpanel.db*
+data/*.imported
 data/cache.json
 data/issues.json
 data/stats.json

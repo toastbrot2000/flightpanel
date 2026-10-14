@@ -43,7 +43,8 @@ jobs:
         if: steps.escrow.outputs.change != ''
         run: |
           docker build -t flightpanel server
-          docker run --rm -v "$PWD:/repo" -w /repo flightpanel sh -c \
+          # Als root: Das Image läuft ohne Rechte (uid 1000) und dürfte die Entwicklungspakete sonst nicht installieren.
+          docker run --rm --user root -v "$PWD:/repo" -w /repo flightpanel sh -c \
             "pip install -q --root-user-action=ignore --require-hashes -r server/requirements-dev.lock && ruff check . && python -m pytest -p no:cacheprovider"
       - name: Firmware bauen, wenn sich ihr Werkzeug geändert hat
         if: steps.escrow.outputs.change != ''
