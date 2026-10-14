@@ -50,12 +50,24 @@ Settings load() {
   auto get = [&](const char* key, const char* fallback) {
     return open && p.isKey(key) ? p.getString(key) : String(fallback);   // isKey: kein Fehler-Log bei Fehlen
   };
+  // gilt die Vorgabe (nicht leer) statt eines Werts im NVS?
+  auto fromDefault = [&](const char* key, const char* fallback) { return *fallback && !(open && p.isKey(key)); };
   Settings s;
   s.ssid = get("ssid", DEFAULT_SSID);
   s.pass = get("pass", DEFAULT_PASS);
   s.server = normalizeServer(get("server", DEFAULT_SERVER));
   s.clientId = get("cid", DEFAULT_CLIENT_ID);
   s.clientSecret = get("csecret", DEFAULT_CLIENT_SECRET);
+
+  // Eine Zeile im Log, welche Vorgaben aus secrets.h gerade gelten, nie ihre Werte: So fällt ein Image vom
+  // Prüfstand auf, bevor es auf ein fremdes Panel kommt.
+  String used;
+  if (fromDefault("ssid", DEFAULT_SSID) || fromDefault("pass", DEFAULT_PASS)) used += ", WLAN";
+  if (fromDefault("server", DEFAULT_SERVER)) used += ", Server";
+  if (fromDefault("cid", DEFAULT_CLIENT_ID) || fromDefault("csecret", DEFAULT_CLIENT_SECRET)) used += ", Token";
+  if (*OTA_PASSWORD) used += ", OTA-Passwort";
+  if (used.length()) Serial.printf("Vorgaben aus secrets.h in Gebrauch: %s\n", used.c_str() + 2);
+
   if (open) p.end();
   return s;
 }
