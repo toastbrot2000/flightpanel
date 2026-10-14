@@ -1,6 +1,7 @@
 #pragma once
 // Die beiden HUB75-Panels (ESP32-HUB75-MatrixPanel-DMA, Doppelpuffer). Die Bibliothek frischt per DMA im
-// Hintergrund auf; gezeichnet wird in den hinteren Puffer, show() tauscht.
+// Hintergrund auf; gezeichnet wird in den hinteren Puffer, show() tauscht. clear() und showFrame() füllen beide
+// Puffer gleich, damit markOffline() den Punkt auf das zuletzt gezeigte Bild setzt (display.cpp).
 #include <stdint.h>
 
 namespace display {

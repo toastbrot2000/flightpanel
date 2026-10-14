@@ -14,8 +14,22 @@ static inline void putPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
   panel->drawPixelRGB888(x, y, r, g, b);
 }
 
+// Doppelpuffer: Gezeichnet wird in den hinteren Puffer, show() tauscht. clear() und showFrame() malen danach dasselbe
+// noch einmal in den neuen hinteren Puffer, damit beide dasselbe halten: So setzt markOffline() (Punkt, tauschen,
+// Punkt) den Punkt auf das zuletzt gezeigte Bild, nie auf ein älteres, das Testbild oder das Einrichtungs-WLAN mit
+// abgelaufenem Passwort. Kam seit dem Start oder dem Einrichtungs-WLAN kein Bild, steht er auf Schwarz.
 static void show() {
   if (HUB75_DOUBLE_BUFFER) panel->flipDMABuffer();
+}
+
+static void drawFrame(const uint8_t* frame) {
+  const uint8_t* p = frame + FRAME_HEADER;
+  for (int y = 0; y < HEIGHT; y++) {
+    for (int x = 0; x < WIDTH; x++) {
+      putPixel(x, y, p[0], p[1], p[2]);
+      p += 3;
+    }
+  }
 }
 
 namespace display {
@@ -39,6 +53,7 @@ bool begin() {
 void clear() {
   panel->clearScreen();
   show();
+  if (HUB75_DOUBLE_BUFFER) panel->clearScreen();   // auch der andere Puffer (siehe show)
 }
 
 void testPattern() {
@@ -62,20 +77,14 @@ void testPattern() {
   panel->print("flightpanel");
   show();
   delay(1500);
-  panel->fillScreenRGB888(0, 0, 0);
-  show();
+  clear();   // beide Puffer schwarz: Der Text bleibt in keinem liegen
 }
 
 void showFrame(const uint8_t* frame) {
   panel->setBrightness8(min<uint8_t>(frame[1], MAX_BRIGHTNESS));
-  const uint8_t* p = frame + FRAME_HEADER;
-  for (int y = 0; y < HEIGHT; y++) {
-    for (int x = 0; x < WIDTH; x++) {
-      putPixel(x, y, p[0], p[1], p[2]);
-      p += 3;
-    }
-  }
+  drawFrame(frame);
   show();
+  if (HUB75_DOUBLE_BUFFER) drawFrame(frame);   // dasselbe in den anderen Puffer (siehe show)
 }
 
 void markOffline() {
