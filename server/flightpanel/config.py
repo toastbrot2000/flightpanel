@@ -142,19 +142,28 @@ def _env(name: str, default, parse=None, panel: tuple[str, str] | None = None):
 CARD_PREFIX = "CARD_"
 
 
-def _parse(fs: Iterable[Field], src: Mapping[str, str]) -> dict:
+def _text(v) -> str:
+    """Ein Rohwert als Text. In der Datenbank stehen Strings; eine Zahl aus einer Handänderung gilt wie ihr Text,
+    statt den Start an einem AttributeError scheitern zu lassen."""
+    return "" if v is None else str(v).strip()
+
+
+def _parse(fs: Iterable[Field], src: Mapping[str, str], problems: list[tuple[str, str]] | None = None) -> dict:
     """Werte der Felder fs aus den rohen Strings in src (.env oder Datenbank), für from_env
     und for_panel gemeinsam: leere zählen wie nicht gesetzte, ein Fehler nennt die Variable
-    (NAME='roh': Grund des Parsers). Ergebnis: {Feldname: Wert}."""
+    (NAME='roh': Grund des Parsers). Ergebnis: {Feldname: Wert}. Mit problems bricht ein
+    Fehler nicht ab: Der Wert bleibt weg, (NAME, Fehler) kommt in die Liste."""
     values = {}
     for f in fs:
         name = f.metadata["env"]
-        raw = (src.get(name) or "").strip()
+        raw = _text(src.get(name))
         if raw:
             try:
                 values[f.name] = f.metadata["parse"](raw)
             except ValueError as e:
-                raise ValueError(f"{name}={raw!r}: {e}") from None
+                if problems is None:
+                    raise ValueError(f"{name}={raw!r}: {e}") from None
+                problems.append((name, f"{name}={raw!r}: {e}"))
     return values
 
 
@@ -271,17 +280,25 @@ class Config:
         return cls(**values)
 
     @classmethod
-    def for_panel(cls, server: "Config", settings: Mapping[str, str]) -> "Config":
+    def for_panel(cls, server: "Config", settings: Mapping[str, str],
+                  problems: list[tuple[str, str]] | None = None) -> "Config":
         """server plus die Einstellungen eines Panels: rohe Strings wie in .env, aus der
         Datenbank oder von panels.py, geprüft mit denselben Parsern und Fehlertexten.
         Nicht Gesetztes bleibt wie in server (im Betrieb: die Defaults). Karten gelten,
-        sobald eine CARD-Zeile dabei ist: CARD_<ID>=0 schaltet ab."""
+        sobald eine CARD-Zeile dabei ist: CARD_<ID>=0 schaltet ab.
+
+        Ohne problems bricht ein unbekannter Name oder ein ungültiger Wert ab (panels.py:
+        nichts Falsches speichern). Mit einer Liste problems bleibt beides weg und steht
+        dort als (NAME, Fehler), der Rest gilt: So startet der Server auch, wenn eine spätere
+        Fassung eine Einstellung nicht mehr kennt oder strenger prüft (App)."""
         panel = panel_fields()
         unknown = sorted(k for k in settings if not is_panel_key(k))
-        if unknown:
+        if unknown and problems is None:
             raise ValueError(f"keine Panel-Einstellung: {', '.join(unknown)}; möglich: "
                              f"{', '.join(f.metadata['env'] for f in panel)}, CARD_<ID>")
-        values = _parse(panel, settings)
+        if problems is not None:
+            problems += [(k, f"{k}: keine Panel-Einstellung") for k in unknown]
+        values = _parse(panel, settings, problems)
         if "radius_km" in values and "scan_radius_km" not in values:
             values["scan_radius_km"] = values["radius_km"]
         if values.get("calm"):
@@ -294,7 +311,7 @@ class Config:
         cards = [k for k in settings if k.startswith(CARD_PREFIX)]
         if cards:
             values["cards_off"] = frozenset(k[len(CARD_PREFIX):].lower() for k in cards
-                                            if settings[k].strip() and not _bool(settings[k]))
+                                            if _text(settings[k]) and not _bool(_text(settings[k])))
         return replace(server, **values)
 
     # ------------------------------------------------------------- abgeleitet --

@@ -136,9 +136,12 @@ class App:
         elif leftover:
             log.warning("%s in .env gilt nicht mehr, Panel-Einstellungen liegen in der Datenbank. Ändern mit: "
                         "python -m flightpanel.panels set %s KEY=WERT", ", ".join(sorted(leftover)), cfg.lan_panel)
-        self.cfg = cfg = Config.for_panel(cfg, self.db.panel_get(cfg.lan_panel)["settings"])
+        skipped: list[tuple[str, str]] = []
+        self.cfg = cfg = Config.for_panel(cfg, self.db.panel_get(cfg.lan_panel)["settings"], skipped)
         self.session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT})
         self.issues = Issues(self.db)
+        if skipped:
+            self._note_skipped(cfg.lan_panel, skipped)
         self.cache = Cache(self.db)
         self.names = load_airlines(data)
 
@@ -187,6 +190,17 @@ class App:
         self._dream_day: str | None = None
         self._stop = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
+
+    def _note_skipped(self, pid: str, skipped: list[tuple[str, str]]) -> None:
+        """Gespeicherte Panel-Einstellungen, die nicht (mehr) gelten: Eine spätere Fassung kennt sie nicht oder prüft
+        strenger, oder jemand hat die Datenbank von Hand geändert. Der Server startet mit dem Rest, statt in einer
+        Neustartschleife zu hängen; Log und /issues nennen sie und einen Befehl für alle zusammen (panels prüft beim
+        Zurücksetzen des einen auch die anderen, einzeln ginge es nicht)."""
+        fix = f"python -m flightpanel.panels unset {pid} {' '.join(key for key, _ in skipped)}"
+        log.warning("Panel %s: übergangen, es gilt der Default: %s. Beheben: %s, danach Gewolltes neu setzen "
+                    "(set %s KEY=WERT)", pid, "; ".join(why for _, why in skipped), fix, pid)
+        for key, why in skipped:
+            self.issues.note("setting", f"{pid} {key}", error=why, fix=fix)
 
     # ------------------------------------------------------------ Abrufen --
     def poll_interval(self) -> int:

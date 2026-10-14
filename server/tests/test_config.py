@@ -152,6 +152,27 @@ def test_for_panel_rejects_what_is_not_a_panel_setting():
         Config.for_panel(Config.from_env(env()), {"HOME_LAT": "hier"})
 
 
+def test_for_panel_with_a_problem_list_skips_what_does_not_fit():
+    """Für den Server, der lieber mit dem Rest startet als gar nicht: Unbekanntes und Ungültiges bleibt weg und steht
+    mit Grund in der Liste, alles andere gilt. Ohne Liste bricht for_panel ab wie bisher (panels.py bleibt streng)."""
+    server = Config.from_env(env())
+    problems = []
+    c = Config.for_panel(server, {"HOME_LAT": "95", "OLD_SETTING": "1", "VIEW_FROM": "45", "RADIUS_KM": "25",
+                                  "CARD_PIGEON": "0"}, problems)
+    assert (c.home_lat, c.view_from, c.radius_km, c.scan_radius_km, c.cards_off) == (52.52, 45, 25, 25, {"pigeon"})
+    assert dict(problems) == {"HOME_LAT": "HOME_LAT='95': erlaubt: -90 bis 90",
+                              "OLD_SETTING": "OLD_SETTING: keine Panel-Einstellung"}
+    with pytest.raises(ValueError, match="keine Panel-Einstellung: OLD_SETTING"):
+        Config.for_panel(server, {"OLD_SETTING": "1"})
+
+
+def test_a_number_stored_by_hand_counts_like_its_text():
+    """In der Datenbank stehen Texte. Eine Zahl aus einer Handänderung (json_set mit 51.5 statt '51.5') darf den
+    Start nicht an einem AttributeError scheitern lassen: Sie gilt wie ihr Text."""
+    c = Config.for_panel(Config.from_env(env()), {"HOME_LAT": 51.5, "BLINK": False, "CARD_PIGEON": 0, "LAYOUT": None})
+    assert (c.home_lat, c.blink, c.cards_off, c.layout) == (51.5, False, {"pigeon"}, "C")
+
+
 def test_panel_fields_carry_group_text_and_a_default_to_type_in():
     by_env = {f.metadata["env"]: f for f in panel_fields()}
     assert {"HOME_LAT", "VIEW_FROM", "LAYOUT", "QUIET_HOURS", "IDLE_CLOCK_SHARE"} <= set(by_env)

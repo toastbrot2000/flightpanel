@@ -101,7 +101,7 @@ def test_resetting_checks_the_name_and_changes_nothing(run, argv, wanted):
 
 
 def test_a_stale_stored_key_can_still_be_removed(run, tmp_path):
-    """Was eine spätere Fassung nicht mehr kennt, steht noch in der Datenbank und hält den Server vom Start ab:
+    """Was eine spätere Fassung nicht mehr kennt, steht noch in der Datenbank (der Server übergeht es und meldet es):
     unset und KEY= räumen es weg, solange es gespeichert ist."""
     Db(str(tmp_path / "flightpanel.db")).panel_set_settings(
         "home", {"HOME_LAT": "52.5", "OLD_SETTING": "1", "CARD_GONE": "0"})

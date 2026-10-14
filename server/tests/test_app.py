@@ -12,7 +12,7 @@ import pytest
 from aiohttp import web
 
 from conftest import FIXTURES, make_cfg
-from flightpanel.db import db_path
+from flightpanel.db import Db, db_path
 from flightpanel.main import App, _main, check_data_dir
 from flightpanel.stats import Stats
 from flightpanel.web import make_web_app
@@ -83,6 +83,57 @@ def test_a_bad_old_env_value_stops_the_start_and_is_not_stored(tmp_path):
         app = App(cfg, env={"HOME_LAT": "51.0"})                # .env repariert: jetzt übernommen
         try:
             assert app.cfg.home_lat == 51.0
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def stored(tmp_path, settings: dict) -> None:
+    """Das Panel home mit diesen Einstellungen, wie es eine frühere Fassung oder eine Handänderung hinterließ."""
+    db = Db(db_path(str(tmp_path)))
+    db.panel_add("home", settings=settings)
+    db.close()
+
+
+def test_a_stored_setting_the_server_does_not_know_is_skipped_and_the_rest_applies(tmp_path, caplog):
+    """Eine Einstellung, die eine spätere Fassung nicht mehr kennt (oder eine Handänderung): Der Server startet
+    trotzdem, mit allem anderen, und sagt, wie man sie loswird. Bisher: Neustartschleife bis panels unset."""
+    stored(tmp_path, {"HOME_LAT": "51.0", "OLD_SETTING": "1"})
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+
+    async def run():
+        with caplog.at_level("WARNING"):
+            app = App(cfg, env={})
+        try:
+            assert app.cfg.home_lat == 51.0
+            warning = next(r.getMessage() for r in caplog.records if "OLD_SETTING" in r.getMessage())
+            assert "python -m flightpanel.panels unset home OLD_SETTING" in warning
+            assert app.issues.items["setting:home OLD_SETTING"]["example"]["error"] == (
+                "OLD_SETTING: keine Panel-Einstellung")
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_a_stored_value_that_no_longer_parses_is_skipped_and_the_rest_applies(tmp_path, caplog):
+    """Breite 95 stand vor den Grenzen für Zahlen vielleicht schon in der Datenbank: Sie bleibt weg (Default), der
+    Rest gilt, Log und /issues nennen den Wert und den Befehl. Zwei kaputte Werte: ein Befehl für beide, denn
+    panels prüft beim Zurücksetzen des einen auch den anderen."""
+    stored(tmp_path, {"HOME_LAT": "95", "VIEW_FROM": "45", "RADIUS_KM": "nan"})
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
+
+    async def run():
+        with caplog.at_level("WARNING"):
+            app = App(cfg, env={})
+        try:
+            assert (app.cfg.home_lat, app.cfg.radius_km, app.cfg.view_from) == (cfg.home_lat, cfg.radius_km, 45)
+            warning = next(r.getMessage() for r in caplog.records if "HOME_LAT" in r.getMessage())
+            assert "HOME_LAT='95'" in warning and "RADIUS_KM='nan'" in warning
+            assert "python -m flightpanel.panels unset home HOME_LAT RADIUS_KM" in warning
+            assert {k for k in app.issues.items if k.startswith("setting:")} == {
+                "setting:home HOME_LAT", "setting:home RADIUS_KM"}
         finally:
             await app.session.close()
 

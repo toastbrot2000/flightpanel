@@ -65,7 +65,7 @@ docker compose exec flightpanel python3 -m flightpanel.panels set home VIEW_FROM
 
 **4. Karten und Ruhe.** Ebenso per `set home`: `CARD_<ID>=0` schaltet eine Leerlauf-Karte ab, z. B. `CARD_PIGEON=0`. `CALM=1` ist der ruhige Modus: nichts blinkt außer einem Notfall, Infoseiten wechseln alle 10 s statt 4 s, unten stehen nur Landezeit und Höhe/Tempo. Jede dieser Einzelheiten ist auch einzeln einstellbar (`PAGE_SECONDS`, `FLIGHT_SECONDS`, `INFO_PAGES`, `BLINK`, `IDLE_SECONDS`), ebenso Helligkeit und Ruhezeit (`BRIGHTNESS_DAY`, `BRIGHTNESS_EVENING`, `DAY_HOURS`, `QUIET_HOURS`).
 
-Dann einmal die Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`. Unsinnige Werte brechen den Start ab (`.env`) oder werden vom Befehl abgelehnt (`panels set`), jeweils mit dem Namen der Einstellung; Verdächtiges, etwa Koordinaten, die nicht zum Flughafen passen, steht als Warnung im Log. Die Werte unter `/health` zeigen, was wirklich gilt.
+Dann einmal die Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`. Unsinnige Werte brechen den Start ab (`.env`) oder werden vom Befehl abgelehnt (`panels set`), jeweils mit dem Namen der Einstellung; was schon in der Datenbank steht und nach einem Update nicht mehr gilt, übergeht der Server mit dem Default und meldet es in Log und `/issues`. Verdächtiges, etwa Koordinaten, die nicht zum Flughafen passen, steht als Warnung im Log. Die Werte unter `/health` zeigen, was wirklich gilt.
 
 ## Was angezeigt wird
 
@@ -164,6 +164,7 @@ Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Cache, Logos, Sta
 | `stale` | Bild gedimmt oder leer mangels Daten | Quellen prüfen |
 | `esp32_gap` | ESP32 hat länger keinen Frame geholt | WLAN, Stromversorgung |
 | `exception` | Fehler im Code, mit Datei und Zeile | Bug, Traceback im Container-Log |
+| `setting` | gespeicherte Panel-Einstellung gilt nicht (mehr), etwa nach einem Update; der Server nimmt den Default | den Befehl im Beispiel (`panels unset …`), dann neu setzen |
 
 Liegt in `data/flightpanel.db`. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`.
 
