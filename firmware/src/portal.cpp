@@ -8,6 +8,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_random.h>
+#include <qrcode.h>   // qrcode-Baustein des ESP-IDF, im Arduino-Kern fertig gelinkt (wifiqr.h)
 
 #include <algorithm>
 #include <vector>
@@ -17,6 +18,7 @@
 #include "net.h"
 #include "settings.h"
 #include "watchdog.h"
+#include "wifiqr.h"
 
 namespace {
 
@@ -36,6 +38,7 @@ struct State {
 };
 
 State st;
+wifiqr::Code qr;   // QR-Code zum Einrichtungs-WLAN, einmal je run() (makeQr)
 
 const char CSS[] =
     ":root{color-scheme:light dark;--a:#d9771a}*{box-sizing:border-box}"
@@ -317,6 +320,30 @@ String apPassword() {
   return pw;
 }
 
+// esp_qrcode_generate ruft das mit dem fertigen Code auf, ohne Zeiger auf eigene Daten: darum die statische qr.
+// Größer als Version 3 kann er mit max_qrcode_version 3 nicht sein; falls doch, bleibt qr leer.
+void takeQr(esp_qrcode_handle_t code) {
+  const int size = esp_qrcode_get_size(code);
+  if (size < 21 || size > wifiqr::MAX_SIZE) return;
+  qr.size = size;
+  for (int y = 0; y < size; y++) {
+    for (int x = 0; x < size; x++) qr.set(x, y, esp_qrcode_get_module(code, x, y));
+  }
+}
+
+// QR-Code zum Einrichtungs-WLAN in qr, mit der höchsten Fehlerkorrektur, die in Version 3 passt (der Baustein hebt
+// sie auch selbst an, wenn Platz ist). false: kein Code, das Panel zeigt nur den Text.
+bool makeQr(const String& name, const String& password) {
+  qr.clear();
+  char text[wifiqr::PAYLOAD_MAX + 1];
+  const size_t len = wifiqr::payload(text, sizeof text, name.c_str(), password.c_str());
+  const int ecc = wifiqr::ecc(len);
+  if (len == 0 || ecc == wifiqr::ECC_NONE) return false;
+  esp_qrcode_config_t cfg = {takeQr, wifiqr::MAX_VERSION, ecc};
+  if (esp_qrcode_generate(&cfg, text) != ESP_OK) qr.clear();
+  return qr.size > 0;
+}
+
 }  // namespace
 
 namespace portal {
@@ -352,10 +379,12 @@ void run(Mode mode, const Settings& current) {
   server.onNotFound(redirectHome);
   server.begin();
 
+  // Auf dem Panel: QR-Code zum Beitreten per Handykamera, daneben Name und Passwort zum Abtippen
+  const bool withQr = makeQr(name, password);
   const char* lines[] = {"WLAN einrichten", name.c_str(), "Passwort", password.c_str()};
-  display::showLines(lines, 4);
-  Serial.printf("Einrichtungs-WLAN %s, Passwort %s (%s)\n", name.c_str(), password.c_str(),
-                mode == Mode::Full ? "voll" : "nur WLAN");
+  display::showLines(lines, 4, withQr ? &qr : nullptr);
+  Serial.printf("Einrichtungs-WLAN %s, Passwort %s (%s, %s)\n", name.c_str(), password.c_str(),
+                mode == Mode::Full ? "voll" : "nur WLAN", withQr ? "mit QR-Code" : "ohne QR-Code");
 
   const bool mayClose = mode == Mode::Outage || current.configured();
   const uint32_t opened = millis();
@@ -391,6 +420,7 @@ void run(Mode mode, const Settings& current) {
   server.stop();
   dns.stop();
   st = State();
+  qr.clear();   // enthält das Passwort, das mit dem Access Point verfällt
   WiFi.softAPdisconnect(true);   // Access Point aus, die Station bleibt
   WiFi.setAutoReconnect(true);
   display::clear();

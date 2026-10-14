@@ -1,10 +1,11 @@
-// HUB75-Ausgabe: Testbild, Bilder vom Server, Offline-Punkt und Text für das Einrichtungs-WLAN.
+// HUB75-Ausgabe: Testbild, Bilder vom Server, Offline-Punkt, Text und QR-Code für das Einrichtungs-WLAN.
 #include "display.h"
 
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
 #include "config.h"
+#include "wifiqr.h"
 
 static MatrixPanel_I2S_DMA* panel = nullptr;
 
@@ -93,15 +94,25 @@ void markOffline() {
   if (HUB75_DOUBLE_BUFFER) { show(); putPixel(WIDTH - 1, HEIGHT - 1, 60, 0, 0); }   // beide Puffer
 }
 
-void showLines(const char* const lines[], int count) {
+void showLines(const char* const lines[], int count, const wifiqr::Code* qr) {
   // Schrift der Bibliothek: 6 x 8 Pixel je Zeichen, also 21 Zeichen und 4 Zeilen auf 128 x 32. Nur ASCII.
+  // Mit QR-Code links das helle Feld mit dem Code, ein Pixel je Modul (wifiqr.h); rechts davon 16 Zeichen je
+  // Zeile, jede mittig. Die dunklen Module bleiben aus, nur das Feld leuchtet, gedimmt (QR_WHITE).
+  const bool withQr = qr && qr->size > 0;
   panel->setBrightness8(TEST_BRIGHTNESS);
   panel->fillScreenRGB888(0, 0, 0);
+  if (withQr) {
+    for (int y = 0; y < HEIGHT; y++) {
+      for (int x = 0; x < wifiqr::BOX_W; x++) {
+        if (wifiqr::boxLit(*qr, x, y, HEIGHT)) putPixel(x, y, QR_WHITE, QR_WHITE, QR_WHITE);
+      }
+    }
+  }
   panel->setTextWrap(false);
   panel->setTextSize(1);
   for (int i = 0; i < count && i < HEIGHT / 8; i++) {
     panel->setTextColor(i % 2 ? panel->color565(255, 255, 255) : panel->color565(255, 120, 0));
-    panel->setCursor(1, i * 8);
+    panel->setCursor(withQr ? wifiqr::textX(strlen(lines[i]), WIDTH) : 1, i * 8);
     panel->print(lines[i]);
   }
   show();

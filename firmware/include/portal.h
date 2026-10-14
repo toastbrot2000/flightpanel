@@ -1,6 +1,6 @@
 #pragma once
 // Einrichtungs-WLAN: Access Point flightpanel-XXXX (aus der MAC) mit WPA2-Passwort aus 8 Zufallsziffern, beides
-// auf dem Panel. Jede Adresse führt per DNS und Umleitung auf eine Seite fürs Handy (nur Kern-Bibliotheken
+// auf dem Panel, links davon ein QR-Code zum Beitreten per Handykamera (wifiqr.h). Jede Adresse führt per DNS und Umleitung auf eine Seite fürs Handy (nur Kern-Bibliotheken
 // WebServer und DNSServer). Läuft nie neben einer TLS-Verbindung: run() schließt sie zuerst.
 //
 //   Full    BOOT nach dem Einschalten 3 s gehalten, oder noch nichts eingerichtet: WLAN und "Erweitert" mit

@@ -54,6 +54,9 @@
 #define WDT_TEST_HANG_MS   70000    // Prüfstand: "h" + Enter im seriellen Monitor lässt loop() so lange stehen; > WDT_TIMEOUT_S
 #define TEST_PATTERN_AT_BOOT true   // Panels einfärben, Rahmen, Schrift; nur nach dem Einschalten, nicht nach Neustarts
 #define TEST_BRIGHTNESS    40
+// Helles Feld um den QR-Code des Einrichtungs-WLANs (wifiqr.h): Grau je Kanal (0-255), bei TEST_BRIGHTNESS. Mit
+// vollem Weiß überstrahlen die hellen Pixel in der Handykamera die dunklen Module dazwischen (1 Pixel je Modul).
+#define QR_WHITE           160
 
 // ---- WLAN und Einrichtungs-WLAN (portal.cpp) ---------------------------------
 #define WIFI_RETRY_MS      10000    // WLAN weg: so oft neu verbinden
