@@ -163,7 +163,8 @@ class Config:
     view_only: bool = _env("VIEW_ONLY", False, panel=("Sichtfeld", "1: nur zeigen, was im Sichtfeld ist"))
     show_other: bool = _env("SHOW_OTHER", True,
                             panel=("Sichtfeld",
-                                   "1: Privatflieger, Hubschrauber, Polizei, Militär, wenn keine Airline dran ist"))
+                                   "1: Privatflieger, Hubschrauber, Polizei, Militär in der Rotation, "
+                                   "mit Symbol statt Logo"))
 
     # --- Heimatflughafen
     local_airport_iata: str = _env("LOCAL_AIRPORT_IATA", "BER", str.upper)
