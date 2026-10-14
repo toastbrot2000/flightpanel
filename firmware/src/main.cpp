@@ -8,7 +8,8 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
-#include <esp_system.h>   // esp_reset_reason()
+#include <esp_system.h>      // esp_reset_reason()
+#include <esp_task_wdt.h>    // Task-Watchdog
 
 #include "config.h"
 #include "secrets.h"
@@ -41,6 +42,36 @@ static inline void putPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
 
 static void show() {
   if (HUB75_DOUBLE_BUFFER) panel->flipDMABuffer();
+}
+
+// ---- Watchdog ---------------------------------------------------------------
+// Task-Watchdog auf dem loop()-Task (setup() läuft darin). Arduino-ESP32 2.0.17 (IDF 4.4) legt ihn beim
+// Start mit 5 s und Panic an und überwacht nur den Leerlauf-Task von Core 0, loop() nicht. Hier wird er
+// auf WDT_TIMEOUT_S gesetzt (esp_task_wdt_init ändert bei laufendem Watchdog Timeout und Panic) und der
+// loop()-Task kommt dazu. Füttert loop() ihn so lange nicht, folgt Panic und Neustart (Reset-Grund 6).
+// RESTART_AFTER_MS fängt nur einen Server ohne Bilder, keinen Hänger in loop(). 60 s liegen über jeder
+// einzelnen Wartezeit hier: DNS 15 s, Verbindung 5 s, Antwort 3 s, in setup() WLAN-Aufbau 10 s und
+// Testbild 4 s. Länger dauern können nur eine tröpfelnde Antwort (readBytes() gibt erst nach 3 s ohne
+// Byte auf) und ein OTA-Upload; dessen onProgress-Rückrufe füttern. API von IDF 4.4, beim Umstieg auf
+// Arduino 3.x neu prüfen.
+static_assert(WDT_TEST_HANG_MS > WDT_TIMEOUT_S * 1000, "WDT_TEST_HANG_MS muss länger dauern als WDT_TIMEOUT_S");
+
+static void watchdogStart() {
+  const esp_err_t init = esp_task_wdt_init(WDT_TIMEOUT_S, true);
+  const esp_err_t add = esp_task_wdt_add(nullptr);   // nullptr = der aufrufende Task
+  if (init == ESP_OK && add == ESP_OK) Serial.printf("Watchdog: %d s auf loop()\n", WDT_TIMEOUT_S);
+  else Serial.printf("Watchdog FEHLER (init %d, add %d): loop() ohne Aufsicht\n", (int)init, (int)add);
+}
+
+static inline void feedWatchdog() { esp_task_wdt_reset(); }
+
+// Prüfstand: "h" + Enter im seriellen Monitor lässt loop() WDT_TEST_HANG_MS stehen, ohne zu füttern.
+// Nach WDT_TIMEOUT_S muss der ESP32 neu starten (Reset-Grund 6, kein Testbild).
+static void watchdogTestHang() {
+  Serial.printf("Watchdog-Test: loop() steht jetzt %d s still, Neustart nach etwa %d s erwartet\n",
+                WDT_TEST_HANG_MS / 1000, WDT_TIMEOUT_S);
+  for (int s = 1; s <= WDT_TEST_HANG_MS / 1000; s++) { delay(1000); Serial.printf("%d s\n", s); }
+  Serial.println("Watchdog-Test: KEIN Neustart, der Watchdog greift nicht");
 }
 
 // ---- Testbild beim Boot ---------------------------------------------------
@@ -137,6 +168,7 @@ void setup() {
   const esp_reset_reason_t reason = esp_reset_reason();
   const bool coldBoot = (reason == ESP_RST_POWERON);
   Serial.printf("Reset-Grund %d%s\n", (int)reason, coldBoot ? " (Einschalten)" : "");
+  watchdogStart();   // ab hier bewacht, auch Panel-Init, Testbild und WLAN-Aufbau (zusammen rund 15 s)
 
   HUB75_I2S_CFG::i2s_pins pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN,
                                   A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
@@ -160,6 +192,8 @@ void setup() {
     ArduinoOTA.setHostname(HOSTNAME);
     ArduinoOTA.setPassword(OTA_PASSWORD);
     ArduinoOTA.onStart([]() { panel->clearScreen(); show(); Serial.println("OTA start"); });
+    // Ein Upload hält loop() länger als WDT_TIMEOUT_S an: jeder empfangene Block füttert den Watchdog.
+    ArduinoOTA.onProgress([](unsigned int, unsigned int) { feedWatchdog(); });
     ArduinoOTA.onEnd([]() { Serial.println("OTA fertig"); });
     ArduinoOTA.onError([](ota_error_t e) { Serial.printf("OTA Fehler %u\n", e); });
     ArduinoOTA.begin();
@@ -173,6 +207,8 @@ void setup() {
 }
 
 void loop() {
+  feedWatchdog();   // einmal je Durchlauf
+  if (Serial.available() && Serial.read() == 'h') watchdogTestHang();   // Prüfstand: "h" + Enter
   if (OTA_ENABLED) ArduinoOTA.handle();
   const uint32_t now = millis();
 

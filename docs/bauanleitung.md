@@ -124,7 +124,7 @@ pio run -e esp32dev_ota -t upload                # danach per WLAN
 
 Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert (in Docker). Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
 
-**Ablauf:** Nach dem Einschalten ein Testbild (Abschnitt 6; andere Neustarts bleiben still), dann WLAN und, falls ein OTA-Passwort gesetzt ist, OTA samt mDNS-Name (`flightpanel.local`). Danach alle 2 s `GET /frame`, Header prüfen, Helligkeit übernehmen (gedeckelt bei `MAX_BRIGHTNESS`), 4096 Pixel schreiben, Puffer tauschen. Die Bibliothek frischt die Panels per DMA im Hintergrund auf, der Prozessor ist dabei kaum beteiligt. Ohne Server bleibt das letzte Bild stehen; nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu.
+**Ablauf:** Nach dem Einschalten ein Testbild (Abschnitt 6; andere Neustarts bleiben still), dann WLAN und, falls ein OTA-Passwort gesetzt ist, OTA samt mDNS-Name (`flightpanel.local`). Danach alle 2 s `GET /frame`, Header prüfen, Helligkeit übernehmen (gedeckelt bei `MAX_BRIGHTNESS`), 4096 Pixel schreiben, Puffer tauschen. Die Bibliothek frischt die Panels per DMA im Hintergrund auf, der Prozessor ist dabei kaum beteiligt. Ohne Server bleibt das letzte Bild stehen; nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu. Hängt dagegen `loop()` selbst (WLAN-Stack, Treiber), setzt der Task-Watchdog den ESP32 nach 60 s zurück (`WDT_TIMEOUT_S`); ein OTA-Upload füttert ihn mit jedem Block. Zum Testen lässt `h` und Enter im seriellen Monitor die Schleife 70 s stehen (Abschnitt 6).
 
 **Schnittstelle:** `GET /frame` liefert 12 292 Byte, `application/octet-stream`:
 
@@ -156,7 +156,7 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 
 1. Server starten: `cp .env.example .env`, `docker compose up -d --build`, Vorschau unter `http://<server>:8080` (Mock-Modus mit Fantasieflügen).
 2. Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`.
-3. Flughafen und `MOCK=0` in der `.env` einrichten, Standort und Sichtfeld per `panels set home …` (README, Abschnitt "Einrichten"), neu starten. Ein paar Tage `/display.json` beobachten: Wie viele Flüge, wie hoch, wie oft leer? Damit `RADIUS_KM`, `MAX_ALT_M` und das Sichtfeld eichen. Das sind Panel-Einstellungen und stehen in der Datenbank, nicht in der `.env`; gesetzt werden sie mit `docker compose exec flightpanel python3 -m flightpanel.panels set home RADIUS_KM=30 MAX_ALT_M=4000` und gelten nach `docker compose restart flightpanel`.
+3. Flughafen und `MOCK=0` in der `.env` einrichten, Standort und Sichtfeld per `panels set home …` (README, Abschnitt "Einrichten"), neu starten. Ein paar Tage `/display.json` beobachten: Wie viele Flüge, wie hoch, wie oft leer? Damit `RADIUS_KM`, `MAX_ALT_M` und das Sichtfeld eichen. Das sind Panel-Einstellungen und stehen in der Datenbank, nicht in der `.env`; gesetzt werden sie mit `docker compose exec flightpanel python3 -m flightpanel.panels set home RADIUS_KM=30 MAX_ALT_M=4000` und gelten ohne Neustart: Der laufende Server übernimmt sie spätestens nach einer Minute.
 4. PlatformIO installieren (VS-Code-Erweiterung oder `pip install platformio`), `firmware/include/secrets.h` anlegen.
 
 **Erstes Bild (ein Abend):**
@@ -180,7 +180,7 @@ Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefer
 
 ## 6. Testbild und Gesamttest
 
-Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart zwischendurch, etwa dem nach 10 min ohne Daten oder einem OTA-Update, bleibt das Panel still; wer es noch einmal sehen will, schaltet das Netzteil kurz aus und wieder ein.
+Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart zwischendurch, etwa dem nach 10 min ohne Daten, einem OTA-Update oder einem Watchdog-Reset, bleibt das Panel still; wer es noch einmal sehen will, schaltet das Netzteil kurz aus und wieder ein.
 
 | Bild | Bedeutung |
 |---|---|
@@ -192,11 +192,19 @@ Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart 
 | Bunter Schnee, Flackern | Dupont-Kabel prüfen (CLK, LAT, OE, GND), dann `HUB75_CLKPHASE` |
 | Nur obere oder untere Hälfte jedes Panels | R2/G2/B2 oder R1/G1/B1 nicht gesteckt |
 
+**Prüfstand beim ersten Einschalten** (ESP32 per USB, `pio device monitor`, 115200 Baud). Die Konsole nennt mit `Reset-Grund N`, warum der ESP32 gestartet ist: 1 Einschalten, 3 Software-Neustart (10-Minuten-Regel, OTA), 4 Absturz, 5 bis 7 Watchdog (6 = Task-Watchdog), 9 Unterspannung.
+
+1. **Einschalten:** Strom weg und wieder da; am Prüfstand USB-Stecker ziehen und stecken, die Panels dürfen am Netzteil bleiben (3.5). Die Konsole zeigt `Reset-Grund 1 (Einschalten)`, danach läuft das Testbild.
+2. **EN-Taste, Flashen per USB:** Beide setzen den Chip über die EN-Leitung zurück, je nach Board auch das Öffnen des Monitors (DTR/RTS). Der klassische ESP32 meldet das wahrscheinlich ebenfalls als `1`; dann läuft das Testbild auch hier. Am Prüfstand bestätigen: Kommt eine andere Nummer, bleibt das Testbild bei EN aus.
+3. **OTA aus:** `OTA_PASSWORD` in `secrets.h` leer lassen, per USB flashen. Die Konsole sagt `OTA aus (OTA_PASSWORD leer)`, `flightpanel.local` meldet sich nicht.
+4. **OTA an:** Passwort in `secrets.h` und dasselbe in `platformio_local.ini` (Vorlage dort, Abschnitt 4), per USB flashen, dann `pio run -e esp32dev_ota -t upload`. Das Panel wird dunkel (`OTA start`), die Konsole meldet `OTA fertig`, der ESP32 startet neu: `Reset-Grund 3`, kein Testbild. Mit einem anderen Passwort in `platformio_local.ini` scheitert der Upload an der Anmeldung (`OTA Fehler 0`), das Panel läuft weiter.
+5. **Watchdog:** `h` und Enter im seriellen Monitor. Die Konsole meldet `Watchdog-Test: loop() steht jetzt 70 s still` und zählt Sekunden, das Bild bleibt stehen. Bei etwa 60 s steht `Task watchdog got triggered ... loopTask` da und der ESP32 startet neu: `Reset-Grund 6`, kein Testbild, nach dem WLAN-Aufbau wieder das normale Bild. Zählt die Konsole bis 70, greift der Watchdog nicht. Beim Start meldet sie `Watchdog: 60 s auf loop()`; steht dort `FEHLER`, ist `loop()` nicht überwacht.
+
 **Gesamttest:**
 
 - `/frame.png` im Browser und das Panel nebeneinander: gleich?
 - `/health`: `esp32.alive` ist `true`, `source.active` ist `adsblol`, `logos` ist gefüllt.
-- Helligkeit: Tagsüber ist 90 in einem Wohnraum deutlich, abends 35. Anpassen mit `panels set home BRIGHTNESS_DAY=90 BRIGHTNESS_EVENING=35` und einem Neustart des Servers (README, Abschnitt "Einrichten"), ohne Flashen.
+- Helligkeit: Tagsüber ist 90 in einem Wohnraum deutlich, abends 35. Anpassen mit `panels set home BRIGHTNESS_DAY=90 BRIGHTNESS_EVENING=35`; der Server übernimmt es spätestens nach einer Minute (README, Abschnitt "Einrichten"), ohne Flashen.
 - Strom: Multimeter in die Plus-Leitung am Schraubadapter, bei normalem Bild. Erwartung: unter 1,5 A.
 
 ---
@@ -222,7 +230,7 @@ Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart 
 | Letztes Bild steht, roter Punkt unten rechts | ESP32 erreicht den Server nicht | `/health`, Container-Logs, WLAN, `FRAME_URL` in `secrets.h` |
 | Rechte Hälfte dunkel | Flachband zwischen den Panels | Stecker nachdrücken |
 | Flackern, Farbrauschen nach Monaten | Dupont-Kabel gelockert | nachstecken; bei Dauerproblem Pegelwandler (3.4) |
-| Anzeige eingefroren | ESP32 hängt | startet nach 10 min selbst neu |
+| Anzeige eingefroren | ESP32 hängt in `loop()` | setzt sich nach 60 s selbst zurück (Task-Watchdog, im Monitor `Reset-Grund 6`). Kommen nur keine Bilder vom Server, startet er nach 10 min neu |
 | Keine Flüge, obwohl welche da sind | Quelle ausgefallen oder Filter zu eng | `/health`, `/issues`, `/display.json` → `nearby` |
 | Graues Flugzeug statt Airline-Logo | kein quadratisches Logo gefunden | `/health` → `logos_missing`; Tochterbetrieb: Logo-Code der Marke in `data/airlines.json`; sonst Logo von Hand (README, "Airline-Logos") |
 

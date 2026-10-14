@@ -42,6 +42,8 @@
 #define HTTP_TIMEOUT_MS    3000
 #define OFFLINE_MARK_MS    60000    // nach so lange ohne Frame: roter Punkt unten rechts
 #define RESTART_AFTER_MS   600000   // nach so lange ohne Frame: Neustart
+#define WDT_TIMEOUT_S      60       // Task-Watchdog auf loop(): hängt ein Durchlauf so lange, Neustart (OTA füttert mit)
+#define WDT_TEST_HANG_MS   70000    // Prüfstand: "h" + Enter im seriellen Monitor lässt loop() so lange stehen; > WDT_TIMEOUT_S
 #define TEST_PATTERN_AT_BOOT true   // Panels einfärben, Rahmen, Schrift; nur nach dem Einschalten, nicht nach Neustarts
 #define TEST_BRIGHTNESS    40
 
