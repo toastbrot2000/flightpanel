@@ -22,9 +22,16 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import math
 import re
 from typing import NamedTuple
+
+import aiohttp
+
+from .issues import error_text
+
+log = logging.getLogger("access")
 
 MAX_TOKEN = 8192        # Zeichen: Ein Token mit custom-Claims hat gut 2 KB; aiohttp lässt Header bis 8190 Byte zu
 LEEWAY_S = 60
@@ -130,6 +137,80 @@ def verify(token: str, keys: dict[str, RsaKey], team: str, aud: str, now: float)
     if isinstance(name, str) and name and claims.get("sub") == "" and email is None:
         return Identity("token", name.lower(), iat)
     raise Invalid("weder E-Mail noch Service-Token, oder beides")
+
+
+def certs_url(team: str) -> str:
+    return f"https://{team}.cloudflareaccess.com/cdn-cgi/access/certs"
+
+
+class KeySet:
+    """Die Signaturschlüssel von Access. Cloudflare wechselt sie alle sechs Wochen, die alten gelten noch sieben
+    Tage: Ein unbekannter kid holt die Liste neu, höchstens einmal pro Minute; dazu einmal am Tag (main.App). Die
+    letzte gute Liste liegt in der Datenbank (state "access_keys") und gilt nach einem Neustart sofort, auch ohne
+    Netz. Jeder Schlüssel wird einzeln geprüft (rsa_key): Ein unbrauchbarer fällt weg, die anderen gelten. Keine
+    Umleitungen, eine Zeitgrenze und eine Größengrenze: Die Antwort kommt aus dem Netz."""
+
+    REFETCH_S = 60
+    TIMEOUT_S = 10
+    MAX_BYTES = 64 * 1024
+
+    def __init__(self, db, session: aiohttp.ClientSession, url: str):
+        self.db, self.session, self.url = db, session, url
+        self.keys: dict[str, RsaKey] = {}
+        self.fetched = 0.0
+        self.last_try = 0.0
+        self.last_error: str | None = None
+        saved = db.state_get("access_keys")
+        if isinstance(saved, dict):
+            self.keys, _ = _usable(saved.get("keys"))
+            self.fetched = saved["fetched"] if _number(saved.get("fetched")) else 0.0
+
+    async def refresh(self, now: float, force: bool = False) -> bool:
+        """Die Liste neu holen; True, wenn eine neue gültige da ist. Ohne force höchstens einmal pro REFETCH_S."""
+        if not force and now - self.last_try < self.REFETCH_S:
+            return False
+        self.last_try = now
+        try:
+            async with self.session.get(self.url, allow_redirects=False,
+                                        timeout=aiohttp.ClientTimeout(total=self.TIMEOUT_S)) as r:
+                if r.status != 200:
+                    raise Invalid(f"HTTP {r.status}")
+                # Bis zum Ende lesen: Übers Netz kommt die Antwort mitunter in Stücken, ein einzelnes read() gäbe nur
+                # das erste (die Liste bräche ab, und die Größengrenze griffe nicht).
+                raw = bytearray()
+                async for chunk in r.content.iter_chunked(16 * 1024):
+                    raw += chunk
+                    if len(raw) > self.MAX_BYTES:
+                        raise Invalid("Antwort zu groß")
+            keys, jwks = _usable(_object(bytes(raw)).get("keys"))
+            if not keys:
+                raise Invalid("kein brauchbarer Schlüssel")
+        except Exception as e:                            # Netz, Antwort, Inhalt: die alte Liste bleibt
+            self.last_error = error_text(e)
+            log.warning("Access-Schlüssel nicht erneuert: %s", self.last_error)
+            return False
+        self.keys, self.fetched, self.last_error = keys, now, None
+        self.db.state_set("access_keys", {"keys": jwks, "fetched": now})
+        log.info("Access-Schlüssel erneuert: %s", ", ".join(sorted(self.keys)))
+        return True
+
+    def age_h(self, now: float) -> float | None:
+        return round((now - self.fetched) / 3600, 1) if self.fetched else None
+
+
+def _usable(jwks) -> tuple[dict[str, RsaKey], list]:
+    """Die brauchbaren Schlüssel einer Liste (rsa_key): nach kid, dazu ihre Einträge zum Speichern. Die anderen
+    stehen im Log."""
+    keys, good = {}, []
+    for jwk in jwks if isinstance(jwks, list) else []:
+        try:
+            kid, key = rsa_key(jwk)
+        except Invalid as e:
+            log.warning("Access-Schlüssel übergangen: %s", e)
+            continue
+        keys[kid] = key
+        good.append(jwk)
+    return keys, good
 
 
 def _object(raw: bytes) -> dict:

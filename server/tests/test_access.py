@@ -1,16 +1,31 @@
 """Das Token von Cloudflare Access: RS256 nur mit der Standardbibliothek, gegen fremde Testvektoren (RFC 7515 A.2,
 Wycheproof) und gegen alles, was ein Angreifer probieren kann."""
 
+import asyncio
 import base64
 import hashlib
 import json
 import os
 
+import aiohttp
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 
-from conftest import FIXTURES
+from conftest import FIXTURES, make_db
 from flightpanel import access
-from flightpanel.access import Identity, Invalid, RsaKey, UnknownKey, b64url, rs256_valid, rsa_key, verify
+from flightpanel.access import (
+    Identity,
+    Invalid,
+    KeySet,
+    RsaKey,
+    UnknownKey,
+    b64url,
+    certs_url,
+    rs256_valid,
+    rsa_key,
+    verify,
+)
 
 TEAM, AUD, NOW = "beispiel", "a" * 64, 1791654544.0
 
@@ -153,3 +168,88 @@ def test_a_signature_as_long_as_n_but_not_smaller_is_refused():
     k = (N.bit_length() + 7) // 8
     assert not rs256_valid(RsaKey(N, E), b"x", N.to_bytes(k, "big"))
     assert not rs256_valid(RsaKey(N, E), b"x", b"\x00" + N.to_bytes(k, "big"))     # ein Byte zu lang
+
+
+JWK = {"kty": "RSA", "kid": "testkey", "alg": "RS256", "use": "sig", "n": KEY["n"], "e": "AQAB"}
+GOOD = json.dumps({"keys": [JWK]}).encode()            # eine gültige Liste
+
+
+def serve(handler):
+    """Ein kleiner HTTP-Server statt Cloudflare; gibt den Server zurück (noch nicht gestartet). Unter /umweg liegt eine
+    gültige Liste: Folgte KeySet einer Umleitung, fiele es auf."""
+    async def detour(req):
+        return web.Response(body=GOOD, content_type="application/json")
+
+    app = web.Application()
+    app.router.add_get("/cdn-cgi/access/certs", handler)
+    app.router.add_get("/umweg", detour)
+    return TestServer(app)
+
+
+async def pieces(req, *parts: bytes) -> web.StreamResponse:
+    """Eine Antwort in mehreren Stücken, wie sie übers Netz kommen kann: KeySet muss bis zum Ende lesen."""
+    resp = web.StreamResponse(headers={"Content-Type": "application/json"})
+    await resp.prepare(req)
+    for part in parts:
+        await resp.write(part)
+        await asyncio.sleep(0.05)
+    await resp.write_eof()
+    return resp
+
+
+def test_the_key_set_is_fetched_checked_one_by_one_and_kept(tmp_path):
+    db = make_db(tmp_path)
+
+    async def certs(req):
+        body = json.dumps({"keys": [JWK, {**JWK, "kid": "schwach", "e": "Aw"}],
+                           "public_cert": {}, "public_certs": []}).encode()
+        return await pieces(req, body[:100], body[100:])                       # in zwei Stücken, wie übers Netz
+
+    async def run():
+        server = serve(certs)
+        await server.start_server()
+        async with aiohttp.ClientSession() as session:
+            ks = KeySet(db, session, str(server.make_url("/cdn-cgi/access/certs")))
+            assert await ks.refresh(NOW) and set(ks.keys) == {"testkey"}           # e = 3 fällt weg, der Rest gilt
+            assert not await ks.refresh(NOW + 30)                                  # höchstens einmal pro Minute
+            again = KeySet(db, session, "http://127.0.0.1:9/nie")                  # Neustart ohne Netz
+            assert set(again.keys) == {"testkey"} and again.fetched == NOW
+            assert not await again.refresh(NOW + 120, force=True)                  # Netz weg: alte Liste bleibt
+            assert set(again.keys) == {"testkey"} and again.last_error
+        await server.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("answer", ["redirect", "huge", "html", "nokeys", "status"])
+def test_a_misbehaving_key_endpoint_changes_nothing(tmp_path, answer):
+    """Wo es geht, steckt in der Antwort eine gültige Liste (hinter der Umleitung, vor dem Zuviel, in der 503): Die
+    alte bleibt nur, wenn KeySet Umleitung, Größe und Status wirklich prüft."""
+    db = make_db(tmp_path)
+    db.state_set("access_keys", {"keys": [JWK], "fetched": NOW - 3600})
+
+    async def certs(req):
+        if answer == "redirect":
+            raise web.HTTPFound("/umweg")
+        if answer == "huge":                                                    # gültig, dahinter über 64 KB Leerraum
+            return await pieces(req, GOOD, b" " * (70 * 1024))
+        if answer == "html":
+            return web.Response(text="<html>Anmelden</html>", content_type="text/html")
+        if answer == "nokeys":
+            return web.json_response({"keys": [{"kty": "EC"}]})
+        return web.Response(body=GOOD, status=503, content_type="application/json")
+
+    async def run():
+        server = serve(certs)
+        await server.start_server()
+        async with aiohttp.ClientSession() as session:
+            ks = KeySet(db, session, str(server.make_url("/cdn-cgi/access/certs")))
+            assert not await ks.refresh(NOW, force=True)
+            assert set(ks.keys) == {"testkey"} and ks.fetched == NOW - 3600 and ks.last_error
+        await server.close()
+
+    asyncio.run(run())
+
+
+def test_certs_url():
+    assert certs_url("beispiel") == "https://beispiel.cloudflareaccess.com/cdn-cgi/access/certs"
