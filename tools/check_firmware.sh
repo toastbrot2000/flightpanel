@@ -2,7 +2,7 @@
 # Firmware prüfen, ohne PlatformIO lokal zu installieren (Docker):
 #   1. setInsecure() (TLS ohne Zertifikatsprüfung) steht nur im Rettungsmodus, in einer Funktion mit "rescue" im Namen;
 #   2. das Testmanifest firmware/test/data/golden_manifest.txt ist echt signiert (openssl, Testschlüssel);
-#   3. Tests auf dem Rechner (pio test -e native): Manifest-Parser und Versionsvergleich;
+#   3. Tests auf dem Rechner (pio test -e native): Manifest-Parser und Versionsvergleich, Rettungs-Uhr, WLAN-QR-Code;
 #   4. Build ohne include/fw_pubkey.h (ohne signierte Updates) und mit (die Vorlage als Testschlüssel).
 # Geflasht wird mit pio auf dem Rechner, an dem der ESP32 hängt.
 # Toolchain und Bibliotheken landen im Docker-Volume flightpanel-pio (einmal ~1 GB).
