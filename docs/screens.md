@@ -1,14 +1,14 @@
 # Screens and priorities
 
-What the panel shows, in fixed tiers: a tier only gets its turn when no higher tier has anything to show. Flights (tier 1) are drawn by `render.py`, everything else are idle cards (`server/flightpanel/cards/`, selection in `idle.py`). The texts on the panel are in German.
+What the panel shows, in fixed tiers: a tier only gets its turn when no higher tier has anything to show. Tier 1 are the flights in view, everything else are idle cards. The texts on the panel are in German. Where this lives in the code: [development.md](development.md#project-layout).
 
 **Selection:** within a tier, cards change every `IDLE_SECONDS` (12 s, 30 s in calm mode): urgent cards first (several urgent ones take turns), otherwise weighted random, avoiding the most recently shown. The clock runs along in every idle tier, about a third of the time (`IDLE_CLOCK_SHARE`). Urgent are: a new airline (2 min), a plane arriving in the view field in under 3 minutes, a rare type or a VIP visit (2 min), the ISS passing overhead right now.
 
 **Turning cards off:** any card with `panels set home CARD_<ID>=0` ([configuration.md](configuration.md#per-panel-settings)), including clock and emergency. If no enabled card has anything to show, the panel stays dark.
 
-**New Year:** at midnight the panel belongs to the fireworks for five minutes, ahead of flights and even during quiet hours (then at evening brightness); only an emergency comes first. For the rest of January 1 the fireworks are one card among many in tier 3. Not on New Year's Eve.
+**New Year:** at midnight the fireworks take over the panel for five minutes, ahead of flights and even during quiet hours (then at evening brightness); only an emergency comes first. For the rest of January 1 the fireworks are one card among many in tier 3. Not on New Year's Eve.
 
-**Calm mode (`CALM=1`):** nothing blinks except an emergency, info pages 10 s, each flight at least 20 s, idle cards 30 s, only arrival time and altitude/speed in the info line. Individually: `PAGE_SECONDS`, `FLIGHT_SECONDS`, `INFO_PAGES`, `BLINK`, `IDLE_SECONDS`.
+**Calm mode (`CALM=1`):** less blinking and slower rotation, see [configuration.md](configuration.md#per-panel-settings).
 
 `/idle` lists all cards with their tier, whether they currently have something to say and which one is showing; `/frame.png?card=<id>` shows one card, with demo data if it has nothing to say right now.
 
@@ -68,7 +68,7 @@ Rendered with demo data (`tools/screenshots.py`), in the same LED look as the br
 | | `quiet` | lull and daily record | from 10 min without an aircraft in the view field; the timer restarts after a fetch gap |
 | | `iss` | ISS pass: direction, elevation, whether through the window | visible pass within 30 min, or happening now (urgent) |
 | | `sunset`, `sunrise` | time; "Gegenlicht" (backlight) when the sun is in the view field | 2 h before sunset, 90 min before sunrise |
-| | `santa` | sleigh 1 on approach | December 24 from 15:00 |
+| | `santa` | Santa's sleigh on approach, with distance | December 24 from 15:00 until the next morning |
 | | `fireworks` | fireworks and a New Year greeting with the current year | January 1; at midnight five minutes ahead of everything except an emergency, even in quiet hours |
 | | `clock` | time and date | always |
 | **4 Nothing going on** | `plane`, `pigeon` | animations: a plane crossing the screen, a pigeon on the balcony | only when nothing at all is going on (no departure or landing at the airport for 15 minutes and none landing in the next 10), then mixed with tier 3 |

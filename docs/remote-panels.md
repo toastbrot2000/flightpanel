@@ -36,7 +36,7 @@ The server has two ports. **:8080** is the LAN port: no login, only the LAN pane
 
 Order of work: steps 1 to 3 once in Cloudflare and Docker, step 4 on the server, step 5 as a check. Then step 6 for each panel and step 7 when someone stops.
 
-**What a friend gets:** a panel with its own location, view field, brightness and quiet hours; album and statistics count per panel from the day it is set up. A browser page, phone first: preview of their own panel, settings, and view-field calibration at the window. Login is a code sent by e-mail; no account, no password. They see nothing of other panels and nothing of the server itself.
+**What a friend gets:** a panel with its own location, view field, brightness and quiet hours; album and statistics count per panel from the day it is set up. A browser page made for phones: preview of their own panel, settings, and view-field calibration at the window. Login is a code sent by e-mail; no account, no password. They see nothing of other panels and nothing of the server itself.
 
 **Three independent checks:**
 
@@ -96,7 +96,7 @@ Zero Trust is set up in the account (team name chosen). Menu paths are under Zer
 
 **Strict mode** (Access settings → Manage service tokens → enable **Strict service token authentication**): a request with a wrong token then gets 401 or 403 instead of a redirect to the login page, and requests with a token are decided only by Service Auth policies. This applies to the whole account; if you use it for other services, check first that their tokens are in Service Auth policies, not in Allow policies.
 
-**Token lifetime:** when creating a token (Service credentials → Service Tokens → Create Service Token, field "Service Token Duration") choose the longest duration Cloudflare accepts. The documentation shows `8760h` (one year) and `17520h` (two years) as examples, but the value is free-form: try ten years (`87600h`) first, otherwise two. Add a notification: Notifications → Add → "Expiring Access Service Token", which arrives about a week before expiry. Before expiry, **Refresh** each token: that extends it by a year, client ID and secret stay the same and the panels notice nothing. An account can hold at most 50 service tokens, including those of other services.
+**Token lifetime:** when creating a token (Service credentials → Service Tokens → Create Service Token, field "Service Token Duration") choose the longest duration Cloudflare accepts, e.g. `87600h` (ten years) or, if refused, `17520h` (two years). Add a notification: Notifications → Add → "Expiring Access Service Token", which arrives about a week before expiry. Before expiry, **Refresh** each token: that extends it by a year, client ID and secret stay the same and the panels notice nothing. An account can hold at most 50 service tokens, including those of other services.
 
 ---
 
@@ -269,7 +269,16 @@ Remote panels can't be reached by OTA; they update themselves with images signed
 
 - **Remote panels always get `stable`.** Their firmware requests arrive through the open Bypass path, so the server can't tell which panel is asking. Use your own LAN panel on `canary` as the test bench.
 - **Flash once over USB** before a panel leaves, with a build without `secrets.h`. That also installs the partition table with the two update slots, which no update can change.
-- **When Cloudflare's certificates change:** the firmware trusts only a fixed list of root certificates (`roots.pem`). If none matches any more, the panels fail certificate verification; after 24 hours they fetch manifest and image in rescue mode without certificate check, trusting only signature, checksum and a higher version. That is why the two files are reachable without login. As an early warning, the server checks once a day with the same list whether the certificate of `PUBLIC_HOST` still matches, like a panel would (TLS 1.2 only, hostname verified). If not, `/ok` reports it and `/issues` records `tls_roots`, long before a panel goes dark. Fix: regenerate `roots.pem` with `tools/make_roots.py` and publish a release. A mere network outage shows up as `source_error` instead and leaves `/ok` green.
+- **When Cloudflare's certificates change:** the firmware trusts only a fixed list of root certificates (`roots.pem`). If none matches any more, the panels fail certificate verification and after 24 hours switch to [rescue mode](hardware.md#7-signed-firmware-updates), which is why the two firmware files are reachable without login. As an early warning, the server checks once a day with the same list whether the certificate of `PUBLIC_HOST` still matches, like a panel would (TLS 1.2 only, hostname verified). If not, `/ok` reports it and `/issues` records `tls_roots`, long before a panel goes dark. A mere network outage shows up as `source_error` instead and leaves `/ok` green.
+
+**Updating the trust list.** `tools/make_roots.py` reads the CA bundle of the pinned base image and checks pinned fingerprints, so run it in that image (Git Bash or Linux, in the repository root):
+
+```bash
+IMAGE=$(grep -o 'python:3.12-slim@sha256:[0-9a-f]*' tools/check_firmware.sh)
+MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd):/repo" -w /repo "$IMAGE" python3 -I tools/make_roots.py
+```
+
+If a root is missing or a fingerprint differs, it aborts and writes nothing; if Cloudflare moved to a new certificate authority, the root list in the script needs updating first. Commit the new `server/flightpanel/certs/roots.pem`, then publish a firmware release ([hardware.md](hardware.md#72-release-canary-stable)); the panels pick it up via rescue mode.
 
 ---
 
@@ -278,7 +287,7 @@ Remote panels can't be reached by OTA; they update themselves with images signed
 | When | What | If it's missed |
 |---|---|---|
 | before service tokens expire (Cloudflare e-mail plus a calendar entry; yearly if only one year is possible) | **Refresh** every token in Zero Trust | the remote panels go dark; harmless |
-| when `/ok` reports an outdated trust list | release firmware with an updated `roots.pem`; the panels pick it up via rescue mode | the panels stay dark until done; harmless |
+| when `/ok` reports an outdated trust list | [update the trust list](#firmware-updates) and release firmware; the panels pick it up via rescue mode | the panels stay dark until done; harmless |
 | when a friend stops | the list in step 7: token, group, factory reset | the former user still reaches the login page and the firmware files, but no data |
 | every few months | cloudflared: pick a version at least 7 days old and update the digest in `compose.override.yml` | keeps running, but Cloudflare eventually drops support for old versions |
 | automatic | rotation of the Access keys, dependency updates, server base image, database cleanup, firmware rollback | – |

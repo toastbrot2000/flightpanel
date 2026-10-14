@@ -23,7 +23,7 @@ ruff check .
 MOCK=1 DATA_DIR=./data PYTHONPATH=server python3 -m flightpanel.main    # server with fictional flights on :8080
 ```
 
-GitHub Actions builds the container on every push and runs lint and tests in it; changes under `firmware/` also build the firmware.
+GitHub Actions builds the container on every push that touches the server and runs lint and tests in it; changes under `firmware/` also build the firmware.
 
 ## Reference images
 
@@ -42,10 +42,10 @@ The tool pins the time zone to Europe/Berlin, so the images come out the same on
 
 1. `setInsecure()` (TLS without certificate check) may only appear in rescue-mode functions;
 2. the test manifest `firmware/test/data/golden_manifest.txt` is validly signed;
-3. host tests `pio test -e native`: manifest parser, version comparison and the rescue-mode timer;
-4. builds without `include/fw_pubkey.h` and with it (the template as test key).
+3. host tests `pio test -e native`: manifest parser, version comparison, the rescue-mode timer and the Wi-Fi QR code;
+4. builds without `include/fw_pubkey.h` and with the template `fw_pubkey.h`, to check that the update verification compiles in.
 
-It builds whatever is in the folder; without `include/secrets.h` that is the image a remote panel gets.
+It builds whatever is in the folder; without `include/secrets.h` that is the image a remote panel gets. It keeps no image: flashing needs a local PlatformIO ([hardware.md](hardware.md#41-build-and-flash)).
 
 `sh tools/check_firmware_core3.sh` does the same for the experimental Arduino-ESP32 3.x build, with every package verified by SHA-256 ([hardware.md](hardware.md#8-experimental-arduino-esp32-3x-build)).
 

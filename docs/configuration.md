@@ -40,12 +40,12 @@ Copy `.env.example` to `.env`; every setting is explained there. Missing or empt
 | `ADSBIM`, `TRACK_ORIGIN` | `1`, `1` | routes from adsb.im before adsbdb; origin airport from the OpenSky track when no route is known |
 | `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET` | empty | OpenSky API client; anonymous gets 400 credits a day, with an account 4000 |
 | `ISS` | `1` | ISS orbit data from CelesTrak once a day, for the `iss` card |
-| `WIDTH`, `HEIGHT` | `128`, `32` | display size |
+| `WIDTH`, `HEIGHT` | `128`, `32` | display size; must match the firmware (`firmware/include/config.h`), and the layouts assume 32 px height |
 | `LOGO_FETCH`, `LOGO_SIZE`, `LOGO_MAX_ASPECT` | `1`, `32`, `1.5` | see [Airline logos](#airline-logos) |
 | `LOGO_URLS` | built-in list | own logo sources, comma-separated templates with `{iata}` or `{icao}`, optional `\|aspect` |
 | `PUID`, `PGID` | `1000` | user and group the container runs as (Linux, see below) |
 | `TZ` | `Europe/Berlin` | time zone for quiet hours, daily statistics and clock |
-| `HTTP_PORT` | `8080` | LAN port for preview and panel; home network only |
+| `HTTP_PORT` | `8080` | LAN port for preview and panel inside the container; home network only. Leave it: `compose.yml` and the image's health check expect 8080. For another port on the host, change the left side of `ports:` in `compose.yml` (e.g. `"9090:8080"`) |
 | `LOG_LEVEL` | `INFO` | |
 | `LAN_PANEL` | `home` | the panel served on the LAN port; created at first start |
 | `PANEL_MAX_KM`, `PANEL_MAX_RADIUS_KM` | `60`, `80` | limits for additional panels, see below |
@@ -161,15 +161,15 @@ This also applies to a panel whose server address in the setup portal uses such 
 
 ## Airline logos
 
-Only square logo marks are used: wordmarks are unreadable at 32 × 32 pixels, so the panel shows a grey placeholder instead. The server fetches a logo the first time an airline appears. It tries the sources in order (Kiwi.com, FlightAware, Google), takes the first image with an aspect ratio up to `LOGO_MAX_ASPECT`, removes a white background, crops it and stores `data/logos/<IATA>.png` (without an IATA code `<ICAO>.png`). Failures appear in `/health` → `logos_missing` and are retried after 7 days.
+Only square logo marks are used: wordmarks are unreadable at 32 × 32 pixels, so the panel shows a grey placeholder instead. The server fetches a logo the first time an airline appears. It tries the sources in order (Kiwi.com, FlightAware, Google), takes the first image with an aspect ratio up to `LOGO_MAX_ASPECT` (Google's set: up to 2:1), removes a white background, crops it and stores `data/logos/<IATA>.png` (without an IATA code `<ICAO>.png`). Failures appear in `/health` → `logos_missing` and are retried after 7 days.
 
-Logos are trademarks of their owners and stay on your server; they are not part of the repository.
+Logos are trademarks of their owners; they stay on your server.
 
 - **All at once:** `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`; specific ones: `… fetch_logos LH U2 FR`; `--force` refetches downloaded ones.
-- **Your own logos**, if none is found or you don't like the fetched one: `python3 tools/make_logo.py image.png U2` turns a PNG, JPG, GIF, WebP or SVG (with cairosvg) into the right format in `data/logos/own/`, with an enlarged preview in `own/preview/`. Without Python on your machine: `docker compose run --rm -v "$PWD:/repo" -w /repo flightpanel python tools/make_logo.py image.png U2`. Options: `--boost` brightens dark marks, `--mark "#ff6600"` takes only the white mark from a coloured tile and paints it in that colour, `--circle`, `--crop`, `--bg`, `--keep-white`. Own logos take precedence and are never touched by fetching; delete one to go back to the fetched logo. When moving to another machine, take `data/logos/own/` with you.
+- **Your own logos**, if none is found or you don't like the fetched one: `python3 tools/make_logo.py image.png U2` turns a PNG, JPG, GIF, WebP or SVG (with cairosvg) into the right format in `data/logos/own/`, with an enlarged preview in `own/preview/`. Without Python on your machine (put the image inside the project folder): `docker compose run --rm -v "$PWD:/repo" -w /repo flightpanel python tools/make_logo.py image.png U2`. Options: `--boost` brightens dark marks, `--mark "#ff6600"` takes only the white mark from a coloured tile and paints it in that colour, `--circle`, `--crop`, `--bg`, `--keep-white`. Own logos take precedence and are never touched by fetching; delete one to go back to the fetched logo. When moving to another machine, take `data/logos/own/` with you.
 - **`data/airlines.json`** maps ICAO operator codes to short names and a logo code. The logo code is the brand, not necessarily the operating subsidiary (Malta Air → `FR`, KLM Cityhopper → `KL`), so subsidiaries get the brand's logo. `"album": false` keeps small operators out of the collection album.
 
-**Adding an airline:** in `data/airlines.json` add `"ICAO": {"name": "Short name", "iata": "XY"}`. For rescue, police or military use `"airline": false` and a `"label"`; with `"number": true` a callsign like CHX31 becomes "Christoph 31". Then fetch or make the logo. Candidates collect in `/issues` under `unknown_operator`. A name entry is optional: if adsbdb doesn't know the callsign, the server looks up the operator name itself and shortens it at word boundaries. An entry is worth it if that name is outdated or misleading, for a brand logo, and for rescue, police and military. The name has 94 px next to the logo; pick a short form if it's too long.
+**Adding an airline:** in `data/airlines.json` add `"ICAO": {"name": "Short name", "iata": "XY"}`. For rescue, police or military use `"airline": false` and a `"label"`; with `"number": true` a callsign like CHX31 becomes "Christoph 31". Then fetch or make the logo. Candidates collect in `/issues` under `unknown_operator`. A name entry is optional: if adsbdb doesn't know the callsign, the server looks up the operator name itself and shortens it at word boundaries. An entry is worth it if that name is outdated or misleading, for a brand logo, and for rescue, police and military. The name gets 94 px next to the logo; pick a short form if it's too long.
 
 ---
 
@@ -189,7 +189,7 @@ Logos are trademarks of their owners and stay on your server; they are not part 
 | `/idle` | idle cards: tier, whether they currently have something to say, which one is showing |
 | `/settings` | settings page, only with `SETTINGS_PAGE=1` |
 
-**`/ok`** is red when there was no fresh flight data for 15 minutes, the LAN panel hasn't fetched for 10 minutes (once it had), the code raised errors in the last hour, the database was put aside, LAN requests were refused with 421 (see [LAN_HOSTS](#allowed-host-names-lan_hosts)), or, with remote access, the firmware trust list is outdated. Point an uptime monitor (Uptime Kuma or similar) at `http://<server>:8080/ok` and you only hear from it when something is really wrong; `docker ps` then shows the container as `unhealthy`. Use `/ok` for alerts, not as a liveness probe that restarts the container: most of what it reports isn't fixed by a restart. Remote panels don't count towards `/ok`; `panels list` and `/health` show when each panel last fetched.
+**`/ok`** is red when there was no fresh flight data for 15 minutes, the LAN panel hasn't fetched for 10 minutes (once it had), the code raised errors in the last hour, the database was put aside, a panel's frame requests were refused with 421 (see [LAN_HOSTS](#allowed-host-names-lan_hosts)), or, with remote access, the firmware trust list is outdated. Point an uptime monitor (Uptime Kuma or similar) at `http://<server>:8080/ok` and you only hear from it when something is really wrong; `docker ps` then shows the container as `unhealthy`. Use `/ok` for alerts, not as a liveness probe that restarts the container: most of what it reports isn't fixed by a restart. Remote panels don't count towards `/ok`; `panels list` and `/health` show when each panel last fetched.
 
 **`/issues`** collects anomalies with a counter, first and last occurrence, callsigns and an example. Clear after reviewing: `curl -X POST http://<server>:8080/issues/clear`.
 
