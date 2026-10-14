@@ -14,6 +14,10 @@ Panel-Einstellungen sind Standort, Sichtfeld, Anzeige, Helligkeit und Ruhezeit u
 Leerlauf-Karten (CARD_<ID>=0); sie liegen je Panel in DATA_DIR/flightpanel.db. Alles
 andere (Flughafen, Quellen, Logos, Betrieb) steht in .env.
 
+Für weitere Panels (nicht das am LAN-Port) lehnt set Werte ab, die gegen die Grenzen aus .env
+verstoßen: das Fenster höchstens PANEL_MAX_KM vom Flughafen, RADIUS_KM und SCAN_RADIUS_KM
+höchstens PANEL_MAX_RADIUS_KM.
+
 Namen gelten in jeder Schreibweise (home_lat wie HOME_LAT). set und unset treffen auch einen
 Schlüssel, der von Hand klein geschrieben in die Datenbank kam, und räumen ihn weg.
 

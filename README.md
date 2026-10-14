@@ -61,11 +61,13 @@ docker compose exec flightpanel python3 -m flightpanel.panels set home HOME_LAT=
 docker compose exec flightpanel python3 -m flightpanel.panels set home VIEW_FROM=90 VIEW_TO=180 VIEW_MIN_ELEV=1 VIEW_MAX_KM=50 VIEW_ONLY=1
 ```
 
-`HOME_LAT`, `HOME_LON` sind Dezimalgrad, `HOME_ALT_M` die Augenhöhe am Fenster über dem Meer. Angezeigt wird, was höchstens `RADIUS_KM` weit weg und `MAX_ALT_M` hoch ist. Das Sichtfeld: Richtung im Uhrzeigersinn von `VIEW_FROM` bis `VIEW_TO` (0 = Nord, 90 = Ost), Mindesthöhe über dem Horizont `VIEW_MIN_ELEV` (Häuser, Bäume), Obergrenze `VIEW_MAX_ELEV` (Balkon darüber), Sichtweite `VIEW_MAX_KM`; `VIEW_ONLY=1` zeigt nur, was im Sichtfeld ist. Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen Richtung (`az`) und Höhenwinkel (`elev`) ablesen. `… panels keys` zeigt alle Panel-Einstellungen mit Default und Erklärung, `… panels show home` die gesetzten; sie gelten nach `docker compose restart flightpanel`.
+`HOME_LAT`, `HOME_LON` sind Dezimalgrad, `HOME_ALT_M` die Augenhöhe am Fenster über dem Meer. Angezeigt wird, was höchstens `RADIUS_KM` weit weg und `MAX_ALT_M` hoch ist. Das Sichtfeld: Richtung im Uhrzeigersinn von `VIEW_FROM` bis `VIEW_TO` (0 = Nord, 90 = Ost), Mindesthöhe über dem Horizont `VIEW_MIN_ELEV` (Häuser, Bäume), Obergrenze `VIEW_MAX_ELEV` (Balkon darüber), Sichtweite `VIEW_MAX_KM`; `VIEW_ONLY=1` zeigt nur, was im Sichtfeld ist. Eichen: am Fenster ein Flugzeug suchen und in `/display.json` → `nearby` dessen Richtung (`az`) und Höhenwinkel (`elev`) ablesen. `… panels keys` zeigt alle Panel-Einstellungen mit Default und Erklärung, `… panels show home` die gesetzten; der laufende Server übernimmt sie spätestens nach einer Minute, ohne Neustart.
 
 **4. Karten und Ruhe.** Ebenso per `set home`: `CARD_<ID>=0` schaltet eine Leerlauf-Karte ab, z. B. `CARD_PIGEON=0`. `CALM=1` ist der ruhige Modus: nichts blinkt außer einem Notfall, Infoseiten wechseln alle 10 s statt 4 s, unten stehen nur Landezeit und Höhe/Tempo. Jede dieser Einzelheiten ist auch einzeln einstellbar (`PAGE_SECONDS`, `FLIGHT_SECONDS`, `INFO_PAGES`, `BLINK`, `IDLE_SECONDS`), ebenso Helligkeit und Ruhezeit (`BRIGHTNESS_DAY`, `BRIGHTNESS_EVENING`, `DAY_HOURS`, `QUIET_HOURS`).
 
 Dann einmal die Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`. Unsinnige Werte brechen den Start ab (`.env`) oder werden vom Befehl abgelehnt (`panels set`), jeweils mit dem Namen der Einstellung; was schon in der Datenbank steht und nach einem Update nicht mehr gilt, übergeht der Server mit dem Default und meldet es in Log und `/issues`. Verdächtiges, etwa Koordinaten, die nicht zum Flughafen passen, steht als Warnung im Log. Die Werte unter `/health` zeigen, was wirklich gilt.
+
+**Weitere Panels** (`panels add anna`, gedacht für Freunde; von außen abrufbar werden sie erst mit dem öffentlichen Zugang, der noch aussteht) teilen sich den Abruf des Servers und müssen deshalb nah am Flughafen liegen: ihr Fenster höchstens `PANEL_MAX_KM` (Default 60 km) davon entfernt, `RADIUS_KM` und `SCAN_RADIUS_KM` höchstens `PANEL_MAX_RADIUS_KM` (Default 80 km). Beide Grenzen sind Server-Einstellungen in der `.env`, `panels set` lehnt Werte darüber ab, und das Panel am LAN-Port (`LAN_PANEL`) ist davon frei.
 
 ## Was angezeigt wird
 
@@ -129,8 +131,8 @@ Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dan
 | `/frame` | Binär für den ESP32: `[1, Helligkeit, 128, 32]` + 12 288 Byte RGB |
 | `/frame.png` | Vorschau; `layout`, `card`, `scale`, `gap=0` |
 | `/display.json` | Display-Modell, dazu `nearby`: alle Flugzeuge im Radius mit Richtung, Höhenwinkel, Sichtbarkeit, Landefolge |
-| `/health` | Quellen, wirksame Anzeige-Einstellungen, Cache, Logos, letzter ESP32-Abruf (`esp32.alive=false`: Panel hängt), `problems`, nächtliches Aufräumen (`dream`), Datenbank (`database.copy`: Zeit der letzten nächtlichen Kopie, `database.put_aside`: beiseitegelegte kaputte Datenbankdateien) |
-| `/ok` | `ok` mit 200, sonst 503 und die Gründe (keine frischen Flugdaten seit 15 min, ESP32 holt seit 10 min nichts, Fehler im Code, beiseitegelegte Datenbank); für den Docker-Healthcheck und einen Uptime-Monitor |
+| `/health` | Quellen, wirksame Anzeige-Einstellungen, Cache, Logos, letzter ESP32-Abruf (`esp32.alive=false`: Panel hängt), je Panel eine Zeile unter `panels`, `problems`, nächtliches Aufräumen (`dream`), Datenbank (`database.copy`: Zeit der letzten nächtlichen Kopie, `database.put_aside`: beiseitegelegte kaputte Datenbankdateien) |
+| `/ok` | `ok` mit 200, sonst 503 und die Gründe (keine frischen Flugdaten seit 15 min, der ESP32 am LAN-Port holt seit 10 min nichts, Fehler im Code, beiseitegelegte Datenbank); für den Docker-Healthcheck und einen Uptime-Monitor |
 | `/issues` | gesammelte Auffälligkeiten (siehe unten), `POST /issues/clear` leert |
 | `/stats` | Tagesstatistik, Sammelalbum, seltene Sichtungen, Landerichtung |
 | `/idle` | Leerlauf-Karten: Stufe, ob sie gerade etwas zu sagen haben, welche dran ist |
@@ -209,7 +211,7 @@ Eine neue Abhängigkeit kommt in `server/requirements.txt` (bzw. `requirements-d
 
 ```
 server/flightpanel/
-  main.py        Einstieg: App, Abruf-, Wetter-, ISS- und Speicherschleife
+  main.py        Einstieg: App (ein Abruf für alle Panels), Abruf-, Wetter-, ISS- und Speicherschleife
   web.py         HTTP-Endpunkte und Vorschauseite
   config.py      Server-Einstellungen aus .env (Config.from_env), Panel-Einstellungen aus der
                  Datenbank (Config.for_panel), ruhiger Modus, Helligkeit
@@ -228,6 +230,8 @@ server/flightpanel/
   view.py        Sichtfeld: Richtung, Höhenwinkel, wann einer hineinfliegt
   airport.py     Landerichtung, Landefolge und -zeit, Abflüge, wer zuletzt landete oder startete
   stats.py       Tagesstatistik, Sammelalbum, seltene Flugzeuge, Flaute
+  airfield.py    was am Flughafen geschieht, für alle Panels: Landerichtung, letzte Starts und Landungen
+  panel.py       ein Panel (Einstellungen, Modell, Renderer, Statistik) und der gemeinsame Abrufumkreis
   mock.py        Fantasieflüge für MOCK=1
 
   render.py      Fluglayouts, Himmelspunkte, Frame-Bytes und PNG
