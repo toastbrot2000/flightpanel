@@ -1625,6 +1625,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `server/flightpanel/main.py` (docstring, imports, `SAVE_EVERY_S`, new `absorb_legacy`, `App.__init__`, `App.save`, `App.stop`)
+- Modify: `server/flightpanel/db.py` (`DB_FILE`, `db_path()`), `server/flightpanel/fetch_logos.py` (uses `db_path`)
 - Test: `server/tests/test_app.py` (new); `server/tests/test_web.py` and `test_dream.py` must pass unchanged
 
 **Interfaces:**
@@ -1744,7 +1745,20 @@ def test_save_writes_everything_and_the_stores_reload_it(tmp_path):
 
 Docstring: replace the last sentence `Zwischenstände speichern. web.py liefert … Alle Dateien liegen in DATA_DIR (Docker: ./data).` with `Geändertes in die Datenbank schreiben (db.py: DATA_DIR/flightpanel.db). web.py liefert Bilder und Zustand aus, gerendert wird bei jedem Abruf (render.py). Logos und mitgelieferte Daten liegen in DATA_DIR (Docker: ./data).`
 
-Imports: add `from collections.abc import Mapping`; change `from .config import Config` to `from .config import Config, panel_settings_from_env`; add `from .db import Db` and `from .storage import read_json` (keep alphabetical order for ruff's isort).
+One source for the file name: in `server/flightpanel/db.py`, below `log = logging.getLogger("db")`, add
+
+```python
+DB_FILE = "flightpanel.db"
+
+
+def db_path(data_dir: str) -> str:
+    """Die Datenbank in DATA_DIR; Server, fetch_logos und panels öffnen dieselbe Datei."""
+    return os.path.join(data_dir, DB_FILE)
+```
+
+and use it in `server/flightpanel/fetch_logos.py` (`Db(db_path(cfg.data_dir), put_aside=False)`; drop `import os` there if it becomes unused).
+
+Imports: add `from collections.abc import Mapping`; change `from .config import Config` to `from .config import Config, panel_settings_from_env`; add `from .db import Db, db_path` and `from .storage import read_json` (keep alphabetical order for ruff's isort).
 
 Constant: `SAVE_EVERY_S = 60      # Geändertes in die Datenbank; auch die Nachtaufräumung hängt daran`.
 
@@ -1791,7 +1805,7 @@ Replace the beginning of `App.__init__` (up to and including the `# Anzeige` blo
         Sichtfeld (env, sonst os.environ) wird beim ersten Start einmalig übernommen."""
         self.server_cfg = cfg
         data = cfg.data_dir
-        self.db = Db(os.path.join(data, "flightpanel.db"))
+        self.db = Db(db_path(data))
         leftover = panel_settings_from_env(os.environ if env is None else env)
         if self.db.panel_get(cfg.lan_panel) is None:
             Config.for_panel(cfg, leftover)     # prüft: Unsinn in der alten .env bricht ab, ohne gespeichert zu werden
@@ -2005,13 +2019,12 @@ Im Container:
 Der Server liest die Einstellungen beim Start: danach docker compose restart flightpanel."""
 
 import argparse
-import os
 import re
 import sys
 import time
 
 from .config import Config, default_text, panel_fields
-from .db import DatabaseError, Db
+from .db import DatabaseError, Db, db_path
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
@@ -2120,7 +2133,7 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(f"Fehler: {e}", file=sys.stderr)
         return 2
-    path = os.path.join(cfg.data_dir, "flightpanel.db")
+    path = db_path(cfg.data_dir)
     try:
         db = Db(path, put_aside=False)          # läuft neben dem Server: eine kaputte Datei bleibt liegen
     except DatabaseError as e:
