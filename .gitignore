@@ -20,6 +20,8 @@ data/*.tmp
 data/*.log
 # Logos sind Marken der Airlines: Der Server holt sie selbst, auch handgemachte bleiben lokal
 data/logos/*
+# Firmware-Releases (tools/fw_release.sh): signierte Images gehören auf den Server, nicht ins Repo
+data/firmware/
 
 # Werkzeuge
 firmware/.pio/
