@@ -149,6 +149,8 @@ def test_what_is_no_panel_setting_is_refused_and_nothing_is_stored(tmp_path, key
     ("LAYOUT", "D", "möglich: A, B, C"),
     ("INFO_PAGES", "eta,wetter", "unbekannte Infoseite"),
     ("HOME_LAT", 52.5, "als Text"),
+    ("BLINK", "1\x1b]0;titel\x07", "Steuerzeichen"),          # kam sonst roh in die Datenbank (panels show)
+    ("CARD_PIGEON", "0\x9b2J", "Steuerzeichen"),
 ])
 def test_a_bad_value_is_refused_next_to_its_field(tmp_path, key, raw, part):
     async def run():

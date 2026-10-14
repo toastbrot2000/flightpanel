@@ -2,6 +2,7 @@
 
 import os
 import re
+import unicodedata
 from dataclasses import fields
 
 import pytest
@@ -79,6 +80,50 @@ def test_no_decimal_setting_takes_nan_or_inf(key):
         with pytest.raises(ValueError) as refused:
             panels.check(make_cfg(), "home", {key: raw})
         assert str(refused.value).startswith(f"{key}='{raw}': erlaubt: "), raw
+
+
+# Escape-Folgen fürs Terminal: Fenstertitel (OSC ... BEL), verdeckter Text, CSI als C1-Zeichen, dazu DEL und NUL
+EVIL = "1\x1b]0;titel\x07\x1b[8m\x9b31m\x7f\x00"
+
+
+def controls(text: str) -> list[str]:
+    """Die Steuerzeichen (Unicode Cc) in text, ohne die Zeilenumbrüche der Ausgabe selbst."""
+    return [c for c in text.replace("\n", "") if unicodedata.category(c) == "Cc"]
+
+
+@pytest.mark.parametrize(("key", "value"), [("BLINK", EVIL), ("CARD_PIGEON", "0\x1b[2J"), ("SHOW_OTHER", "1\t0"),
+                                            ("HOME_LAT", "52.5\x9b"), ("LAYOUT", "C\x7f")])
+def test_a_value_with_control_characters_is_refused(key, value):
+    """Was ein Freund auf der Einstellungsseite tippt, prüft check wie panels set. Schalter und Karten nehmen jeden
+    Text (was kein Ja ist, ist Nein): Escape-Folgen darin kamen roh in die Datenbank und mit panels show ins Terminal
+    des Betreibers. Jetzt ist jedes Steuerzeichen (Unicode Cc: C0, DEL, C1) ein Fehler; der Satz zeigt den Wert
+    escaped."""
+    with pytest.raises(ValueError) as refused:
+        panels.check(make_cfg(), "home", {key: value})
+    message = str(refused.value)
+    assert message.startswith(f"{key}={value!r}: ") and "Steuerzeichen" in message and not controls(message)
+
+
+def test_set_refuses_control_characters_and_stores_nothing(run):
+    code, out, err = run("set", "home", "HOME_LAT=52.5", f"BLINK={EVIL}")
+    assert code == 2 and out == "" and "BLINK=" in err and "Steuerzeichen" in err and not controls(err)
+    assert run("show", "home")[1].startswith("home: nichts gesetzt")
+
+
+def test_show_and_list_escape_what_came_from_the_database(run, tmp_path):
+    """Was vor dieser Prüfung gespeichert wurde (Einstellungsseite) oder von Hand in die Datenbank kam, geht nie roh
+    ins Terminal: Steuerzeichen erscheinen als \\x1b und so weiter."""
+    db = Db(str(tmp_path / "flightpanel.db"))
+    db.panel_add("anna", name="Anna\x1b[8m")
+    db.panel_set_settings("anna", {"BLINK": EVIL, "CARD_PIGEON": "0\x07"})
+    db.panel_set_channel("anna", "canary\x9b2J")
+    db.identity_add("email", "anna@example.com\x1b[2K", "anna")
+    db.close()
+    _, out, _ = run("show", "anna")
+    assert out == "BLINK=1\\x1b]0;titel\\x07\\x1b[8m\\x9b31m\\x7f\\x00\nCARD_PIGEON=0\\x07\n"
+    _, out, _ = run("list")
+    assert not controls(out)
+    assert "Anna\\x1b[8m" in out and "canary\\x9b2J" in out and "anna@example.com\\x1b[2K" in out
 
 
 def test_keys_lists_every_panel_setting_with_its_default(run):

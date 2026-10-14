@@ -34,6 +34,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 
 from .cards import CARDS
 from .config import CARD_PREFIX, FW_CHANNELS, Config, default_text, panel_fields, panel_id, too_far
@@ -43,6 +44,18 @@ CARD_IDS = sorted(c.id for c in CARDS)
 EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 CLIENT_ID = re.compile(r"[0-9a-f]{32}\.access")          # wie Zero Trust sie anzeigt
 CHANNELS = FW_CHANNELS                                   # wie der Server sie kennt (config.py)
+
+
+def _control(c: str) -> bool:
+    """Ein Steuerzeichen (Unicode Cc: C0, DEL, C1), darunter ESC, BEL, Tabulator und Zeilenumbruch."""
+    return unicodedata.category(c) == "Cc"
+
+
+def _plain(text: str) -> str:
+    """Text fürs Terminal, jedes Steuerzeichen als \\x1b und so weiter. In der Datenbank steht, was ein Freund auf der
+    Einstellungsseite gespeichert hat oder was von Hand dazukam; roh ausgegeben könnten Escape-Folgen darin das
+    Terminal steuern (Fenstertitel, Zwischenablage, verdeckter Text)."""
+    return "".join(f"\\x{ord(c):02x}" if _control(c) else c for c in text)
 
 
 def _todo(rows: list[dict]) -> None:
@@ -75,10 +88,10 @@ def cmd_list(db: Db, cfg: Config, args) -> None:
     for p in db.panel_list():
         when = time.strftime("%Y-%m-%d", time.localtime(p["created"]))
         channel = f", Firmware {p['fw_channel']}" if p["fw_channel"] != "stable" else ""
-        print(f"{p['id']:<12} {p['name']:<20} {len(p['settings']):>2} Einstellungen, seit {when}{channel}"
-              f"{_note(cfg, p)}")
+        print(_plain(f"{p['id']:<12} {p['name']:<20} {len(p['settings']):>2} Einstellungen, seit {when}{channel}"
+                     f"{_note(cfg, p)}"))
         access = ", ".join(r["value"] for r in ids if r["panel_id"] == p["id"]) or "kein Zugang von außen"
-        print(f"{'':<12} {_seen(p)}; {access}")
+        print(_plain(f"{'':<12} {_seen(p)}; {access}"))
 
 
 def _seen(p: dict) -> str:
@@ -114,9 +127,9 @@ def cmd_keys(db: Db, cfg: Config, args) -> None:
 def cmd_show(db: Db, cfg: Config, args) -> None:
     p = _need(db, args.id)
     for k, v in sorted(p["settings"].items()):
-        print(f"{k}={v}")
+        print(_plain(f"{k}={v}"))
     if not p["settings"]:
-        print(f"{p['id']}: nichts gesetzt, alles auf Default (keys zeigt die Defaults)")
+        print(_plain(f"{p['id']}: nichts gesetzt, alles auf Default (keys zeigt die Defaults)"))
 
 
 def _name(key: str) -> str:
@@ -148,8 +161,12 @@ def _check_reset(cfg: Config, stored: dict[str, str], names: list[str]) -> None:
 def check(cfg: Config, pid: str, settings: dict[str, str]) -> None:
     """Prüft die Einstellungen eines Panels mit denselben Parsern wie der Server. Für weitere Panels (nicht das am
     LAN-Port) gelten dazu die Grenzen aus .env: Abrufradius höchstens PANEL_MAX_RADIUS_KM, das Fenster höchstens
-    PANEL_MAX_KM vom Flughafen. ValueError nennt, was nicht passt. Auch für die Einstellungsseite (settings.py): Sie
-    prüft genau wie set."""
+    PANEL_MAX_KM vom Flughafen. Kein Wert darf ein Steuerzeichen enthalten: Schalter und Karten nehmen sonst jeden
+    Text, und Escape-Folgen kämen roh in die Datenbank (siehe _plain). ValueError nennt, was nicht passt. Auch für die
+    Einstellungsseite (settings.py): Sie prüft genau wie set."""
+    for key, value in settings.items():
+        if any(_control(c) for c in str(value)):
+            raise ValueError(f"{key}={value!r}: Steuerzeichen (etwa Tabulator oder Escape) sind nicht erlaubt")
     remote = pid != cfg.lan_panel
     panel = Config.for_panel(cfg, settings, remote=remote)
     why = too_far(cfg, panel) if remote else None
@@ -301,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         args.func(db, cfg, args)
         return 0
     except (ValueError, DatabaseError, OSError) as e:   # auch: Datenbank gesperrt, Sicherungsziel nicht schreibbar
-        print(f"Fehler: {e}", file=sys.stderr)
+        print(f"Fehler: {_plain(str(e))}", file=sys.stderr)    # nennt mitunter, was in der Datenbank steht
         return 2
     finally:
         db.close()
