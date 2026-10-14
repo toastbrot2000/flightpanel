@@ -201,7 +201,7 @@ def test_lan_origins_may_save(tmp_path):
     async def run():
         async with page(tmp_path, lan_hosts=("nas.fritz.box",)) as (app, client):
             for origin in ("http://192.168.1.5:8080", "http://nas:8080", "http://[::1]:8080",
-                           "https://flightpanel.local", "http://nas.fritz.box:8080"):
+                           "https://flightpanel.local", "http://nas.internal:8080", "http://nas.fritz.box:8080"):
                 assert (await save(client, {"HOME_LAT": "52.45"}, origin=origin)).status == 200, origin
             assert stored(app) == {"HOME_LAT": "52.45"}
 

@@ -164,7 +164,7 @@ SETTINGS_PAGE=1
 | `ACCESS_AUD` | das AUD-Tag der Anwendung aus Abschnitt 2 |
 | `PUBLIC_HOST` | der Hostname ohne `https://`. Speichern auf der Einstellungsseite klappt nur von dieser Adresse aus. |
 | `SETTINGS_PAGE` | `1` schaltet die Einstellungsseite `/settings` ein: außen für die Freunde, am LAN-Port für das Panel am LAN-Port (dort ohne Anmeldung, wer im Heimnetz ist, darf umstellen). Geht auch ohne die vier Angaben oben. |
-| `LAN_HOSTS` | weitere Namen, unter denen der LAN-Port erreichbar ist, kommagetrennt (`nas.fritz.box`). Er nimmt sonst nur IP-Adressen, `localhost`, Namen ohne Punkt, `*.local` und `*.home.arpa` an (gegen DNS-Rebinding aus dem Browser); alles andere bekommt 421 mit einem Hinweis auf diese Einstellung. |
+| `LAN_HOSTS` | weitere Namen, unter denen der LAN-Port erreichbar ist, kommagetrennt, etwa `nas.fritz.box`, den Namen, den die FRITZ!Box vergibt. Er nimmt sonst nur IP-Adressen, `localhost`, Namen ohne Punkt und Namen auf `.local`, `.home.arpa` und `.internal` an (gegen DNS-Rebinding aus dem Browser; `.box` ist eine öffentliche Endung, darum stehen Router-Namen nur, wenn man sie hier einträgt). Alles andere bekommt 421 mit einem Hinweis auf diese Einstellung; das gilt auch für das eigene Panel, wenn in seiner `FRAME_URL` ein solcher Name steht. |
 | `PANEL_MAX_KM`, `PANEL_MAX_RADIUS_KM` | schon vorhanden (README, "Weitere Panels"): das Fenster eines Freundes höchstens 60 km vom Flughafen, sein Abrufradius höchstens 80 km. Beide gelten für alle Freunde. |
 
 Die Firmware-Updates brauchen keinen Schalter: Liegen Dateien in `data/firmware/<kanal>/`, werden sie ausgeliefert, sonst antwortet der Server mit 404.
@@ -208,7 +208,7 @@ Wenn es nicht klappt:
 | Browser: "nicht freigeschaltet" | Adresse keinem Panel zugeordnet | `panels email …` (Abschnitt 6, Schritt 2) |
 | Panel holt nichts, `panels list` zeigt keinen Abruf | Token nicht in der Service-Auth-Regel, abgelaufen, oder nicht mit `panels token` zugeordnet | Access-Protokolle in Zero Trust ansehen; Abschnitt 6, Schritt 1 und 2 |
 | `/settings` antwortet 404 | `SETTINGS_PAGE=1` fehlt | `.env`, dann `docker compose up -d` |
-| Der LAN-Port antwortet 421 | Name mit Punkt, der nicht in `LAN_HOSTS` steht | `LAN_HOSTS` ergänzen |
+| Der LAN-Port antwortet 421 | Name mit Punkt (etwa `nas.fritz.box`), der nicht in `LAN_HOSTS` steht | `LAN_HOSTS` ergänzen |
 
 ---
 

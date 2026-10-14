@@ -23,9 +23,10 @@ Panel). Am LAN-Port (make_web_app, HTTP_PORT) ist es immer das Panel am LAN-Port
   GET  /static/<Name>       Skripte und Stile der Seiten: eine feste Liste von Dateien, nie ein Verzeichnis
 
 Der LAN-Port hat keine Anmeldung und gehört nur ins LAN. Darum (lan_guard):
-  - Er antwortet nur unter Namen aus dem LAN (lan_host): IP-Adressen, localhost, Namen ohne Punkt, *.local,
-    *.home.arpa und LAN_HOSTS; sonst 421. Gegen DNS-Rebinding: Eine fremde Website lässt ihren Namen auf den Server
-    zeigen, dann schickt der Browser im LAN ihren Namen als Host.
+  - Er antwortet nur unter Namen aus dem LAN (lan_host): IP-Adressen, localhost, Namen ohne Punkt, Namen auf
+    LAN_SUFFIXES (*.local, *.home.arpa, *.internal) und LAN_HOSTS; sonst 421. Gegen DNS-Rebinding: Eine fremde
+    Website lässt ihren Namen auf den Server zeigen, dann schickt der Browser im LAN ihren Namen als Host. Namen, die
+    ein Router vergibt (nas.fritz.box), stehen nur, wenn der Betreiber sie in LAN_HOSTS einträgt.
   - Ist der Zugang von außen eingerichtet (Config.public), sagt er 403 zu allem, was Cloudflare-Header trägt: Dann
     hängt der Tunnel am falschen Port.
   - Schreiben nur mit einem Origin aus dem LAN (lan_origin); POST /issues/clear auch ganz ohne (curl im README).
@@ -67,13 +68,18 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
 }
 CF_HEADERS = ("Cf-Ray", "Cf-Connecting-Ip", "Cf-Access-Jwt-Assertion")
-LAN_SUFFIXES = (".local", ".home.arpa")
+# Endungen, die niemand öffentlich registrieren kann: .local (mDNS), .home.arpa (RFC 8375) und .internal (von ICANN
+# für private Netze reserviert). Nicht dabei sind die Namen der Router: .box ist eine öffentliche Endung (wer
+# fritz.box besitzt, könnte darunter jeden Namen auf den Server zeigen lassen), .lan und .home sind nicht reserviert.
+# Solche Namen trägt der Betreiber bewusst in LAN_HOSTS ein.
+LAN_SUFFIXES = (".local", ".home.arpa", ".internal")
 LAN_LINKS = ("/display.json", "/health", "/issues", "/stats", "/idle")     # was die Vorschau am LAN-Port verlinkt
 WARN_EVERY_S = 60       # Absagen des Schutzes stehen höchstens so oft im Log
 
-NOT_LAN = ("Unter diesem Namen antwortet der LAN-Port nicht: nur unter IP-Adressen, localhost, Namen ohne Punkt, "
-           "*.local und *.home.arpa (Schutz vor DNS-Rebinding). Weitere Namen in .env unter LAN_HOSTS eintragen, "
-           "etwa LAN_HOSTS=nas.fritz.box, und den Server neu starten.\n")
+NOT_LAN = ("Unter diesem Namen antwortet der LAN-Port nicht: nur unter IP-Adressen, localhost, Namen ohne Punkt und "
+           "Namen auf .local, .home.arpa und .internal (Schutz vor DNS-Rebinding). Weitere Namen, auch den, den der "
+           "Router vergibt und der etwa in FRAME_URL des ESP32 steht, in .env unter LAN_HOSTS eintragen, etwa "
+           "LAN_HOSTS=nas.fritz.box, und den Server neu starten.\n")
 VIA_CLOUDFLARE = ("Diese Anfrage kam über Cloudflare an den LAN-Port. Der Tunnel gehört an PUBLIC_PORT, nie an den "
                   "LAN-Port: Der hat keine Anmeldung (docs/freunde.md).\n")
 FOREIGN_ORIGIN = "Schreiben nur von den Seiten dieses Servers aus dem LAN (Origin fremd).\n"
@@ -184,10 +190,11 @@ _NAME = re.compile(r"[a-z0-9_-]+(?:\.[a-z0-9_-]+)*")
 
 def lan_host(host: str, extra: tuple[str, ...] = ()) -> bool:
     """Darf ein Browser den LAN-Port unter diesem Namen ansprechen (Host-Header, oder was im Origin hinter :// steht)?
-    IP-Adressen (IPv6 in Klammern), localhost, Namen ohne Punkt (nas), *.local, *.home.arpa und die Namen in
-    extra (LAN_HOSTS), jeweils mit oder ohne Port. Solche Namen kann niemand öffentlich registrieren und auf den
-    Server zeigen lassen; IP-Adressen lassen sich nicht umbiegen. Nur ASCII: Ein Browser schickt Namen mit Umlauten
-    als xn--…, und manches andere Zeichen würde klein geschrieben erst zu einem Buchstaben (K, das Kelvin-Zeichen)."""
+    IP-Adressen (IPv6 in Klammern), localhost, Namen ohne Punkt (nas), Namen auf LAN_SUFFIXES (nas.local) und die
+    Namen in extra (LAN_HOSTS, etwa nas.fritz.box), jeweils mit oder ohne Port. Solche Namen kann niemand öffentlich
+    registrieren und auf den Server zeigen lassen, die in LAN_HOSTS hat der Betreiber selbst gewählt; IP-Adressen
+    lassen sich nicht umbiegen. Nur ASCII: Ein Browser schickt Namen mit Umlauten als xn--…, und manches andere
+    Zeichen würde klein geschrieben erst zu einem Buchstaben (K, das Kelvin-Zeichen)."""
     if not host.isascii():
         return False
     m = _HOST.fullmatch(host.strip().lower())
@@ -236,8 +243,8 @@ def lan_guard(cfg: Config):
             raise web.HTTPForbidden(text=VIA_CLOUDFLARE)
         if not all(lan_host(host, cfg.lan_hosts) for host in req.headers.getall("Host", [])):
             warn("Anfrage unter einem Namen außerhalb des LAN abgelehnt (421). Erreicht ein eigenes Gerät den Server "
-                 "unter einem Namen mit Punkt (etwa für ein ESP32 oder einen Uptime-Monitor), den Namen in .env unter "
-                 "LAN_HOSTS eintragen")
+                 "unter einem Namen mit Punkt (etwa ein ESP32 mit nas.fritz.box in FRAME_URL oder ein "
+                 "Uptime-Monitor), den Namen in .env unter LAN_HOSTS eintragen")
             raise web.HTTPMisdirectedRequest(text=NOT_LAN)
         return await handler(req)
     return guard

@@ -198,7 +198,10 @@ def inline_free(html: str) -> None:
     ("[::1]", True), ("[::1]:8080", True), ("[fe80::1]:8080", True), ("[::ffff:192.168.1.5]:8080", True),
     ("localhost", True), ("LOCALHOST:8080", True), ("nas", True), ("Nas:8080", True),
     ("flightpanel.local", True), ("flightpanel.local:8080", True), ("nas.home.arpa:8080", True),
-    ("nas.fritz.box", False), ("nas.fritz.box:8080", False), ("evil.example.com", False),
+    ("nas.internal", True), ("Nas.Internal:8080", True), ("internal", True), ("nas.internal.", False),
+    ("x.internal.example.com", False), ("nas.internals", False),
+    ("nas.fritz.box", False), ("nas.fritz.box:8080", False), ("nas.lan", False), ("nas.home", False),
+    ("evil.example.com", False),
     ("evil.example.com:8080", False), ("192.168.1.5.nip.io", False), ("local", True), ("home.arpa", False),
     ("x.local.", False), ("nas.local.example.com", False), ("::1", False), ("[::1", False),
     ("[evil.example.com]", False), ("[192.168.1.5]", False), ("[cafe]", False), ("[dead:beef]:8080", False),
@@ -207,7 +210,9 @@ def inline_free(html: str) -> None:
     (chr(0x212A), False), (f"nas{chr(0x212A)}.local", False)])      # Kelvin-Zeichen: klein geschrieben ein k
 def test_the_lan_port_answers_to_lan_names_only(host, ok):
     """Gegen DNS-Rebinding: Eine fremde Website, deren Name plötzlich auf den Server zeigt, schickt ihren eigenen
-    Namen als Host. Erlaubt sind Namen, die niemand öffentlich registrieren kann, und IP-Adressen."""
+    Namen als Host. Erlaubt sind Namen, die niemand öffentlich registrieren kann, und IP-Adressen. Die Namen der
+    Router nicht ohne LAN_HOSTS: .box ist eine öffentliche Endung (wer fritz.box besitzt, könnte nas.fritz.box auf
+    den Server zeigen lassen), .lan und .home sind nicht reserviert."""
     assert lan_host(host) is ok
 
 
@@ -222,16 +227,21 @@ def test_a_foreign_host_gets_421_and_the_healthcheck_keeps_working(tmp_path, cap
             with caplog.at_level("WARNING"):
                 for path in ("/", "/panel/frame", "/ok", "/gibt-es-nicht"):
                     r = await client.get(path, headers={"Host": "evil.example.com"})
-                    assert r.status == 421 and "LAN_HOSTS" in await r.text(), path
+                    text = await r.text()
+                    assert r.status == 421 and "LAN_HOSTS" in text, path
+                    assert all(s in text for s in (".local", ".home.arpa", ".internal", "LAN_HOSTS=nas.fritz.box",
+                                                   "FRAME_URL"))
             assert "421" in caplog.text and "LAN_HOSTS" in caplog.text           # einmal im Log ...
             assert caplog.text.count("421") == 1 and "evil" not in caplog.text  # ... ohne den Header selbst
             assert app.lan.frame_count == 0                                     # kam nicht bis zum Panel
             r = await client.post("/issues/clear", headers={"Host": "evil.example.com"})
             assert r.status == 421
-            for host in ("127.0.0.1:8080", "[::1]:8080", "nas:8080", "flightpanel.local", "nas.home.arpa"):
+            for host in ("127.0.0.1:8080", "[::1]:8080", "nas:8080", "flightpanel.local", "nas.home.arpa",
+                         "nas.internal:8080"):
                 assert (await client.get("/ok", headers={"Host": host})).status in (200, 503), host  # Docker: /ok
-        async with lan(tmp_path, lan_hosts=("nas.fritz.box",)) as (app, client):
-            assert (await client.get("/", headers={"Host": "nas.fritz.box:8080"})).status == 200
+            assert (await client.get("/panel/frame", headers={"Host": "nas.fritz.box:8080"})).status == 421
+        async with lan(tmp_path, lan_hosts=("nas.fritz.box",)) as (app, client):       # FRAME_URL des ESP32
+            assert (await client.get("/panel/frame", headers={"Host": "nas.fritz.box:8080"})).status == 200
             assert (await client.get("/", headers={"Host": "evil.fritz.box:8080"})).status == 421
 
     asyncio.run(run())
@@ -467,7 +477,8 @@ def test_clearing_issues_needs_no_origin_or_one_from_the_lan(tmp_path):
                 r = await client.post("/issues/clear", headers={"Origin": origin})
                 assert r.status == 403 and "exception:x" in app.issues.items, origin
             for headers in ({}, {"Origin": "http://192.168.1.5:8080"}, {"Origin": "http://nas:8080"},
-                            {"Origin": "http://[::1]:8080"}, {"Origin": "https://flightpanel.local"}):
+                            {"Origin": "http://[::1]:8080"}, {"Origin": "https://flightpanel.local"},
+                            {"Origin": "http://nas.internal:8080"}):
                 app.issues.note("exception", "x")
                 r = await client.post("/issues/clear", headers=headers)
                 assert r.status == 200 and "exception:x" not in app.issues.items, headers
