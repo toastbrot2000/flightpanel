@@ -32,6 +32,10 @@ if [ "$1" != "--im-container" ]; then
     *) echo "Aufruf: sh tools/check_firmware_core3.sh [--mit-secrets]" >&2; exit 2 ;;
   esac
   cd "$(dirname "$0")/.."
+  if [ "$1" = --mit-secrets ] && [ ! -f firmware/include/secrets.h ]; then   # gleich hier, nicht erst nach dem Lauf
+    echo "--mit-secrets, aber firmware/include/secrets.h fehlt" >&2
+    exit 1
+  fi
   IMAGE=$(grep -o 'python:3.12-slim@sha256:[0-9a-f]*' tools/check_firmware.sh)   # eine Quelle, tools/escrow.py pflegt sie
   ROOT="$(pwd -W 2>/dev/null || pwd)"   # pwd -W: Git Bash unter Windows
   mkdir -p firmware/.pio/core3
