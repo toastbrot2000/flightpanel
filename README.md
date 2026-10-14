@@ -186,12 +186,12 @@ Liegt in `data/flightpanel.db`. Nach dem Durchsehen leeren: `curl -X POST http:/
 
 ## Hardware und Firmware
 
-PlatformIO, Board `esp32dev` (klassischer ESP32, WROOM-32), Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14. Der ESP32 holt alle 2 s `/frame` und zeigt es an; ohne Server bleibt das letzte Bild stehen, nach 60 s mit einem roten Punkt unten rechts, nach 10 min startet er neu.
+PlatformIO, Board `esp32dev` (klassischer ESP32, WROOM-32), Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14. Der ESP32 holt alle 2 s `/panel/frame` und zeigt es an (ein unverändertes Bild kommt per ETag als 304); ohne Server bleibt das letzte Bild stehen, nach 60 s mit einem roten Punkt unten rechts, nach 10 min startet er neu. WLAN und Server-Adresse trägt man im Einrichtungs-WLAN des Panels ein, vom Handy aus (Bauanleitung, Abschnitt 4).
 
 ```bash
 cd firmware
-cp include/secrets.h.example include/secrets.h   # WLAN (2,4 GHz!), Server-URL, OTA-Passwort (leer = kein OTA)
 pio run -t upload                                # erstes Mal per USB
+cp include/secrets.h.example include/secrets.h   # freiwillig: Vorgaben und OTA-Passwort (leer = kein OTA)
 cp platformio_local.ini.example platformio_local.ini   # nur für OTA: dasselbe Passwort eintragen
 pio run -e esp32dev_ota -t upload                # danach per WLAN
 ```
@@ -243,8 +243,8 @@ server/flightpanel/
   idle.py        Auswahl der Leerlauf-Karten (Stufen, Gewichte, Dringendes)
   cards/         die Karten: traffic, runway, album, sky, fun; Liste in __init__.py
 server/tests/    pytest
-firmware/        ESP32: platformio.ini, src/main.cpp, include/config.h, secrets.h.example
-tools/           make_logo.py, make_airports.py, screenshots.py, check_firmware.sh,
+firmware/        ESP32: platformio.ini, src/ (main.cpp und Module), include/config.h, secrets.h.example (freiwillig)
+tools/           make_logo.py, make_airports.py, make_roots.py (https-Wurzeln), screenshots.py, check_firmware.sh,
                  escrow.py/.sh (Abhängigkeiten mit Wartezeit), update.sh (Server aktualisieren)
 data/            airlines.json, airports.json, rare.json;
                  im Betrieb logos/ und flightpanel.db (SQLite: Panels, Statistik, Album, Cache, Auffälligkeiten)

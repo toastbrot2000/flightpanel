@@ -111,22 +111,33 @@ Nie gleichzeitig über USB und VIN versorgen. Zum Flashen per USB das VIN-Kabel 
 
 ## 4. Firmware
 
-PlatformIO, Board `esp32dev`, Arduino-Framework, Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14, Adafruit GFX (nur fürs Testbild), ArduinoOTA. WLAN, Server-URL und OTA-Passwort stehen in `include/secrets.h`, die nicht ins Repo gehört. Ein leeres OTA-Passwort schaltet OTA ab: Das Panel öffnet dann keinen Port und meldet sich nicht als `flightpanel.local`, geflasht wird per USB. Fürs Hochladen per WLAN kommt dasselbe Passwort noch einmal in `platformio_local.ini` (Vorlage: `platformio_local.ini.example`, ebenfalls nicht im Repo; ohne sie baut die Firmware trotzdem).
+PlatformIO, Board `esp32dev`, Arduino-Framework, Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14, Adafruit GFX (Testbild und Text auf dem Panel), ArduinoOTA. WLAN, Server-Adresse und Token stehen nicht in der Firmware, sondern im Speicher des Panels (NVS); eingetragen werden sie über sein Einrichtungs-WLAN vom Handy aus. Ohne `secrets.h` (unten) passt ein Build für jedes Panel.
 
 ```bash
 cd firmware
-cp include/secrets.h.example include/secrets.h   # WLAN (2,4 GHz!), Server-URL, OTA-Passwort (leer = kein OTA)
-pio run -t upload                                # erstes Mal per USB, VIN dabei abziehen
+pio run -t upload      # per USB, VIN dabei abziehen
 pio device monitor
-cp platformio_local.ini.example platformio_local.ini   # nur für OTA: dasselbe Passwort eintragen
-pio run -e esp32dev_ota -t upload                # danach per WLAN
 ```
 
 Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert, mit und ohne Update-Schlüssel, und lässt die Tests auf dem Rechner laufen (`pio test -e native`, Manifest der signierten Updates); alles in Docker. Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
 
-**Ablauf:** Nach dem Einschalten ein Testbild (Abschnitt 6; andere Neustarts bleiben still), dann WLAN und, falls ein OTA-Passwort gesetzt ist, OTA samt mDNS-Name (`flightpanel.local`). Danach alle 2 s `GET /frame`, Header prüfen, Helligkeit übernehmen (gedeckelt bei `MAX_BRIGHTNESS`), 4096 Pixel schreiben, Puffer tauschen. Die Bibliothek frischt die Panels per DMA im Hintergrund auf, der Prozessor ist dabei kaum beteiligt. Ohne Server bleibt das letzte Bild stehen; nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu. Hängt dagegen `loop()` selbst (WLAN-Stack, Treiber), setzt der Task-Watchdog den ESP32 nach 60 s zurück (`WDT_TIMEOUT_S`); ein OTA-Upload füttert ihn mit jedem Block. Zum Testen lässt `h` und Enter im seriellen Monitor die Schleife 70 s stehen (Abschnitt 6).
+**Partitionstabelle:** `min_spiffs.csv`, zwei App-Bereiche zu 1,875 MB (vorher `default.csv` mit 1,25 MB): Platz für https, Einrichtungs-WLAN und Updates. Eine neue Tabelle kommt nur per USB aufs Panel. Ein Panel mit älterer Firmware also einmal per USB flashen; WLAN und Einstellungen im NVS bleiben dabei erhalten, danach geht OTA wie gewohnt.
 
-**Schnittstelle:** `GET /frame` liefert 12 292 Byte, `application/octet-stream`:
+**Einrichten:** Ein Panel ohne Einrichtung öffnet nach dem Start das WLAN `flightpanel-XXXX`; Name und Passwort (8 Ziffern, bei jedem Öffnen neu) stehen auf dem Panel. Mit dem Handy hinein, die Seite öffnet sich von selbst (sonst `http://192.168.4.1`). WLAN wählen (nur 2,4 GHz), Passwort eintippen, unter "Erweitert" die Server-Adresse: für den eigenen Server `http://<server>:8080`, über Cloudflare `https://<name>` mit Client-ID und Secret des Service-Tokens. "Speichern und neu starten", fertig.
+
+- **Für Freunde:** Server und Token vor der Übergabe selbst eintragen, das WLAN leer lassen. Beim Freund öffnet das Panel nach dem Einstecken sofort das Einrichtungs-WLAN, er wählt nur noch sein WLAN. Das Secret zeigt die Seite nie an, es lässt sich nur überschreiben; eine neue Server-Adresse löscht das Token.
+- **Später ändern:** Netzteil einstecken (oder EN drücken), während des Testbilds BOOT drücken und halten, bis "WLAN einrichten" auf dem Panel steht (3 s): volles Einrichtungs-WLAN mit "Erweitert" und "Zurücksetzen" (löscht alles, danach wie neu). BOOT schon beim Einstecken gedrückt startet den ESP32 im Flash-Modus, das Panel bleibt dunkel: einfach noch einmal. Ohne Eingabe schließt es nach 10 min.
+- **WLAN weg:** Findet das Panel sein WLAN 5 min lang nicht (neuer Router), öffnet es das Einrichtungs-WLAN nur mit WLAN-Feldern; Server und Token lassen sich darin nicht ändern. Es versucht weiter das alte WLAN und schließt, sobald es wieder da ist, sonst nach 10 min (Neustart, dann von vorn). Ein vertipptes Passwort kostet so 5 min, oder BOOT wie oben.
+
+**Prüfstand (freiwillig):** `cp include/secrets.h.example include/secrets.h` liefert Vorgaben für WLAN und Server, solange im Panel nichts gespeichert ist, und das OTA-Passwort. Ein leeres OTA-Passwort (und ein Build ohne `secrets.h`) schaltet OTA ab: Das Panel öffnet dann im WLAN keinen Port und meldet sich nicht als `flightpanel.local`. Fürs Hochladen per WLAN kommt dasselbe Passwort noch einmal in `platformio_local.ini` (Vorlage `platformio_local.ini.example`, nicht im Repo), dann `pio run -e esp32dev_ota -t upload`.
+
+**https:** Die Firmware bettet `server/flightpanel/certs/roots.pem` ein (Wurzeln von Let's Encrypt, Google, SSL.com, Sectigo, dazu Reserve; erzeugt von `tools/make_roots.py`). Das Token geht nur über https hinaus, nie über http.
+
+Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kompiliert (in Docker, ohne `secrets.h` wie für Freunde). Alle Versionen sind fest: Plattform und Bibliotheken in `platformio.ini` (die HUB75-Bibliothek per Commit), PlatformIO selbst in `firmware/platformio.lock`; beim Bauen kommt nichts ungefragt neu dazu.
+
+**Ablauf:** Nach dem Einschalten ein Testbild (Abschnitt 6; andere Neustarts bleiben still), dann WLAN und, falls ein OTA-Passwort gesetzt ist, OTA samt mDNS-Name (`flightpanel.local`). Danach alle 2 s `GET /panel/frame` mit dem letzten ETag: Ein unverändertes Bild kommt als 304 ohne Inhalt und bleibt stehen, ein neues wird geprüft, die Helligkeit übernommen (gedeckelt bei `MAX_BRIGHTNESS`), 4096 Pixel geschrieben, der Puffer getauscht. Die Bibliothek frischt die Panels per DMA im Hintergrund auf, der Prozessor ist dabei kaum beteiligt. Ohne Server bleibt das letzte Bild stehen; nach 60 s leuchtet ein dunkelroter Punkt unten rechts, nach 10 min startet der ESP32 neu. Hängt dagegen `loop()` selbst (WLAN-Stack, Treiber, ein Server, der mitten im Bild verstummt), setzt der Task-Watchdog den ESP32 nach 60 s zurück (`WDT_TIMEOUT_S`); Downloads und ein OTA-Upload füttern ihn mit jedem Paket. Zum Testen lässt `h` und Enter im seriellen Monitor die Schleife 70 s stehen (Abschnitt 6).
+
+**Schnittstelle:** `GET /panel/frame` (auf dem LAN-Port auch `/frame`) liefert 12 292 Byte, `application/octet-stream`, dazu ein `ETag`; mit passendem `If-None-Match` antwortet der Server 304. Im Header `X-Panel` schickt das Panel Firmware-Version, Laufzeit, Empfang und den kleinsten freien Speicher mit, für die Diagnose am Server.
 
 | Byte | Inhalt |
 |---|---|
@@ -136,7 +147,7 @@ Ohne lokales PlatformIO prüft `sh tools/check_firmware.sh`, ob die Firmware kom
 | 3 | Höhe (32) |
 | 4 … | 128 × 32 × 3 Byte RGB, zeilenweise von oben links |
 
-Kein ETag, kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefert immer vollständige Bilder.
+Kein Diff, kein Websocket: 6 KB/s im WLAN sind nichts, und TCP liefert immer vollständige Bilder; das ETag spart nur die unveränderten.
 
 **Stellschrauben in `include/config.h`**, falls das Testbild nicht stimmt:
 
@@ -171,7 +182,7 @@ Signieren ist Sache eines Menschen: KI-Agenten führen `fw_release.sh` nie aus. 
 1. Server starten: `cp .env.example .env`, `docker compose up -d --build`, Vorschau unter `http://<server>:8080` (Mock-Modus mit Fantasieflügen).
 2. Logos holen: `docker compose exec flightpanel python3 -m flightpanel.fetch_logos`.
 3. Flughafen und `MOCK=0` in der `.env` einrichten, Standort und Sichtfeld per `panels set home …` (README, Abschnitt "Einrichten"), neu starten. Ein paar Tage `/display.json` beobachten: Wie viele Flüge, wie hoch, wie oft leer? Damit `RADIUS_KM`, `MAX_ALT_M` und das Sichtfeld eichen. Das sind Panel-Einstellungen und stehen in der Datenbank, nicht in der `.env`; gesetzt werden sie mit `docker compose exec flightpanel python3 -m flightpanel.panels set home RADIUS_KM=30 MAX_ALT_M=4000` und gelten ohne Neustart: Der laufende Server übernimmt sie spätestens nach einer Minute.
-4. PlatformIO installieren (VS-Code-Erweiterung oder `pip install platformio`), `firmware/include/secrets.h` anlegen.
+4. PlatformIO installieren (VS-Code-Erweiterung oder `pip install platformio`); `firmware/include/secrets.h` nur für OTA (Abschnitt 4).
 
 **Erstes Bild (ein Abend):**
 
@@ -180,7 +191,7 @@ Signieren ist Sache eines Menschen: KI-Agenten führen `fw_release.sh` nie aus. 
 7. Ein Panel: Stromkabel an die Klemmen (Polung!), Flachbandkabel in IN, 14 Dupont-Kabel zum ESP32 nach 3.3, GND verbinden.
 8. ESP32 per USB flashen (`pio run -t upload`), VIN bleibt ab. Netzteil ein. Testbild: Panel rot, dann Rahmen, dann lesbare Schrift. Falls nicht: Tabelle in Abschnitt 4.
 9. Zweites Panel: Strom parallel, Flachband von Panel 1 OUT zu Panel 2 IN. Testbild: links rot, rechts grün, Rahmen über beide, Diagonale ohne Knick.
-10. Serieller Monitor: WLAN verbunden, erstes `/frame`. Das erste echte Bild.
+10. Das Panel zeigt "WLAN einrichten": mit dem Handy einrichten (Abschnitt 4). Serieller Monitor: WLAN verbunden, erstes Bild.
 
 **Montage (ein Nachmittag):**
 
@@ -227,7 +238,7 @@ Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart 
 
 ### Vor dem Umzug auf den Server
 
-1. **Feste Adresse für den Server.** Der ESP32 findet ihn nur über `FRAME_URL` in `secrets.h`. Im Router eine feste DHCP-Zuweisung einrichten oder den Namen nehmen, den der Router auflöst (bei einer FRITZ!Box `http://<name>.fritz.box:8080/frame`). Sonst heißt eine neue IP: neu flashen. Der Server antwortet nur unter IP-Adressen und Namen aus dem LAN (ohne Punkt, `*.local`, `*.home.arpa`); einen Namen wie `<name>.fritz.box` in `.env` unter `LAN_HOSTS` eintragen, sonst antwortet er mit 421.
+1. **Feste Adresse für den Server.** Der ESP32 findet ihn nur über die Server-Adresse aus dem Einrichtungs-WLAN. Im Router eine feste DHCP-Zuweisung einrichten oder den Namen nehmen, den der Router auflöst (bei einer FRITZ!Box `http://<name>.fritz.box:8080`). Sonst heißt eine neue IP: BOOT nach dem Einschalten halten und die neue Adresse eintragen (Abschnitt 4). Der Server antwortet nur unter IP-Adressen und Namen aus dem LAN (ohne Punkt, `*.local`, `*.home.arpa`, `*.internal`); einen Namen wie `<name>.fritz.box` in `.env` unter `LAN_HOSTS` eintragen, sonst antwortet er mit 421.
 2. **OTA-Passwort setzen:** `OTA_PASSWORD` in `secrets.h` und dasselbe Passwort in `firmware/platformio_local.ini` (beide nicht im Repo). Ohne Passwort läuft kein OTA, damit nicht jeder im WLAN die Firmware tauschen kann; das Panel ließe sich dann nur noch per USB flashen.
 3. **Mitnehmen:** `.env` (Flughafen, Quellen, `TZ`), die Datenbank `data/flightpanel.db` (Standort, Sichtfeld, Album; als Kopie, siehe 7) und `data/logos/own/` (eigene Logos samt Originalen in `own/src/`). Den Rest holt der Server selbst. Lief der alte Rechner noch mit einer Fassung vor Oktober 2026, gibt es dort keine Datenbank, sondern JSON-Dateien: dann den Server dort anhalten und `data/stats.json` (Album und Statistik), `data/cache.json`, `data/issues.json`, `data/tle.txt` und `data/logos/.missing.json` mitnehmen. Der erste Start übernimmt sie einmalig, samt Standort und Sichtfeld aus der `.env` (Log: "Aus früheren Fassungen übernommen"), und benennt sie in `*.imported` um; danach die Panel-Zeilen aus der `.env` löschen.
 4. **Nur im Heimnetz:** Port 8080 nicht nach außen freigeben. `/display.json` zeigt Richtung und Entfernung der Flugzeuge vom Fenster aus; daraus ließe sich der Standort ableiten.
@@ -241,14 +252,15 @@ Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart 
 |---|---|---|
 | Komplett dunkel, Netzteil-LED aus | Netzteil oder Steckverbindung | Stecker, Klemmen |
 | Komplett dunkel, Netzteil an | Quiet Hours, oder keine eingeschaltete Karte hat etwas zu zeigen | `QUIET_HOURS`, `CARD_*` (`panels show home`), `/idle` |
-| Letztes Bild steht, roter Punkt unten rechts | ESP32 erreicht den Server nicht | `/health`, Container-Logs, WLAN, `FRAME_URL` in `secrets.h` |
+| Letztes Bild steht, roter Punkt unten rechts | ESP32 erreicht den Server nicht | `/health`, Container-Logs, WLAN, Server-Adresse (Abschnitt 4); bei https der serielle Monitor (`TLS-Fehler`) |
+| Panel zeigt "WLAN einrichten" | nicht eingerichtet, oder das WLAN ist seit 5 min weg | Abschnitt 4; ohne Eingabe schließt es nach 10 min und versucht das alte WLAN weiter |
 | Rechte Hälfte dunkel | Flachband zwischen den Panels | Stecker nachdrücken |
 | Flackern, Farbrauschen nach Monaten | Dupont-Kabel gelockert | nachstecken; bei Dauerproblem Pegelwandler (3.4) |
 | Anzeige eingefroren | ESP32 hängt in `loop()` | setzt sich nach 60 s selbst zurück (Task-Watchdog, im Monitor `Reset-Grund 6`). Kommen nur keine Bilder vom Server, startet er nach 10 min neu |
 | Keine Flüge, obwohl welche da sind | Quelle ausgefallen oder Filter zu eng | `/health`, `/issues`, `/display.json` → `nearby` |
 | Graues Flugzeug statt Airline-Logo | kein quadratisches Logo gefunden | `/health` → `logos_missing`; Tochterbetrieb: Logo-Code der Marke in `data/airlines.json`; sonst Logo von Hand (README, "Airline-Logos") |
 
-**Updates:** Server mit `sh tools/update.sh` (wöchentlich per cron, siehe oben); Cache, Logos und Statistik bleiben in `data/`. Neue Versionen von Paketen und Basis-Image kommen nur nach 7 Tagen Wartezeit ins Repo (README, "Abhängigkeiten mit Wartezeit"). Aussehen ändern heißt Python ändern und neu bauen, nie flashen. Die Firmware braucht nur neue Pins, ein neues WLAN oder eine neue Server-URL (`pio run -e esp32dev_ota -t upload`).
+**Updates:** Server mit `sh tools/update.sh` (wöchentlich per cron, siehe oben); Cache, Logos und Statistik bleiben in `data/`. Neue Versionen von Paketen und Basis-Image kommen nur nach 7 Tagen Wartezeit ins Repo (README, "Abhängigkeiten mit Wartezeit"). Aussehen ändern heißt Python ändern und neu bauen, nie flashen. Neu flashen nur für neue Pins oder eine neue Firmware (`pio run -e esp32dev_ota -t upload`); WLAN und Server ändert das Einrichtungs-WLAN.
 
 **Verbrauch:** Die beiden Panels ziehen auch mit schwarzem Bild etwa 0,3 bis 0,5 A (Treiber-ICs), also 2 bis 3 W, dazu ESP32 0,7 W und Netzteilverlust etwa 1 W: rund 35 kWh im Jahr. Die Anzeige selbst kostet zusätzlich 2 bis 5 W. Eine Nachtabschaltung per Smart-Plug spart etwa ein Drittel; der ESP32 bootet in 10 s und holt sich das Bild.
 
@@ -267,5 +279,6 @@ Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart 
 | Tischnetzteil statt eingebautem | Schutzkleinspannung im ganzen Eigenbau, nichts mit 230 V zu verdrahten. |
 | Front getönt statt opal, und erst später | Opal verwäscht die 2,5-mm-Pixel; getönt wirkt ausgeschaltet wie eine schwarze Fläche. Erst sehen, ob das nackte Panel gefällt. |
 | OTA und Watchdog | Das Panel hängt an der Wand, USB ist dann unerreichbar. |
+| Einrichtungs-WLAN statt `secrets.h` | Ein Build für alle Panels; WLAN und Server ändert das Handy, nicht der Compiler. Wer das Panel geschenkt bekommt, trägt nur sein WLAN ein. |
 
 **Die Stellen, die Sorgfalt verlangen:** Polung der Panel-Stromkabel (Aufdruck lesen, messen, dann stecken); die 14 Dupont-Kabel (mit Liste und Foto fünf Minuten, das Testbild zeigt jeden Fehler); Panels einzeln testen, bevor sie fest montiert sind; WLAN am Montageort.
