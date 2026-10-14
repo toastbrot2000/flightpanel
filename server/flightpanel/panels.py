@@ -64,6 +64,17 @@ def cmd_show(db: Db, cfg: Config, args) -> None:
         print(f"{p['id']}: nichts gesetzt, alles auf Default (keys zeigt die Defaults)")
 
 
+def _check_reset(cfg: Config, stored: dict[str, str], keys: list[str]) -> None:
+    """Zurücksetzen (KEY= in set, unset) nimmt, was gespeichert ist, auch Veraltetes: So lässt es sich löschen. Alles
+    andere muss ein Name sein, den set annähme; sonst bliebe ein Tippfehler, ein Server-Schlüssel oder KEY=WERT in
+    unset still wirkungslos."""
+    unstored = [k for k in keys if k not in stored]
+    for key in unstored:
+        _check_card(key)
+    # Leer gilt als nicht gesetzt: for_panel meldet nur, welche Namen keine Panel-Einstellung sind
+    Config.for_panel(cfg, dict.fromkeys(unstored, ""))
+
+
 def _save(db: Db, cfg: Config, p: dict, new: dict[str, str]) -> None:
     Config.for_panel(cfg, new)                  # prüft; ValueError nennt die Einstellung
     db.panel_set_settings(p["id"], new)
@@ -73,6 +84,7 @@ def _save(db: Db, cfg: Config, p: dict, new: dict[str, str]) -> None:
 def cmd_set(db: Db, cfg: Config, args) -> None:
     p = _need(db, args.id)
     new = dict(p["settings"])
+    reset = []
     for item in args.pairs:
         key, sep, value = item.partition("=")
         key = key.strip().upper()
@@ -82,13 +94,16 @@ def cmd_set(db: Db, cfg: Config, args) -> None:
             _check_card(key)
             new[key] = value.strip()
         else:
+            reset.append(key)
             new.pop(key, None)
+    _check_reset(cfg, p["settings"], reset)
     _save(db, cfg, p, new)
 
 
 def cmd_unset(db: Db, cfg: Config, args) -> None:
     p = _need(db, args.id)
     gone = {k.strip().upper() for k in args.keys}
+    _check_reset(cfg, p["settings"], sorted(gone))
     _save(db, cfg, p, {k: v for k, v in p["settings"].items() if k not in gone})
 
 

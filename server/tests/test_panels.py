@@ -78,6 +78,39 @@ def test_unknown_cards_are_refused(run):
     assert run("set", "home", "card_pigeon=0")[0] == 0
 
 
+@pytest.mark.parametrize("argv, wanted", [
+    (("set", "home", "DATA_DIR="), "keine Panel-Einstellung: DATA_DIR"),
+    (("set", "home", "HOME_LATT="), "keine Panel-Einstellung: HOME_LATT"),
+    (("unset", "home", "HOME_LATT", "DATA_DIR"), "keine Panel-Einstellung: DATA_DIR, HOME_LATT"),
+    (("unset", "home", "HOME_LAT=52.5"), "keine Panel-Einstellung: HOME_LAT=52.5"),        # KEY=WERT in unset
+    (("set", "home", "CARD_PIGEN="), "unbekannte Karte: CARD_PIGEN"),
+    (("unset", "home", "card_pigen"), "unbekannte Karte: CARD_PIGEN"),
+    # ein Treffer, ein Tippfehler: es wird nichts gespeichert, auch der Treffer bleibt
+    (("unset", "home", "HOME_LAT", "HOME_LATT"), "keine Panel-Einstellung: HOME_LATT"),
+    (("set", "home", "HOME_LAT=", "HOME_LATT="), "keine Panel-Einstellung: HOME_LATT"),
+])
+def test_resetting_checks_the_name_and_changes_nothing(run, argv, wanted):
+    """Auch zurücksetzen (KEY= leer, unset) prüft den Namen wie set: Ein Tippfehler, ein Server-Schlüssel oder KEY=WERT
+    in unset bliebe sonst still wirkungslos. Gespeichert wird erst, wenn alle Namen stimmen."""
+    assert run("set", "home", "HOME_LAT=52.5")[0] == 0
+    code, out, err = run(*argv)
+    assert code == 2 and wanted in err and out == ""
+    assert run("show", "home")[1] == "HOME_LAT=52.5\n"
+
+
+def test_a_stale_stored_key_can_still_be_removed(run, tmp_path):
+    """Was eine spätere Fassung nicht mehr kennt, steht noch in der Datenbank und hält den Server vom Start ab:
+    unset und KEY= räumen es weg, solange es gespeichert ist."""
+    Db(str(tmp_path / "flightpanel.db")).panel_set_settings(
+        "home", {"HOME_LAT": "52.5", "OLD_SETTING": "1", "CARD_GONE": "0"})
+    assert run("unset", "home", "old_setting")[0] == 0
+    assert run("show", "home")[1] == "CARD_GONE=0\nHOME_LAT=52.5\n"
+    assert run("set", "home", "card_gone=")[0] == 0                        # eine Karte, die es nicht mehr gibt
+    assert run("show", "home")[1] == "HOME_LAT=52.5\n"
+    code, _, err = run("unset", "home", "old_setting")                     # weg: wieder nur ein unbekannter Name
+    assert code == 2 and "keine Panel-Einstellung: OLD_SETTING" in err
+
+
 def test_backup(run, tmp_path):
     assert run("backup", str(tmp_path / "copy.db"))[0] == 0 and (tmp_path / "copy.db").exists()
 
