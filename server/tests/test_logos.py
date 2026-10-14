@@ -3,6 +3,8 @@ eine weiße Bildmarke von ihrer farbigen Kachel lösen (tools/make_logo.py --mar
 
 import asyncio
 import io
+import os
+import sys
 import time
 
 import pytest
@@ -17,6 +19,15 @@ from flightpanel.logos import LogoStore
 def _logo(path, color):
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (32, 32), color).save(path)
+
+
+def _tile_png() -> bytes:
+    """Eine Bildmarke auf weißer Kachel, wie ein Logo-CDN sie liefert: rotes Quadrat auf Weiß."""
+    tile = Image.new("RGB", (64, 64), (255, 255, 255))
+    tile.paste((200, 20, 20), (8, 8, 56, 56))
+    buf = io.BytesIO()
+    tile.save(buf, "PNG")
+    return buf.getvalue()
 
 
 def test_own_logo_wins_over_the_fetched_one(tmp_path):
@@ -44,18 +55,37 @@ def test_fetching_leaves_own_logos_alone(tmp_path, monkeypatch):
 
 def test_fetched_logo_is_prepared_and_stored(tmp_path, monkeypatch):
     """Abruf: die erste Quelle mit Bildmarke gewinnt, aufbereitet als <IATA>.png."""
-    tile = Image.new("RGB", (64, 64), (255, 255, 255))
-    tile.paste((200, 20, 20), (8, 8, 56, 56))
-    buf = io.BytesIO()
-    tile.save(buf, "PNG")
+    png = _tile_png()
 
     async def download(self, url):
-        return None if "ZZ" in url else buf.getvalue()         # ZZ: Platzhalter-Probe
+        return None if "ZZ" in url else png                    # ZZ: Platzhalter-Probe
 
     monkeypatch.setattr(LogoStore, "_download", download)
     store = LogoStore(str(tmp_path), 32, urls=(("https://logos.example/{iata}.png", None),))
     assert asyncio.run(store.fetch_now("XQ", "XQA"))
     assert store.get("XQ").getpixel((16, 16)) == (200, 20, 20)
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="Dateirechte gibt es nur unter Linux und macOS")
+def test_fetch_logos_creates_nothing_readable_by_everyone(tmp_path, monkeypatch):
+    """Wie der Server (main._main) und panels setzt auch das Seed-Skript umask 027: Die Logos und die Datenbank, falls
+    sie fehlt, sind für andere Benutzer des Rechners unlesbar, selbst wenn die umask am Terminal offener ist (022).
+    conftest.keep_the_umask stellt sie nach dem Test zurück."""
+    png = _tile_png()
+
+    async def download(self, url):
+        return None if "ZZ" in url else png                    # ZZ: Platzhalter-Probe
+
+    monkeypatch.setattr(LogoStore, "_download", download)
+    monkeypatch.setattr(sys, "argv", ["fetch_logos", "XQ"])
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    os.umask(0o022)
+    with pytest.raises(SystemExit) as done:
+        fetch_logos.main()
+    assert done.value.code == 0
+    made = [p for p in tmp_path.rglob("*") if p.is_file()]
+    assert sorted(p.name for p in made) == ["XQ.png", "flightpanel.db"]         # sonst prüfte der Test nichts
+    assert [p.name for p in made if p.stat().st_mode & 0o007] == []
 
 
 def test_missing_lists_only_codes_still_without_a_logo(tmp_path):

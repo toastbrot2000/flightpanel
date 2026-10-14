@@ -60,6 +60,7 @@ async def run(cfg: Config, codes: list[tuple[str, str]], force: bool) -> int:
 
 
 def main() -> None:
+    os.umask(0o027)         # wie der Server (main._main): Logos und Datenbank nicht für alle lesbar (Standort, Album)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     force = "--force" in sys.argv
