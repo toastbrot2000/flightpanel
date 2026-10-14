@@ -28,5 +28,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Zugang von außen für Freunde (docs/freunde.md): die eigene Compose-Ergänzung (Domain, Tunnel) und der Token des Tunnels
+compose.override.yml
+cloudflared.env
+
 # Worktrees von Claude-Code-Sitzungen (eigene Git-Repos, nie einchecken)
 .claude/worktrees/

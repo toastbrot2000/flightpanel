@@ -1,0 +1,61 @@
+# Zugang von außen für Panels von Freunden: Beispiel, Anleitung in docs/freunde.md.
+#
+# Benutzen: nach compose.override.yml kopieren und die Platzhalter in <spitzen Klammern> ersetzen. Compose liest
+# diese Datei ohne weiteres Zutun neben compose.yml, und sie steht in .gitignore (Domain und Tunnel gehören nicht
+# ins öffentliche Repo):
+#
+#   cp compose.public.example.yml compose.override.yml
+#   docker compose up -d
+#
+# Was sie tut:
+#  - legt das Docker-Netz "flightpanel-public" an. Darin hängen nur der Server und cloudflared, sonst nichts
+#    (kein Traefik, keine anderen Dienste): Nur dort ist PUBLIC_PORT erreichbar.
+#  - hängt den Server in dieses Netz. Für PUBLIC_PORT (8081) steht hier kein "ports:", und es darf auch keins
+#    dazukommen: Sonst wäre der Port ohne Cloudflare davor erreichbar. Veröffentlicht bleibt allein 8080.
+#  - startet cloudflared, der Anfragen von Cloudflare abholt und an http://flightpanel:8081 weitergibt. Routen und
+#    Access stellt man im Cloudflare-Dashboard ein (docs/freunde.md, Abschnitte 2 und 3).
+#
+# Wer schon einen cloudflared betreibt und ihn weiterverwenden will, streicht den Block "cloudflared" und hängt den
+# vorhandenen Container in seiner eigenen Compose-Datei an dieses Netz:
+#   networks:
+#     flightpanel-public:
+#       external: true
+
+services:
+  flightpanel:
+    networks:
+      - default         # wie bisher: Datenquellen im Netz und der LAN-Port 8080
+      - public          # dazu das Netz zu cloudflared
+    # Label traefik.enable=false, Härtung und alles Übrige stehen schon in compose.yml
+
+  cloudflared:
+    # FESTNAGELN IST PFLICHT: nie ":latest" oder ein Tag allein, ein Tag lässt sich nachträglich verschieben.
+    # Die Regel des Projekts für alles, was ausgeführt wird: nichts, was nicht seit mindestens 7 Tagen
+    # veröffentlicht ist. Version und Digest holen:
+    #   1. auf https://github.com/cloudflare/cloudflared/releases eine Version wählen, die mindestens 7 Tage alt ist
+    #   2. docker buildx imagetools inspect cloudflare/cloudflared:<version>
+    #      (die Zeile "Digest: sha256:…"; ohne buildx: docker pull cloudflare/cloudflared:<version>, dann
+    #      docker image inspect --format '{{index .RepoDigests 0}}' cloudflare/cloudflared:<version>)
+    #   3. beides unten eintragen. Ein späteres Update ist wieder von Hand, nach 7 Tagen Wartezeit
+    image: cloudflare/cloudflared:<version>@sha256:<digest>
+    command: ["tunnel", "--no-autoupdate", "run"]
+    restart: unless-stopped
+    # Der Token des Tunnels steht in einer eigenen Datei, nicht in .env: Die liest auch der Server-Container, und er
+    # braucht den Token nicht. cloudflared.env enthält nur die Zeile TUNNEL_TOKEN=… (chmod 600, steht in .gitignore)
+    env_file:
+      - cloudflared.env
+    networks:
+      - public          # nur dieses Netz: cloudflared sieht vom Homelab nichts außer dem Server
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+networks:
+  public:
+    name: flightpanel-public   # fester Name, damit sich ein vorhandener cloudflared anhängen kann (external: true)
