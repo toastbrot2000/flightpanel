@@ -94,8 +94,9 @@ NO_STORE = {"Cache-Control": "no-store"}
 
 NOT_LAN = ("Unter diesem Namen antwortet der LAN-Port nicht: nur unter IP-Adressen, localhost, Namen ohne Punkt und "
            "Namen auf .local, .home.arpa und .internal (Schutz vor DNS-Rebinding). Weitere Namen, auch den, den der "
-           "Router vergibt und der etwa in FRAME_URL des ESP32 steht, in .env unter LAN_HOSTS eintragen, etwa "
-           "LAN_HOSTS=nas.fritz.box, und den Server neu starten.\n")
+           "Router vergibt und der etwa als Server-Adresse im Einrichtungs-WLAN des Panels steht (oder als SERVER_URL "
+           "in seiner secrets.h), in .env unter LAN_HOSTS eintragen, etwa LAN_HOSTS=nas.fritz.box, und den Server neu "
+           "starten.\n")
 VIA_CLOUDFLARE = ("Diese Anfrage kam über Cloudflare an den LAN-Port. Der Tunnel gehört an PUBLIC_PORT, nie an den "
                   "LAN-Port: Der hat keine Anmeldung (docs/freunde.md).\n")
 FOREIGN_ORIGIN = "Schreiben nur von den Seiten dieses Servers aus dem LAN (Origin fremd).\n"
@@ -324,8 +325,8 @@ def lan_guard(cfg: Config):
             raise web.HTTPForbidden(text=VIA_CLOUDFLARE)
         if not all(lan_host(host, cfg.lan_hosts) for host in req.headers.getall("Host", [])):
             warn("Anfrage unter einem Namen außerhalb des LAN abgelehnt (421). Erreicht ein eigenes Gerät den Server "
-                 "unter einem Namen mit Punkt (etwa ein ESP32 mit nas.fritz.box in FRAME_URL oder ein "
-                 "Uptime-Monitor), den Namen in .env unter LAN_HOSTS eintragen")
+                 "unter einem Namen mit Punkt (etwa ein Panel mit nas.fritz.box als Server-Adresse im "
+                 "Einrichtungs-WLAN, oder ein Uptime-Monitor), den Namen in .env unter LAN_HOSTS eintragen")
             raise web.HTTPMisdirectedRequest(text=NOT_LAN)
         return await handler(req)
     return guard

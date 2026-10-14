@@ -76,7 +76,10 @@ Result fetch(uint8_t* buf) {
     return Result::Same;
   }
   if (code != HTTP_CODE_OK) {
-    if (code > 0) Serial.printf("HTTP %d\n", code);   // Fehler beim Verbinden hat net::get() schon gemeldet
+    // Fehler beim Verbinden hat net::get() schon gemeldet. Zu 421 und 404 steht dabei, was zu tun ist.
+    if (code == 421) Serial.println("HTTP 421: Server kennt diesen Namen nicht (LAN_HOSTS in .env des Servers)");
+    else if (code == HTTP_CODE_NOT_FOUND) Serial.println("HTTP 404: kein /panel/frame hier (Server zu alt?)");
+    else if (code > 0) Serial.printf("HTTP %d\n", code);
     net::endRequest(false);
     return Result::Failed;
   }

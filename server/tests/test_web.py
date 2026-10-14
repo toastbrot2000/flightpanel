@@ -230,8 +230,10 @@ def test_a_foreign_host_gets_421_and_the_healthcheck_keeps_working(tmp_path, cap
                     text = await r.text()
                     assert r.status == 421 and "LAN_HOSTS" in text, path
                     assert all(s in text for s in (".local", ".home.arpa", ".internal", "LAN_HOSTS=nas.fritz.box",
-                                                   "FRAME_URL"))
+                                                   "Server-Adresse", "Einrichtungs-WLAN"))
+                    assert "FRAME_URL" not in text                                # gibt es in der Firmware nicht mehr
             assert "421" in caplog.text and "LAN_HOSTS" in caplog.text           # einmal im Log ...
+            assert "Server-Adresse" in caplog.text and "FRAME_URL" not in caplog.text
             assert caplog.text.count("421") == 1 and "evil" not in caplog.text  # ... ohne den Header selbst
             assert app.lan.frame_count == 0                                     # kam nicht bis zum Panel
             r = await client.post("/issues/clear", headers={"Host": "evil.example.com"})
@@ -240,7 +242,7 @@ def test_a_foreign_host_gets_421_and_the_healthcheck_keeps_working(tmp_path, cap
                          "nas.internal:8080"):
                 assert (await client.get("/ok", headers={"Host": host})).status in (200, 503), host  # Docker: /ok
             assert (await client.get("/panel/frame", headers={"Host": "nas.fritz.box:8080"})).status == 421
-        async with lan(tmp_path, lan_hosts=("nas.fritz.box",)) as (app, client):       # FRAME_URL des ESP32
+        async with lan(tmp_path, lan_hosts=("nas.fritz.box",)) as (app, client):       # Server-Adresse des Panels
             assert (await client.get("/panel/frame", headers={"Host": "nas.fritz.box:8080"})).status == 200
             assert (await client.get("/", headers={"Host": "evil.fritz.box:8080"})).status == 421
 
