@@ -40,6 +40,16 @@ def test_bad_value_names_the_variable():
         cfg(LAYOUT="D")
 
 
+def test_bad_value_message_has_one_format_for_env_and_panel():
+    """Server- und Panel-Einstellungen melden Fehler gleich: NAME='roh': Grund des Parsers."""
+    with pytest.raises(ValueError) as server:
+        Config.from_env(env(POLL_INTERVAL="1"))
+    with pytest.raises(ValueError) as panel:
+        Config.for_panel(Config.from_env(env()), {"PAGE_SECONDS": "0"})
+    assert str(server.value) == "POLL_INTERVAL='1': mindestens 5"
+    assert str(panel.value) == "PAGE_SECONDS='0': mindestens 1"
+
+
 def test_layout_auto_is_c():
     """Früher hieß C ohne Logo Layout A; jetzt bekommt es einen Platzhalter. auto aus
     älteren Fassungen ist dasselbe wie C."""

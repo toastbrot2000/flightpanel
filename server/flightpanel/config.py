@@ -21,7 +21,7 @@ der Umgebung steht, gilt trotzdem."""
 import logging
 import math
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import Field, dataclass, field, fields, replace
 from datetime import datetime
 
@@ -108,6 +108,22 @@ def _env(name: str, default, parse=None, panel: tuple[str, str] | None = None):
 
 
 CARD_PREFIX = "CARD_"
+
+
+def _parse(fs: Iterable[Field], src: Mapping[str, str]) -> dict:
+    """Werte der Felder fs aus den rohen Strings in src (.env oder Datenbank), für from_env
+    und for_panel gemeinsam: leere zählen wie nicht gesetzte, ein Fehler nennt die Variable
+    (NAME='roh': Grund des Parsers). Ergebnis: {Feldname: Wert}."""
+    values = {}
+    for f in fs:
+        name = f.metadata["env"]
+        raw = (src.get(name) or "").strip()
+        if raw:
+            try:
+                values[f.name] = f.metadata["parse"](raw)
+            except ValueError as e:
+                raise ValueError(f"{name}={raw!r}: {e}") from None
+    return values
 
 
 @dataclass(frozen=True)
@@ -211,17 +227,7 @@ class Config:
         """Server-Einstellungen aus Umgebungsvariablen; leere zählen wie nicht gesetzte.
         Panel-Felder bleiben auf ihren Defaults (dafür: for_panel)."""
         env = os.environ if env is None else env
-        values = {}
-        for f in fields(cls):
-            name = f.metadata.get("env")
-            if not name or f.metadata.get("panel"):
-                continue
-            raw = (env.get(name) or "").strip()
-            if raw:
-                try:
-                    values[f.name] = f.metadata["parse"](raw)
-                except ValueError as e:
-                    raise ValueError(f"{name}={raw!r}: {e}") from None
+        values = _parse([f for f in fields(cls) if f.metadata.get("env") and not f.metadata.get("panel")], env)
         for name, instead in REMOVED.items():
             if (env.get(name) or "").strip():
                 log.warning("%s gibt es nicht mehr und wird ignoriert; stattdessen %s", name, instead)
@@ -234,19 +240,12 @@ class Config:
         Datenbank oder von panels.py, geprüft mit denselben Parsern und Fehlertexten.
         Nicht Gesetztes bleibt wie in server (im Betrieb: die Defaults). Karten gelten,
         sobald eine CARD-Zeile dabei ist: CARD_<ID>=0 schaltet ab."""
-        known = {f.metadata["env"]: f for f in panel_fields()}
+        panel = panel_fields()
         unknown = sorted(k for k in settings if not is_panel_key(k))
         if unknown:
             raise ValueError(f"keine Panel-Einstellung: {', '.join(unknown)}; möglich: "
-                             f"{', '.join(known)}, CARD_<ID>")
-        values = {}
-        for name, f in known.items():
-            raw = (settings.get(name) or "").strip()
-            if raw:
-                try:
-                    values[f.name] = f.metadata["parse"](raw)
-                except ValueError as e:
-                    raise ValueError(f"{name}={raw!r}: {e}") from None
+                             f"{', '.join(f.metadata['env'] for f in panel)}, CARD_<ID>")
+        values = _parse(panel, settings)
         if "radius_km" in values and "scan_radius_km" not in values:
             values["scan_radius_km"] = values["radius_km"]
         if values.get("calm"):
