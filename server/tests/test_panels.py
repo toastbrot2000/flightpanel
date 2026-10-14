@@ -50,6 +50,8 @@ def test_bad_values_name_the_setting_and_change_nothing(run):
     assert code == 2 and "KEY=WERT" in err
     code, _, err = run("set", "nirgends", "HOME_LAT=1")
     assert code == 2 and "gibt es nicht" in err
+    code, _, err = run("set", "home", "HOME_LON=13.4", "RADIUS_KM=1e12")         # Unsinn: auch der Rest bleibt weg
+    assert code == 2 and "RADIUS_KM='1e12': erlaubt: über 0 bis 1000" in err
     assert run("show", "home")[1].startswith("home: nichts gesetzt")
 
 

@@ -92,6 +92,27 @@ def _share(s: str) -> float:
     return v
 
 
+def _float(lo: float, hi: float, above: bool = False):
+    """Kommazahl in Grenzen, endlich: nan oder inf zerlegten sonst Abruf und Bild. above: mehr als lo (ein
+    Radius von 0 km zeigt nichts). Die Grenzen sind großzügig, sie fangen nur, was nirgends Sinn hat."""
+    allowed = f"erlaubt: {'über ' if above else ''}{lo:g} bis {hi:g}"
+
+    def parse(s: str) -> float:
+        v = float(s)
+        if not math.isfinite(v) or v > hi or (v <= lo if above else v < lo):
+            raise ValueError(allowed)
+        return v
+    return parse
+
+
+_lat = _float(-90, 90)                  # Breitengrad
+_lon = _float(-180, 180)                # Längengrad
+_height = _float(-500, 10000)           # Meter über dem Meer
+_km = _float(0, 1000, above=True)       # Radien und Sichtweite
+_deg = _float(0, 360)                   # Richtung, 0 = Nord
+_elev = _float(-90, 90)                 # Höhenwinkel über dem Horizont
+
+
 PANEL_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
@@ -140,26 +161,29 @@ def _parse(fs: Iterable[Field], src: Mapping[str, str]) -> dict:
 @dataclass(frozen=True)
 class Config:
     # --- Standort und Abruf
-    home_lat: float = _env("HOME_LAT", 52.52, panel=("Standort", "Breitengrad des Fensters, Dezimalgrad"))
-    home_lon: float = _env("HOME_LON", 13.40, panel=("Standort", "Längengrad des Fensters, Dezimalgrad"))
-    home_alt_m: float = _env("HOME_ALT_M", 40.0, panel=("Standort", "Augenhöhe am Fenster über dem Meer, Meter"))
-    radius_km: float = _env("RADIUS_KM", 40.0, panel=("Standort", "angezeigt wird, was höchstens so weit weg ist, km"))
-    max_alt_m: float = _env("MAX_ALT_M", 6000.0, panel=("Standort", "... und höchstens so hoch, Meter"))
+    home_lat: float = _env("HOME_LAT", 52.52, _lat, panel=("Standort", "Breitengrad des Fensters, Dezimalgrad"))
+    home_lon: float = _env("HOME_LON", 13.40, _lon, panel=("Standort", "Längengrad des Fensters, Dezimalgrad"))
+    home_alt_m: float = _env("HOME_ALT_M", 40.0, _height,
+                             panel=("Standort", "Augenhöhe am Fenster über dem Meer, Meter"))
+    radius_km: float = _env("RADIUS_KM", 40.0, _km,
+                            panel=("Standort", "angezeigt wird, was höchstens so weit weg ist, km"))
+    max_alt_m: float = _env("MAX_ALT_M", 6000.0, _float(-500, 20000),
+                            panel=("Standort", "... und höchstens so hoch, Meter"))
     # Abrufradius für Statistik, seltene Flugzeuge und Notfall-Squawks; ohne Angabe
     # wie RADIUS_KM (siehe for_panel)
-    scan_radius_km: float = _env("SCAN_RADIUS_KM", 40.0,
+    scan_radius_km: float = _env("SCAN_RADIUS_KM", 40.0, _km,
                                  panel=("Standort",
                                         "Abrufradius für Statistik, Seltenes und Notfälle, km; leer = RADIUS_KM"))
 
     # --- Sichtfeld: Richtung im Uhrzeigersinn von VIEW_FROM bis VIEW_TO (0 = Nord,
     # 90 = Ost), Höhenwinkel über dem Horizont, Sichtweite. Default: rundum.
-    view_from: float = _env("VIEW_FROM", 0.0,
+    view_from: float = _env("VIEW_FROM", 0.0, _deg,
                             panel=("Sichtfeld", "wo es beginnt, Grad im Uhrzeigersinn (0 Nord, 90 Ost)"))
-    view_to: float = _env("VIEW_TO", 360.0, panel=("Sichtfeld", "wo es endet; 0 bis 360 = rundum"))
-    view_min_elev: float = _env("VIEW_MIN_ELEV", 0.0,
+    view_to: float = _env("VIEW_TO", 360.0, _deg, panel=("Sichtfeld", "wo es endet; 0 bis 360 = rundum"))
+    view_min_elev: float = _env("VIEW_MIN_ELEV", 0.0, _elev,
                                 panel=("Sichtfeld", "Mindesthöhe über dem Horizont, Grad (Häuser, Bäume)"))
-    view_max_elev: float = _env("VIEW_MAX_ELEV", 90.0, panel=("Sichtfeld", "Obergrenze, Grad (Balkon darüber)"))
-    view_max_km: float = _env("VIEW_MAX_KM", 100.0, panel=("Sichtfeld", "Sichtweite, km"))
+    view_max_elev: float = _env("VIEW_MAX_ELEV", 90.0, _elev, panel=("Sichtfeld", "Obergrenze, Grad (Balkon darüber)"))
+    view_max_km: float = _env("VIEW_MAX_KM", 100.0, _km, panel=("Sichtfeld", "Sichtweite, km"))
     view_only: bool = _env("VIEW_ONLY", False, panel=("Sichtfeld", "1: nur zeigen, was im Sichtfeld ist"))
     show_other: bool = _env("SHOW_OTHER", True,
                             panel=("Sichtfeld",
@@ -168,10 +192,10 @@ class Config:
 
     # --- Heimatflughafen
     local_airport_iata: str = _env("LOCAL_AIRPORT_IATA", "BER", str.upper)
-    airport_lat: float = _env("AIRPORT_LAT", 52.3617)       # ohne Angabe aus airports.json
-    airport_lon: float = _env("AIRPORT_LON", 13.5023)
+    airport_lat: float = _env("AIRPORT_LAT", 52.3617, _lat)     # ohne Angabe aus airports.json
+    airport_lon: float = _env("AIRPORT_LON", 13.5023, _lon)
     airport_alt_m: float = _env("AIRPORT_ALT_M", 48.0)
-    runway_course: float = _env("RUNWAY_COURSE", 249.0)     # Endanflug einer Landerichtung, BER 25
+    runway_course: float = _env("RUNWAY_COURSE", 249.0, _deg)   # Endanflug einer Landerichtung, BER 25
     curfew_hours: tuple[int, int] = _env("CURFEW_HOURS", (0, 5 * 60), _hours)   # Nachtflugverbot
     metar: bool = _env("METAR", True)                       # Wetter von aviationweather.gov
     metar_station: str = _env("METAR_STATION", "EDDB", str.upper)   # ohne Angabe aus airports.json
@@ -193,7 +217,7 @@ class Config:
     height: int = _env("HEIGHT", 32)
     layout: str = _env("LAYOUT", "C", parse_layout,
                        panel=("Anzeige", "C Logo und drei Zeilen, A ohne Logo, B zwei Flüge"))
-    max_flights: int = _env("MAX_FLIGHTS", 3, _int(1), panel=("Anzeige", "so viele Flüge wechseln sich ab"))
+    max_flights: int = _env("MAX_FLIGHTS", 3, _int(1, 10), panel=("Anzeige", "so viele Flüge wechseln sich ab"))
     calm: bool = _env("CALM", False,
                       panel=("Anzeige", "1: ruhiger Modus (nichts blinkt, seltener Wechsel, nur Landezeit und Höhe)"))
     page_seconds: int = _env("PAGE_SECONDS", 4, _int(1), panel=("Anzeige", "Sekunden je Infoseite"))

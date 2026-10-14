@@ -166,3 +166,51 @@ def test_default_text_of_every_panel_field_parses_back_to_the_default():
     """Was als Default zum Eintippen steht, ergibt beim Setzen wieder den Default."""
     server = Config.from_env(env())
     assert Config.for_panel(server, {f.metadata["env"]: default_text(f) for f in panel_fields()}) == server
+
+
+@pytest.mark.parametrize(("name", "raw", "why"), [
+    ("HOME_LAT", "nan", "erlaubt: -90 bis 90"),
+    ("HOME_LAT", "95", "erlaubt: -90 bis 90"),
+    ("HOME_LAT", "inf", "erlaubt: -90 bis 90"),
+    ("HOME_LON", "-500", "erlaubt: -180 bis 180"),
+    ("HOME_ALT_M", "-1e9", "erlaubt: -500 bis 10000"),
+    ("RADIUS_KM", "-5", "erlaubt: über 0 bis 1000"),
+    ("RADIUS_KM", "0", "erlaubt: über 0 bis 1000"),
+    ("RADIUS_KM", "1e12", "erlaubt: über 0 bis 1000"),
+    ("SCAN_RADIUS_KM", "0", "erlaubt: über 0 bis 1000"),
+    ("MAX_ALT_M", "20001", "erlaubt: -500 bis 20000"),
+    ("VIEW_FROM", "nan", "erlaubt: 0 bis 360"),
+    ("VIEW_TO", "361", "erlaubt: 0 bis 360"),
+    ("VIEW_MIN_ELEV", "-91", "erlaubt: -90 bis 90"),
+    ("VIEW_MAX_ELEV", "-inf", "erlaubt: -90 bis 90"),
+    ("VIEW_MAX_KM", "-1", "erlaubt: über 0 bis 1000"),
+    ("MAX_FLIGHTS", "99999999", "erlaubt: 1 bis 10"),
+])
+def test_numbers_that_cannot_work_are_refused_with_the_name(name, raw, why):
+    """nan, inf und Unsinn wie Breite 95 oder ein Radius von 10^12 km kämen sonst in die Datenbank und
+    zerlegten danach Abruf (bbox) oder Bild. Der Fehler nennt die Einstellung wie bei jedem anderen Wert."""
+    with pytest.raises(ValueError) as refused:
+        Config.for_panel(Config.from_env(env()), {name: raw})
+    assert str(refused.value) == f"{name}={raw!r}: {why}"
+
+
+@pytest.mark.parametrize(("name", "raw"), [("AIRPORT_LAT", "nan"), ("AIRPORT_LAT", "91"), ("AIRPORT_LON", "-inf"),
+                                           ("AIRPORT_LON", "181"), ("RUNWAY_COURSE", "inf"), ("RUNWAY_COURSE", "-1"),
+                                           ("RUNWAY_COURSE", "361")])
+def test_airport_position_and_runway_course_have_the_same_bounds(name, raw):
+    with pytest.raises(ValueError, match=f"^{name}="):
+        Config.from_env(env(**{name: raw}))
+
+
+def test_the_bounds_are_generous():
+    """Was heute irgendwo sinnvoll eingestellt ist, bleibt erlaubt, auch an den Rändern."""
+    c = cfg(HOME_LAT="-90", HOME_LON="180", HOME_ALT_M="-500", RADIUS_KM="1000", SCAN_RADIUS_KM="0.5",
+            MAX_ALT_M="20000", VIEW_FROM="0", VIEW_TO="360", VIEW_MIN_ELEV="-90", VIEW_MAX_ELEV="90",
+            VIEW_MAX_KM="1000", MAX_FLIGHTS="10")
+    assert (c.home_lat, c.home_lon, c.home_alt_m, c.radius_km, c.scan_radius_km, c.max_alt_m) == (
+        -90, 180, -500, 1000, 0.5, 20000)
+    assert (c.view_from, c.view_to, c.view_min_elev, c.view_max_elev, c.view_max_km, c.max_flights) == (
+        0, 360, -90, 90, 1000, 10)
+    assert cfg(HOME_ALT_M="10000", MAX_ALT_M="-500").home_alt_m == 10000
+    far = Config.from_env(env(LOCAL_AIRPORT_IATA="QQQ", AIRPORT_LAT="-90", AIRPORT_LON="-180", RUNWAY_COURSE="360"))
+    assert (far.airport_lat, far.airport_lon, far.runway_course) == (-90, -180, 360)
