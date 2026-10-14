@@ -58,7 +58,7 @@ def test_bad_value_message_has_one_format_for_env_and_panel():
     with pytest.raises(ValueError) as panel:
         Config.for_panel(Config.from_env(env()), {"PAGE_SECONDS": "0"})
     assert str(server.value) == "POLL_INTERVAL='1': mindestens 5"
-    assert str(panel.value) == "PAGE_SECONDS='0': mindestens 1"
+    assert str(panel.value) == "PAGE_SECONDS='0': erlaubt: 1 bis 86400"
 
 
 def test_layout_auto_is_c():
@@ -258,6 +258,10 @@ def test_the_bounds_are_generous():
     assert (c.view_from, c.view_to, c.view_min_elev, c.view_max_elev, c.view_max_km, c.max_flights) == (
         0, 360, -90, 90, 1000, 10)
     assert cfg(HOME_ALT_M="10000", MAX_ALT_M="-500").home_alt_m == 10000
+    day = cfg(PAGE_SECONDS="86400", FLIGHT_SECONDS="86400", IDLE_SECONDS="86400")       # Sekunden: bis zu einem Tag
+    assert (day.page_seconds, day.flight_seconds, day.idle_seconds) == (86400, 86400, 86400)
+    with pytest.raises(ValueError, match=r"^IDLE_SECONDS='86401': erlaubt: 1 bis 86400$"):
+        cfg(IDLE_SECONDS="86401")
     far = Config.from_env(env(LOCAL_AIRPORT_IATA="QQQ", AIRPORT_LAT="-90", AIRPORT_LON="-180", RUNWAY_COURSE="360"))
     assert (far.airport_lat, far.airport_lon, far.runway_course) == (-90, -180, 360)
 

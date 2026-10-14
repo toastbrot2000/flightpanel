@@ -79,7 +79,7 @@ def _pages(s: str) -> tuple[str, ...]:
 
 
 def _int(lo: int, hi: int | None = None):
-    """Ganzzahl in Grenzen, z. B. Sekunden pro Infoseite mindestens 1."""
+    """Ganzzahl in Grenzen, z. B. Sekunden pro Infoseite 1 bis DAY_S."""
     def parse(s: str) -> int:
         try:
             v = int(s)
@@ -89,6 +89,11 @@ def _int(lo: int, hi: int | None = None):
             raise ValueError(f"erlaubt: {lo} bis {hi}" if hi is not None else f"mindestens {lo}")
         return v
     return parse
+
+
+# Sekunden je Infoseite, Flug und Leerlauf-Karte: höchstens ein Tag. Ohne Grenze kam eine Zahl mit tausenden Ziffern
+# durch, und jedes Bild des Panels scheiterte an Uhrzeit // Sekunden (float und int: OverflowError).
+DAY_S = 24 * 3600
 
 
 def _number(s: str) -> float:
@@ -285,15 +290,15 @@ class Config:
     max_flights: int = _env("MAX_FLIGHTS", 3, _int(1, 10), panel=("Anzeige", "so viele Flüge wechseln sich ab"))
     calm: bool = _env("CALM", False,
                       panel=("Anzeige", "1: ruhiger Modus (nichts blinkt, seltener Wechsel, nur Landezeit und Höhe)"))
-    page_seconds: int = _env("PAGE_SECONDS", 4, _int(1), panel=("Anzeige", "Sekunden je Infoseite"))
-    flight_seconds: int = _env("FLIGHT_SECONDS", 0, _int(0),
+    page_seconds: int = _env("PAGE_SECONDS", 4, _int(1, DAY_S), panel=("Anzeige", "Sekunden je Infoseite"))
+    flight_seconds: int = _env("FLIGHT_SECONDS", 0, _int(0, DAY_S),
                                panel=("Anzeige", "Sekunden je Flug mindestens; 0 = jede Infoseite einmal"))
     info_pages: tuple[str, ...] = _env("INFO_PAGES", INFO_PAGES, _pages,
                                        panel=("Anzeige", "Infoseiten der Reihe nach: eta, alt, dist, callsign"))
     blink: bool = _env("BLINK", True, panel=("Anzeige", "0: nichts blinkt außer einem Notfall"))
 
     # --- Leerlauf-Karten, wenn keine Airline zu sehen ist
-    idle_seconds: int = _env("IDLE_SECONDS", 12, _int(1), panel=("Anzeige", "Sekunden je Leerlauf-Karte"))
+    idle_seconds: int = _env("IDLE_SECONDS", 12, _int(1, DAY_S), panel=("Anzeige", "Sekunden je Leerlauf-Karte"))
     idle_clock_share: float = _env("IDLE_CLOCK_SHARE", 0.35, _share,
                                    panel=("Anzeige", "Anteil der Uhr an den Leerlauf-Karten, 0 bis 1"))
     cards_off: frozenset[str] = frozenset()                 # CARD_<ID>=0, siehe for_panel

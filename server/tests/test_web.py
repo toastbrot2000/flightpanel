@@ -513,3 +513,14 @@ def test_a_page_elsewhere_cannot_clear_issues(tmp_path, origin):
             assert r.status == 200 and "exception:x" not in app.issues.items
 
     asyncio.run(run())
+
+
+def test_the_panel_renders_at_the_largest_allowed_seconds(tmp_path):
+    """Sekunden je Infoseite, Flug und Leerlauf-Karte gehen bis zu einem Tag (config.py); auch dann rechnet jedes Bild
+    mit der Uhrzeit, ohne Überlauf."""
+    async def run():
+        async with lan(tmp_path, page_seconds=86400, flight_seconds=86400, idle_seconds=86400) as (_app, client):
+            for path in ("/panel/frame", "/frame.png", "/frame.png?card=clock", "/frame.png?card=radar", "/idle"):
+                assert (await client.get(path)).status == 200, path
+
+    asyncio.run(run())

@@ -143,7 +143,7 @@ def test_what_is_no_panel_setting_is_refused_and_nothing_is_stored(tmp_path, key
     ("HOME_LAT", "95", "erlaubt: -90 bis 90"),
     ("HOME_LAT", "52,52", "mit Punkt statt Komma: 52.52"),
     ("VIEW_MAX_KM", "weit", "keine Zahl"),
-    ("PAGE_SECONDS", "0", "mindestens 1"),
+    ("PAGE_SECONDS", "0", "erlaubt: 1 bis 86400"),
     ("MAX_FLIGHTS", "2.5", "keine ganze Zahl"),
     ("QUIET_HOURS", "22 bis 6", "von-bis"),
     ("LAYOUT", "D", "möglich: A, B, C"),

@@ -6,8 +6,9 @@ from dataclasses import fields
 
 import pytest
 
+from conftest import make_cfg
 from flightpanel import panels
-from flightpanel.config import Config
+from flightpanel.config import Config, panel_fields
 from flightpanel.db import Db
 
 
@@ -54,6 +55,30 @@ def test_bad_values_name_the_setting_and_change_nothing(run):
     code, _, err = run("set", "home", "HOME_LON=13.4", "RADIUS_KM=1e12")         # Unsinn: auch der Rest bleibt weg
     assert code == 2 and "RADIUS_KM='1e12': erlaubt: über 0 bis 1000" in err
     assert run("show", "home")[1].startswith("home: nichts gesetzt")
+
+
+# Die Panel-Einstellungen, die Zahlen sind (so sagt es ihr Default; ein Schalter zählt nicht)
+NUMBERS = [f.metadata["env"] for f in panel_fields() if type(f.default) in (int, float)]
+
+
+@pytest.mark.parametrize("key", NUMBERS)
+def test_every_number_has_an_upper_bound(key):
+    """IDLE_SECONDS mit 4000 Ziffern ging durch, danach scheiterte jedes Bild des Panels an float // int
+    (OverflowError: 500 auf /panel/frame und /frame.png). Jede Zahl unter den Panel-Einstellungen hat eine Grenze,
+    geprüft wie auf der Einstellungsseite und mit set (check), mit dem gewohnten Satz."""
+    assert {"HOME_LAT", "MAX_FLIGHTS", "PAGE_SECONDS", "FLIGHT_SECONDS", "IDLE_SECONDS"} <= set(NUMBERS)
+    raw = "9" * 4000
+    with pytest.raises(ValueError) as refused:
+        panels.check(make_cfg(), "home", {key: raw})
+    assert str(refused.value).startswith(f"{key}='{raw}': erlaubt: ")
+
+
+@pytest.mark.parametrize("key", [f.metadata["env"] for f in panel_fields() if type(f.default) is float])
+def test_no_decimal_setting_takes_nan_or_inf(key):
+    for raw in ("nan", "inf", "-inf", "1e999", "-1e999"):
+        with pytest.raises(ValueError) as refused:
+            panels.check(make_cfg(), "home", {key: raw})
+        assert str(refused.value).startswith(f"{key}='{raw}': erlaubt: "), raw
 
 
 def test_keys_lists_every_panel_setting_with_its_default(run):
