@@ -6,7 +6,7 @@
 // nach WLANs 4 s. Länger dauern können ein Bild-Download (jedes Paket füttert, FRAME_DEADLINE_MS begrenzt), das
 // Einrichtungs-WLAN (die Schleife füttert) und ein OTA-Upload (jeder Block füttert). Hängt eine Antwort ohne
 // Daten, aber bei offener Verbindung, wartet HTTPClient::writeToStream ohne eigene Frist: Das fängt erst der
-// Watchdog. API von IDF 4.4, beim Umstieg auf Arduino 3.x neu prüfen.
+// Watchdog. Arduino 3.x (IDF 5) will die Einstellungen als Struktur: Dafür steht am Ende eine eigene Fassung.
 #include "watchdog.h"
 
 #include <Arduino.h>
@@ -34,3 +34,23 @@ void testHang() {
 }
 
 }  // namespace watchdog
+
+#if ESP_IDF_VERSION_MAJOR >= 5
+// esp_task_wdt_init mit der Form von IDF 4.4 für IDF 5 (Arduino 3.x, watchdog.h). Auch dort legt ihn der Kern beim
+// Start an (sdkconfig: 5 s, Panic, Leerlauf-Task von Core 0), und esp_task_wdt_reconfigure ändert Timeout und Panic.
+// Die Maske der Leerlauf-Tasks bleibt die vom Start (dieselben sdkconfig-Schalter), sonst meldete reconfigure sie ab
+// und neu an.
+esp_err_t watchdog::esp_task_wdt_init(uint32_t timeoutS, bool panic) {
+  esp_task_wdt_config_t cfg = {};
+  cfg.timeout_ms = timeoutS * 1000;
+  cfg.trigger_panic = panic;
+#if CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0
+  cfg.idle_core_mask |= 1u << 0;
+#endif
+#if CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1
+  cfg.idle_core_mask |= 1u << 1;
+#endif
+  const esp_err_t err = ::esp_task_wdt_reconfigure(&cfg);
+  return err == ESP_ERR_INVALID_STATE ? ::esp_task_wdt_init(&cfg) : err;   // noch keiner da: anlegen
+}
+#endif

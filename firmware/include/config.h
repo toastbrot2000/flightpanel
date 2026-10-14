@@ -60,7 +60,9 @@
 #define OUTAGE_PORTAL_MS   300000   // so lange ohne WLAN: Einrichtungs-WLAN, nur WLAN-Felder (5 min)
 #define PORTAL_CLOSE_MS    600000   // Einrichtungs-WLAN schließt nach 10 min; ohne Einrichtung bleibt es offen
 #define PORTAL_RETRY_MS    30000    // im Ausfall-Portal: das gespeicherte WLAN so oft wieder versuchen
+#ifndef BOOT_PIN                    // Arduino 3.x hat BOOT_PIN schon (esp32-hal.h, beim ESP32 auch GPIO0)
 #define BOOT_PIN           0        // BOOT-Taste (GPIO0, gedrückt = LOW)
+#endif
 #define BOOT_HOLD_MS       3000     // so lange halten: volles Einrichtungs-WLAN
 #define BOOT_WINDOW_MS     6000     // nach dem Einschalten: bis dahin muss das Drücken beginnen (Testbild ~4 s)
 

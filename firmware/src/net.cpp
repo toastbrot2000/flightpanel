@@ -8,16 +8,16 @@
 #include "roots_pem.h"   // ROOTS_PEM: erzeugt von embed_roots.py aus server/flightpanel/certs/roots.pem
 #include "settings.h"
 #include "watchdog.h"
-
 static_assert(TLS_HANDSHAKE_S <= 15, "TLS-Handschlag höchstens 15 s, sonst reicht WDT_TIMEOUT_S nicht für alles");
-
-// WiFiClientSecure merkt sich den mbedTLS-Fehler des letzten Verbindungsaufbaus, setzt ihn aber nicht zurück,
-// wenn schon DNS scheitert. Vor jedem Aufbau auf 0, damit tlsError() nur den jüngsten Versuch meldet.
+// Der mbedTLS-Fehler des letzten Aufbaus bleibt stehen, wenn schon DNS scheitert: vor jedem Aufbau auf 0 (tlsError).
+#if ESP_ARDUINO_VERSION_MAJOR >= 3   // Arduino 3.x: Er steht im TLS-Kontext von NetworkClientSecure.
+class TlsClient : public WiFiClientSecure { public: void clearError() { sslclient->last_error = 0; } };
+#else
 class TlsClient : public WiFiClientSecure {
  public:
   void clearError() { _lastError = 0; }
 };
-
+#endif
 static WiFiClient plain;
 static TlsClient* secure = nullptr;   // erst bei https angelegt
 static HTTPClient httpc;
