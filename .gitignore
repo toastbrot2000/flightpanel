@@ -37,3 +37,6 @@ cloudflared.env
 
 # Worktrees von Claude-Code-Sitzungen (eigene Git-Repos, nie einchecken)
 .claude/worktrees/
+
+# Interne Planungsdokumente
+docs/superpowers/
