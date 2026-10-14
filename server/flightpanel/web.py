@@ -311,8 +311,9 @@ def lan_guard(app: "App"):
     """Der Schutz des LAN-Ports vor jedem Handler, auch vor 404 (siehe oben). Absagen stehen im Log, höchstens
     einmal pro WARN_EVERY_S: Ein ESP32 oder Uptime-Monitor unter einem fremden Namen fiele sonst still aus. Der Header
     selbst nie: Was eine fremde Seite schickt, gehört nicht ins Log. Eine 421 auf einen Bildabruf mit X-Panel (so fragt
-    nur die Firmware; eine fremde Webseite kann den Header nicht ohne Preflight setzen) zählt in App.refused (Zahl und
-    Zeit, kein Text) und macht /ok rot, solange das Panel nichts holt (App.problems)."""
+    die Firmware; eine fremde Webseite kommt nur per DNS-Rebinding an Preflight vorbei) zählt in App.refused (Zahl
+    und Zeit, kein Text) und macht /ok rot, solange das Panel nichts holt (App.problems). Mehr als ein Fehlalarm
+    für 10 min ist damit nicht zu holen; /ok darum nie als Liveness-Probe nutzen, die den Container neu startet."""
     cfg = app.server_cfg
     last = {"warned": -WARN_EVERY_S}
 

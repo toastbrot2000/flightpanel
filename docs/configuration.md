@@ -155,7 +155,7 @@ Names your router hands out, such as `nas.fritz.box`, must be listed explicitly 
 LAN_HOSTS=nas.fritz.box
 ```
 
-This also applies to a panel whose server address in the setup portal uses such a name. `/ok` turns red when requests to the LAN port were refused with 421 in the last 10 minutes and the LAN panel has not fetched a frame during that time; `/health` shows the number of refusals and the age of the last one. Fix: add the name to `LAN_HOSTS` and restart the server, or use the IP address.
+This also applies to a panel whose server address in the setup portal uses such a name. `/ok` turns red when a panel's frame request was refused with 421 in the last 10 minutes and the LAN panel has not fetched a frame during that time (other refused requests, e.g. from a browser or monitor, only show in the log); `/health` shows the number of refusals and the age of the last one. Fix: add the name to `LAN_HOSTS` and restart the server, or use the IP address.
 
 ---
 
@@ -189,7 +189,7 @@ Logos are trademarks of their owners and stay on your server; they are not part 
 | `/idle` | idle cards: tier, whether they currently have something to say, which one is showing |
 | `/settings` | settings page, only with `SETTINGS_PAGE=1` |
 
-**`/ok`** is red when there was no fresh flight data for 15 minutes, the LAN panel hasn't fetched for 10 minutes (once it had), the code raised errors in the last hour, the database was put aside, LAN requests were refused with 421 (see [LAN_HOSTS](#allowed-host-names-lan_hosts)), or, with remote access, the firmware trust list is outdated. Point an uptime monitor (Uptime Kuma or similar) at `http://<server>:8080/ok` and you only hear from it when something is really wrong; `docker ps` then shows the container as `unhealthy`. Remote panels don't count towards `/ok`; `panels list` and `/health` show when each panel last fetched.
+**`/ok`** is red when there was no fresh flight data for 15 minutes, the LAN panel hasn't fetched for 10 minutes (once it had), the code raised errors in the last hour, the database was put aside, LAN requests were refused with 421 (see [LAN_HOSTS](#allowed-host-names-lan_hosts)), or, with remote access, the firmware trust list is outdated. Point an uptime monitor (Uptime Kuma or similar) at `http://<server>:8080/ok` and you only hear from it when something is really wrong; `docker ps` then shows the container as `unhealthy`. Use `/ok` for alerts, not as a liveness probe that restarts the container: most of what it reports isn't fixed by a restart. Remote panels don't count towards `/ok`; `panels list` and `/health` show when each panel last fetched.
 
 **`/issues`** collects anomalies with a counter, first and last occurrence, callsigns and an example. Clear after reviewing: `curl -X POST http://<server>:8080/issues/clear`.
 
