@@ -4,23 +4,20 @@ also passend zum geeichten Sichtfeld.
 
 Sonne: rein gerechnet (Näherung nach dem Astronomical Almanac, ~0,01°), kein Netz.
 ISS: Bahnelemente (TLE) von Celestrak, ersatzweise einer zweiten Quelle, einmal
-am Tag; zwischengespeichert in data/tle.txt und bis 14 Tage nach ihrer Epoche
-genutzt. Daraus mit SGP4 die Überflüge der nächsten 24 h, die man sehen kann: ISS
-mindestens 10° hoch, von der Sonne beschienen, beim Beobachter schon dunkel.
+am Tag; zwischengespeichert in der Datenbank (state) und bis 14 Tage nach ihrer
+Epoche genutzt. Daraus mit SGP4 die Überflüge der nächsten 24 h, die man sehen kann:
+ISS mindestens 10° hoch, von der Sonne beschienen, beim Beobachter schon dunkel.
 Ohne gültige Bahnelemente gibt es keine ISS-Karten, sonst ändert sich nichts."""
 
 import asyncio
 import json
 import logging
 import math
-import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
 
 import aiohttp
-
-from .storage import write_atomic
 
 log = logging.getLogger("astro")
 
@@ -209,9 +206,12 @@ class Pass:
 
 
 class Iss:
-    def __init__(self, cfg, path: str, session: aiohttp.ClientSession | None = None, issues=None):
+    def __init__(self, cfg, db=None, session: aiohttp.ClientSession | None = None, issues=None,
+                 tle_text: str | None = None):
+        """db: Bahndaten aus der Datenbank (state: tle, tle_fetched); tle_text: fertige
+        Bahndaten, für Tests."""
         self.cfg = cfg
-        self.path = path
+        self.db = db
         self.session = session
         self.issues = issues
         self.tle: tuple[str, str] | None = None
@@ -220,20 +220,30 @@ class Iss:
         self.passes: list[Pass] = []
         self.passes_at: float = 0
         self.last_error: str | None = None
-        self._load()
+        if tle_text is not None:
+            self.set_tle_text(tle_text, time.time())
+        elif db is not None:
+            self._load()
 
     # ----------------------------------------------------------- Bahndaten --
     def _load(self) -> None:
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                tle = parse_tle(f.read())
-            if tle:
-                self._set(tle)
-                self.tle_fetched = os.path.getmtime(self.path)
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            log.warning("tle.txt nicht lesbar: %s", e)
+        text = self.db.state_get("tle")
+        tle = parse_tle(text) if text else None
+        if tle:
+            self._set(tle)
+            self.tle_fetched = self.db.state_get("tle_fetched", 0)
+
+    def set_tle_text(self, text: str, fetched: float) -> bool:
+        """Bahndaten übernehmen (Celestrak-Antwort oder alte tle.txt) und merken."""
+        tle = parse_tle(text)
+        if not tle:
+            return False
+        self._set(tle)
+        self.tle_fetched = fetched
+        if self.db is not None:
+            self.db.state_set("tle", "ISS (ZARYA)\n" + "\n".join(tle) + "\n")
+            self.db.state_set("tle_fetched", fetched)
+        return True
 
     def _set(self, tle: tuple[str, str]) -> None:
         from sgp4.api import Satrec
@@ -251,13 +261,10 @@ class Iss:
                 async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
                     if r.status >= 400:
                         raise RuntimeError(f"HTTP {r.status}")
-                    tle = parse_tle(await r.text())
-                if not tle:
+                    text = await r.text()
+                if not self.set_tle_text(text, time.time()):
                     raise RuntimeError("keine Bahnelemente in der Antwort")
-                self._set(tle)
-                self.tle_fetched = time.time()
                 self.last_error = None
-                write_atomic(self.path, "ISS (ZARYA)\n" + "\n".join(tle) + "\n")
                 return True
             except Exception as e:
                 errors.append(f"{url.split('/')[2]}: {e or type(e).__name__}")
