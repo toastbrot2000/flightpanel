@@ -118,8 +118,8 @@ MIGRATIONS = [
     """,
 ]
 
-PANEL_SELECT = ("SELECT id, name, settings, fw_channel, created, updated, stats_since, last_obs, last_in_view "
-                "FROM panels")
+PANEL_SELECT = ("SELECT id, name, settings, fw_channel, created, updated, stats_since, last_obs, last_in_view, "
+                "seen_at, fw_version, uptime_s, rssi, min_heap FROM panels")
 
 
 class Db:
@@ -288,6 +288,43 @@ class Db:
     def panel_remove(self, pid: str) -> None:
         if self.execute("DELETE FROM panels WHERE id = ?", (pid,)).rowcount == 0:
             raise ValueError(f"Panel {pid} gibt es nicht")
+
+    def panel_set_channel(self, pid: str, channel: str) -> None:
+        """Firmware-Kanal (stable, canary). Gilt als Änderung der Einstellungen (updated): main.App zieht ihn nach."""
+        if self.execute("UPDATE panels SET fw_channel = ?, updated = ? WHERE id = ?",
+                        (channel, time.time(), pid)).rowcount == 0:
+            raise ValueError(f"Panel {pid} gibt es nicht")
+
+    def panel_seen(self, pid: str, seen_at: float, diag: dict) -> None:
+        """Letzter Abruf des ESP32 und seine Diagnose (vier Zahlen, web.parse_diag), für panels list. Keine Änderung
+        der Einstellungen: updated bleibt, sonst baute main.App das Panel bei jedem Speichern neu."""
+        self.execute("UPDATE panels SET seen_at = ?, fw_version = ?, uptime_s = ?, rssi = ?, min_heap = ? WHERE id = ?",
+                     (seen_at, diag.get("fw"), diag.get("up"), diag.get("rssi"), diag.get("heap"), pid))
+
+    # ------------------------------------------------------------- Zugang --
+    # Wer welches Panel sehen darf (access.py): E-Mail-Adressen (Browser) und Client-IDs (Service-Tokens der Panels).
+    # Eine Adresse gehört zu höchstens einem Panel; ein Panel darf mehrere haben.
+    def identity_add(self, kind: str, value: str, pid: str) -> None:
+        try:
+            self.execute("INSERT INTO identities (kind, value, panel_id) VALUES (?, ?, ?)", (kind, value, pid))
+        except sqlite3.IntegrityError:
+            other = self.identity_panel(kind, value)
+            raise ValueError(f"{value} gehört schon zu Panel {other}" if other
+                             else f"Panel {pid} gibt es nicht") from None
+
+    def identity_panel(self, kind: str, value: str) -> str | None:
+        row = self.one("SELECT panel_id FROM identities WHERE kind = ? AND value = ?", (kind, value))
+        return row["panel_id"] if row else None
+
+    def identity_list(self) -> list[dict]:
+        return [dict(r) for r in self.query("SELECT kind, value, panel_id FROM identities "
+                                            "ORDER BY panel_id, kind, value")]
+
+    def identity_remove(self, value: str) -> list[dict]:
+        """Entfernt eine E-Mail-Adresse oder Client-ID, gleich welcher Art; gibt die entfernten Zeilen zurück."""
+        gone = [dict(r) for r in self.query("SELECT kind, value, panel_id FROM identities WHERE value = ?", (value,))]
+        self.execute("DELETE FROM identities WHERE value = ?", (value,))
+        return gone
 
 
 def _code(e: sqlite3.Error) -> int:

@@ -306,3 +306,35 @@ def test_only_db_module_talks_sqlite():
                        if p.name != "db.py"
                        and re.search(r"^\s*(import|from)\s+sqlite3\b", p.read_text(encoding="utf-8"), re.M))
     assert offenders == []
+
+
+def test_identities_belong_to_one_panel_and_go_with_it(tmp_path):
+    db = Db(str(tmp_path / "f.db"))
+    db.panel_add("home")
+    db.panel_add("anna")
+    db.identity_add("email", "anna@example.com", "anna")
+    db.identity_add("token", "0" * 32 + ".access", "anna")
+    assert db.identity_panel("email", "anna@example.com") == "anna"
+    assert db.identity_panel("token", "anna@example.com") is None                 # Art gehört dazu
+    with pytest.raises(ValueError, match="gehört schon zu Panel anna"):
+        db.identity_add("email", "anna@example.com", "home")
+    with pytest.raises(ValueError, match="gibt es nicht"):
+        db.identity_add("email", "b@example.com", "nirgends")
+    assert [r["value"] for r in db.identity_list()] == ["anna@example.com", "0" * 32 + ".access"]
+    assert db.identity_remove("anna@example.com") == [{"kind": "email", "value": "anna@example.com",
+                                                       "panel_id": "anna"}]
+    db.panel_remove("anna")                                                        # samt Token
+    assert db.identity_list() == []
+
+
+def test_diagnostics_do_not_count_as_a_settings_change(tmp_path):
+    db = Db(str(tmp_path / "f.db"))
+    db.panel_add("home")
+    before = db.panel_get("home")["updated"]
+    db.panel_seen("home", 1791654544.0, {"fw": 2610131200, "up": 60, "rssi": -61, "heap": 45000})
+    p = db.panel_get("home")
+    assert (p["seen_at"], p["fw_version"], p["uptime_s"], p["rssi"], p["min_heap"]) == (
+        1791654544.0, 2610131200, 60, -61, 45000)
+    assert p["updated"] == before
+    db.panel_set_channel("home", "canary")
+    assert db.panel_get("home")["fw_channel"] == "canary" and db.panel_get("home")["updated"] >= before

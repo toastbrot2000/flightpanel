@@ -1,12 +1,16 @@
 """Panels verwalten: python -m flightpanel.panels <Befehl> ...
 
-  list                        alle Panels
+  list                        alle Panels, wer sie von außen sehen darf, letzter Abruf
   keys                        alle Panel-Einstellungen mit Default und Erklärung
   show <id>                   was bei einem Panel gesetzt ist
   set <id> KEY=WERT ...       setzen, geprüft wie .env (KEY= leer: zurück auf den Default)
   unset <id> KEY ...          zurück auf den Default
   add <id> [--name NAME]      weiteres Panel (das am LAN-Port, LAN_PANEL, legt der Server an)
   remove <id> --yes           Panel samt Album und Statistik löschen
+  email <id> <adresse>        darf das Panel im Browser sehen und einstellen (Cloudflare Access)
+  token <id> <client-id>      Service-Token eines Panels von außen (Cloudflare Access)
+  unlink <adresse|client-id>  wieder weg
+  channel <id> stable|canary  Firmware-Kanal
   backup <datei> [--force]    Kopie der Datenbank, auch im laufenden Betrieb; eine vorhandene
                               Datei ersetzt sie nur mit --force, die Datenbank selbst nie
 
@@ -27,6 +31,7 @@ Der laufende Server übernimmt Änderungen spätestens nach einer Minute, ohne N
 
 import argparse
 import os
+import re
 import sys
 import time
 
@@ -35,6 +40,19 @@ from .config import CARD_PREFIX, Config, default_text, panel_fields, panel_id, t
 from .db import DatabaseError, Db, db_path
 
 CARD_IDS = sorted(c.id for c in CARDS)
+EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+CLIENT_ID = re.compile(r"[0-9a-f]{32}\.access")          # wie Zero Trust sie anzeigt
+CHANNELS = ("stable", "canary")
+
+
+def _todo(rows: list[dict]) -> None:
+    """Was der Server nicht selbst kann, nachdem eine Adresse oder ein Token weg ist."""
+    if any(r["kind"] == "email" for r in rows):
+        print("Noch zu tun: die Adresse in Zero Trust aus der Access-Gruppe der flightpanel-Anwendung nehmen.")
+    if any(r["kind"] == "token" for r in rows):
+        print("Noch zu tun: den Service-Token in Zero Trust löschen (sonst ruft, wer das Panel hat, weiter ab, bis er "
+              "abläuft) und das Panel auf Werkseinstellungen zurücksetzen (BOOT beim Einschalten halten, Erweitert): "
+              "Der Token steht unverschlüsselt in seinem Speicher.")
 
 
 def _check_card(key: str) -> None:
@@ -52,9 +70,28 @@ def _need(db: Db, pid: str) -> dict:
 
 
 def cmd_list(db: Db, cfg: Config, args) -> None:
+    ids = db.identity_list()
     for p in db.panel_list():
         when = time.strftime("%Y-%m-%d", time.localtime(p["created"]))
-        print(f"{p['id']:<12} {p['name']:<20} {len(p['settings']):>2} Einstellungen, seit {when}{_note(cfg, p)}")
+        channel = f", Firmware {p['fw_channel']}" if p["fw_channel"] != "stable" else ""
+        print(f"{p['id']:<12} {p['name']:<20} {len(p['settings']):>2} Einstellungen, seit {when}{channel}"
+              f"{_note(cfg, p)}")
+        access = ", ".join(r["value"] for r in ids if r["panel_id"] == p["id"]) or "kein Zugang von außen"
+        print(f"{'':<12} {_seen(p)}; {access}")
+
+
+def _seen(p: dict) -> str:
+    """Wann sein ESP32 zuletzt abgerufen hat und was es dabei meldete (main.App speichert es jede Minute)."""
+    if not p["seen_at"]:
+        return "noch kein Abruf"
+    out = f"zuletzt {time.strftime('%Y-%m-%d %H:%M', time.localtime(p['seen_at']))}"
+    if p["fw_version"] is not None:
+        out += f", Firmware {p['fw_version']}"
+    if p["rssi"] is not None:
+        out += f", WLAN {p['rssi']} dBm"
+    if p["min_heap"] is not None:
+        out += f", Speicher min. {p['min_heap']} B"
+    return out
 
 
 def _note(cfg: Config, p: dict) -> str:
@@ -169,8 +206,47 @@ def cmd_remove(db: Db, cfg: Config, args) -> None:
         raise ValueError(f"{p['id']} ist das Panel am LAN-Port (LAN_PANEL) und bleibt")
     if not args.yes:
         raise ValueError(f"löscht {p['id']} samt Album und Statistik; zum Bestätigen --yes")
+    rows = [r for r in db.identity_list() if r["panel_id"] == p["id"]]
     db.panel_remove(p["id"])
     print(f"{p['id']} gelöscht; der Server lässt es spätestens nach einer Minute fallen")
+    _todo(rows)
+
+
+def cmd_email(db: Db, cfg: Config, args) -> None:
+    p = _need(db, args.id)
+    address = args.address.strip().lower()
+    if len(address) > 254 or not EMAIL.fullmatch(address):
+        raise ValueError(f"{args.address!r} ist keine E-Mail-Adresse")
+    db.identity_add("email", address, p["id"])
+    print(f"{address} darf Panel {p['id']} im Browser sehen und einstellen. In Zero Trust die Adresse in die "
+          "Access-Gruppe der flightpanel-Anwendung aufnehmen (docs/freunde.md).")
+
+
+def cmd_token(db: Db, cfg: Config, args) -> None:
+    p = _need(db, args.id)
+    client_id = args.client_id.strip().lower()
+    if not CLIENT_ID.fullmatch(client_id):
+        raise ValueError(f"{args.client_id!r} ist keine Client-ID eines Service-Tokens (32 Hexziffern und .access)")
+    db.identity_add("token", client_id, p["id"])
+    print(f"Panel {p['id']} ruft mit diesem Service-Token ab. Client-ID und Secret ins Setup-Portal des Panels "
+          "(BOOT beim Einschalten halten, Erweitert).")
+
+
+def cmd_unlink(db: Db, cfg: Config, args) -> None:
+    value = args.value.strip().lower()
+    gone = db.identity_remove(value)
+    if not gone:
+        raise ValueError(f"{value} gehört zu keinem Panel")
+    for r in gone:
+        print(f"{value} gehört nicht mehr zu Panel {r['panel_id']}")
+    _todo(gone)
+
+
+def cmd_channel(db: Db, cfg: Config, args) -> None:
+    if args.channel not in CHANNELS:
+        raise ValueError(f"Kanal {args.channel!r}: möglich sind {', '.join(CHANNELS)}")
+    db.panel_set_channel(_need(db, args.id)["id"], args.channel)
+    print(f"{args.id}: Firmware aus {args.channel}")
 
 
 def cmd_backup(db: Db, cfg: Config, args) -> None:
@@ -202,6 +278,10 @@ def main(argv: list[str] | None = None) -> int:
     add("unset", cmd_unset, ("id", {}), ("keys", {"nargs": "+", "metavar": "KEY"}))
     add("add", cmd_add, ("id", {}), ("--name", {"default": ""}))
     add("remove", cmd_remove, ("id", {}), ("--yes", {"action": "store_true"}))
+    add("email", cmd_email, ("id", {}), ("address", {}))
+    add("token", cmd_token, ("id", {}), ("client_id", {"metavar": "client-id"}))
+    add("unlink", cmd_unlink, ("value", {"metavar": "adresse|client-id"}))
+    add("channel", cmd_channel, ("id", {}), ("channel", {}))
     add("backup", cmd_backup, ("file", {}), ("--force", {"action": "store_true"}))
     args = parser.parse_args(argv)
     try:

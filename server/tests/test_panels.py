@@ -245,3 +245,35 @@ def test_list_names_a_panel_that_does_not_fetch(run, tmp_path):
     _, out, _ = run("list")
     assert re.search(r"^anna .*ruft nicht ab: HOME_LAT/HOME_LON liegen \d+ km von BER", out, re.M)
     assert re.search(r"^home .*LAN-Port", out, re.M)
+
+
+TOKEN = "0123456789abcdef0123456789abcdef.access"
+
+
+def test_email_token_unlink(run):
+    run("add", "anna")
+    code, out, _ = run("email", "anna", " Anna@Example.com ")
+    assert code == 0 and "anna@example.com" in out and "Access-Gruppe" in out
+    assert run("token", "anna", TOKEN.upper().replace(".ACCESS", ".access"))[0] == 0      # klein gespeichert
+    assert run("email", "home", "anna@example.com")[0] == 2                            # gehört schon zu anna
+    assert run("email", "anna", "keine-adresse")[0] == 2
+    assert run("token", "anna", "abc.access")[0] == 2
+    _, out, _ = run("list")
+    assert "anna@example.com" in out and TOKEN in out
+    code, out, _ = run("unlink", TOKEN)
+    assert code == 0 and "Service-Token in Zero Trust löschen" in out and "Werkseinstellungen" in out
+    assert run("unlink", TOKEN)[0] == 2                                               # schon weg
+
+
+def test_remove_prints_what_is_left_to_do(run):
+    run("add", "anna")
+    run("email", "anna", "anna@example.com")
+    run("token", "anna", TOKEN)
+    code, out, _ = run("remove", "anna", "--yes")
+    assert code == 0 and "Access-Gruppe" in out and "Service-Token in Zero Trust löschen" in out
+
+
+def test_channel(run):
+    assert run("channel", "home", "canary")[0] == 0
+    assert "canary" in run("list")[1]
+    assert run("channel", "home", "beta")[0] == 2
