@@ -74,8 +74,8 @@ Keep port 8080 on your home network: it has no login, and `/display.json` roughl
 
 ## Status and limitations
 
-- **Works:** the server with live data in Docker, checked at a real window against the sky and against Flightradar24. Landing order, minutes to landing and the view field match well.
-- **Untested:** the firmware on real hardware (it compiles), the remote-panel setup end to end, and continuous operation over weeks.
+- **Works:** the server with live data in Docker, checked at a real window against the sky and against Flightradar24. Landing order, minutes to landing and the view field match well. The firmware runs on a real panel: setup from a phone, frames over the LAN.
+- **Not yet tested on hardware:** remote panels through Cloudflare end to end, signed updates with rollback and rescue mode, the experimental Arduino-ESP32 3.x build, and continuous operation over weeks.
 - **Built for one place:** developed in Berlin for BER. Everything location-specific is configurable, but other airports have seen little testing.
 - Data comes from free community and public services; when one fails, only its part is missing (no routes means no origin, no METAR means no weather cards).
 
@@ -104,7 +104,7 @@ Related open-source projects:
 
 **Libraries and tools:**
 
-- Firmware: [ESP32-HUB75-MatrixPanel-DMA](https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-DMA), [Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library) and [Adafruit BusIO](https://github.com/adafruit/Adafruit_BusIO), [Arduino-ESP32](https://github.com/espressif/arduino-esp32) and ESP-IDF with mbedTLS, [PlatformIO](https://platformio.org) and, for the experimental 3.x build, [pioarduino](https://github.com/pioarduino/platform-espressif32), [Unity](https://github.com/ThrowTheSwitch/Unity) for host tests
+- Firmware: [ESP32-HUB75-MatrixPanel-DMA](https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-DMA), [Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library) and [Adafruit BusIO](https://github.com/adafruit/Adafruit_BusIO), [Arduino-ESP32](https://github.com/espressif/arduino-esp32) and ESP-IDF with mbedTLS, [QR Code generator](https://github.com/nayuki/QR-Code-generator) by Project Nayuki (shipped with ESP-IDF) for the Wi-Fi QR code, [PlatformIO](https://platformio.org) and, for the experimental 3.x build, [pioarduino](https://github.com/pioarduino/platform-espressif32), [Unity](https://github.com/ThrowTheSwitch/Unity) for host tests
 - Server: [aiohttp](https://github.com/aio-libs/aiohttp), [Pillow](https://python-pillow.org), [sgp4](https://pypi.org/project/sgp4/); pytest, ruff and uv for development; [cloudflared](https://github.com/cloudflare/cloudflared) for remote panels
 - Font: [DejaVu Sans](https://dejavu-fonts.github.io) (regular and bold, under the DejaVu fonts license), installed in the container from Debian's `fonts-dejavu-core` and not bundled in this repository; the arrows are hand-drawn pixel patterns.
 

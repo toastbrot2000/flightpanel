@@ -2,7 +2,7 @@
 
 How to build the panel: parts, mounting, power, wiring, firmware and first start. The server and its settings are covered in [configuration.md](configuration.md), the screens in [screens.md](screens.md).
 
-> **Status:** the firmware compiles, but this guide is based on the datasheets of the panels and of the ESP32-HUB75-MatrixPanel-DMA library, not on a finished build. If you build one and find something missing or different, feedback is welcome.
+> **Status:** one panel has been built along this guide and runs: flashing over USB, setup from a phone, frames over the LAN. Signed updates, rollback and rescue mode are tested on the computer but not yet on hardware. If you build one and find something missing or different, feedback is welcome.
 
 **Result:** a 32 × 8 cm display with 128 × 32 pixels from two HUB75 panels, an ESP32 behind it, powered by a 5 V desktop power supply. No soldering and no mains wiring: the only part that touches 230 V is a closed, certified power supply.
 
@@ -142,6 +142,8 @@ All versions are pinned: platform and libraries in `platformio.ini` (the HUB75 l
 ### 4.2 Setup portal (first start)
 
 A panel that has not been set up opens its own Wi-Fi access point `flightpanel-XXXX` after start-up. While it is open, the LED panel shows the access point name, its password (8 digits, new every time the portal opens) and a QR code. Scan the QR code with the phone camera, or join `flightpanel-XXXX` manually with the password shown. The setup page opens by itself (otherwise go to `http://192.168.4.1`).
+
+![Setup screen: a Wi-Fi QR code on the left, "WLAN einrichten" (set up Wi-Fi), the access point name, "Passwort" and the password on the right](images/setup-portal.png)
 
 1. Choose your Wi-Fi (2.4 GHz only; the ESP32 has no 5 GHz) and enter its password.
 2. Under **Erweitert** (Advanced) enter the server address: on your home network `http://<server>:8080`, e.g. `http://192.168.1.20:8080`; for a panel elsewhere, reached over Cloudflare, `https://<hostname>` plus the Client ID and Client Secret of its service token ([remote-panels.md](remote-panels.md)).
