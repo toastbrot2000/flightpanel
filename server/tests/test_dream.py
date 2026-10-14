@@ -42,6 +42,17 @@ def test_one_offs_go_after_a_week_recurring_after_a_month(tmp_path, monkeypatch)
     assert Issues(iss.db).items == {}                          # auch aus der Datenbank verschwunden
 
 
+def test_a_database_put_aside_is_kept_like_an_exception(tmp_path, monkeypatch):
+    """Einmalig, aber nicht nach einer Woche weg: /ok soll rot bleiben, bis jemand nachgesehen hat."""
+    now = clock(monkeypatch, issues_mod)
+    iss = Issues(Db(str(tmp_path / "i.db")))
+    iss.note("database", "flightpanel.db.broken-20261014-0312")
+    now[0] += 10 * DAY
+    assert iss.forget(now[0]) == 0
+    now[0] += 30 * DAY
+    assert iss.forget(now[0]) == 1                            # nach 30 Tagen ohne neues Auftreten
+
+
 def test_full_issue_list_makes_room_for_news(tmp_path, monkeypatch):
     monkeypatch.setattr(issues_mod, "MAX_KEYS", 3)
     now = clock(monkeypatch, issues_mod)
@@ -359,6 +370,31 @@ def test_a_failing_copy_is_logged_and_noted_and_the_night_goes_on(tmp_path, monk
             assert "Platte voll" in caplog.text and "flightpanel.db.bak" in caplog.text
             assert app.issues.items["backup:flightpanel.db.bak"]["example"] == {"error": "Platte voll"}
             assert app.last_dream["copy"] == "Fehler: Platte voll"
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_the_copy_rests_while_a_put_aside_database_is_unresolved(tmp_path):
+    """Nach dem Beiseitelegen ist flightpanel.db.bak der Weg zurück. Die Kopie der nächsten Nacht käme von der fast
+    leeren neuen Datenbank und ersetzte sie: Solange /issues das Beiseitelegen meldet, bleibt die Kopie, wie sie ist.
+    Wer nachgesehen und geleert hat, bekommt sie wieder."""
+    from flightpanel.main import App
+    good = b"die Kopie der Vornacht"
+    (tmp_path / "flightpanel.db").write_text("kaputt " * 100)
+    (tmp_path / "flightpanel.db.bak").write_bytes(good)
+
+    async def run():
+        app = App(make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False), env={})
+        try:
+            app.dream(time.time())
+            assert (tmp_path / "flightpanel.db.bak").read_bytes() == good
+            assert app.last_dream["copy"].startswith("übersprungen")
+            app.issues.clear()
+            app.dream(time.time())
+            assert (tmp_path / "flightpanel.db.bak").read_bytes() != good
+            assert app.last_dream["copy"] == "flightpanel.db.bak"
         finally:
             await app.session.close()
 

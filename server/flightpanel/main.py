@@ -31,7 +31,7 @@ from .cache import Cache
 from .cards import CARDS
 from .config import Config, panel_settings_from_env
 from .data import load_airlines, load_airports, load_rare
-from .db import COPY, Db, db_path
+from .db import COPY, Aside, Db, db_path
 from .idle import IdleScreen
 from .issues import Issues
 from .logos import LogoStore, make_logo_store
@@ -140,6 +140,8 @@ class App:
         self.cfg = cfg = Config.for_panel(cfg, self.db.panel_get(cfg.lan_panel)["settings"], skipped)
         self.session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT})
         self.issues = Issues(self.db)
+        if self.db.aside:
+            self._note_aside(self.db.aside)
         if skipped:
             self._note_skipped(cfg.lan_panel, skipped)
         self.cache = Cache(self.db)
@@ -190,6 +192,16 @@ class App:
         self._dream_day: str | None = None
         self._stop = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
+
+    def _note_aside(self, aside: Aside) -> None:
+        """Der Start hat eine kaputte Datenbank beiseitegelegt und leer begonnen (Db). Das Log sagt es schon; hier kommt
+        es in /issues, damit /ok rot bleibt und /health die Datei nennt, bis jemand nachgesehen und /issues geleert
+        hat. Der Eintrag liegt in der neuen Datenbank und übersteht Neustarts."""
+        self.issues.note("database", aside.file, error=aside.error, fix=aside.way_back)
+
+    def _asides(self) -> list[str]:
+        """Die beiseitegelegten Datenbankdateien, die /issues noch meldet."""
+        return [it["key"] for it in self.issues.items.values() if it["kind"] == "database"]
 
     def _note_skipped(self, pid: str, skipped: list[tuple[str, str]]) -> None:
         """Gespeicherte Panel-Einstellungen, die nicht (mehr) gelten: Eine spätere Fassung kennt sie nicht oder prüft
@@ -408,8 +420,13 @@ class App:
         """Eine stimmige Kopie der Datenbank nach flightpanel.db.bak, die die der Vornacht ersetzt (Db.backup). Ohne
         sie gäbe es keine: Auf dem Laptop liegt data/ in einem synchronisierten Ordner, und eine beiseitegelegte
         Datenbank kostet so einen Tag statt des Albums. Scheitert sie, steht es im Log und in /issues, das Aufräumen
-        geht weiter. Gibt zurück, was geschah, für /health."""
+        geht weiter. Solange /issues eine beiseitegelegte Datenbank meldet, ruht sie: Die Kopie wäre die der fast
+        leeren neuen Datenbank und ersetzte den Weg zurück. Gibt zurück, was geschah, für /health."""
         name = os.path.basename(self.db.path + COPY)
+        if self._asides():
+            log.warning("Nächtliche Kopie ausgesetzt: %s bleibt, wie sie ist, solange /issues die beiseitegelegte "
+                        "Datenbank meldet", name)
+            return f"übersprungen: {name} bleibt, solange /issues die beiseitegelegte Datenbank meldet"
         try:
             self.db.backup(self.db.path + COPY)
         except Exception as e:                          # Platte voll, Rechte, Datenbank gesperrt ...
@@ -442,6 +459,8 @@ class App:
                 out.append(f"ESP32 holt seit {(now - self.last_frame_fetch) / 60:.0f} min keine Bilder")
         out += [f"Fehler im Code: {it['key']}" for it in self.issues.items.values()
                 if it["kind"] == "exception" and now - it["last"] < OK_EXCEPTION_S]
+        out += [f"Datenbank beiseitegelegt, das Album startete leer: {name} (siehe /issues)"
+                for name in self._asides()]
         return out
 
     def health(self) -> dict:
@@ -482,7 +501,7 @@ class App:
             "cache_entries": len(self.cache),
             "issues": self.issues.report()["counts"],
             "dream": self.last_dream,
-            "database": {"copy": self._copy_time()},
+            "database": {"copy": self._copy_time(), "put_aside": self._asides()},
             "metar": None if not self.metar else {
                 "age_s": self.metar.age_s(now),
                 "last_error": self.metar.last_error,

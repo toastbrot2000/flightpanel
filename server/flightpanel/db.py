@@ -16,8 +16,10 @@ Server und panels.py, die gleichzeitig eine neue Datei öffnen, nichts doppelt.
 
 WAL, damit panels.py schreiben kann, während der Server läuft; geht das nicht
 (Netzlaufwerk), tut es das normale Journal auch. Nur eine Datei, die SQLite für keine
-Datenbank hält oder die beschädigt ist, wird als .broken beiseitegelegt, der Server startet
-dann leer statt gar nicht. Das tut nur der Server (put_aside=True). Werkzeuge, die neben ihm
+Datenbank hält oder die beschädigt ist, wird beiseitegelegt (flightpanel.db.broken-JJJJMMTT-HHMM,
+eine frühere bleibt immer, wie sie ist), der Server startet dann leer statt gar nicht; db.aside
+sagt, wohin und wie man zur nächtlichen Kopie zurückkommt, App macht es in /issues, /ok und
+/health sichtbar. Das tut nur der Server (put_aside=True). Werkzeuge, die neben ihm
 laufen (panels.py, fetch_logos.py), übergeben put_aside=False und brechen mit dem Fehler ab:
 Der Server hat die Datei noch offen und schriebe sonst in die umbenannte weiter. Bei allem
 anderen (gesperrt, Ein-/Ausgabefehler, scheiternde Migration) bleibt die Datei liegen und
@@ -30,6 +32,7 @@ import sqlite3
 import time
 from collections.abc import Callable
 from contextlib import contextmanager, suppress
+from typing import NamedTuple
 
 log = logging.getLogger("db")
 
@@ -38,6 +41,13 @@ DatabaseError = sqlite3.DatabaseError       # für Werkzeuge neben dem Server (p
 DB_FILE = "flightpanel.db"
 SIDE_FILES = ("", "-wal", "-shm", "-journal")     # die Datenbank und was SQLite neben ihr anlegt
 COPY = ".bak"           # die nächtliche Kopie daneben, flightpanel.db.bak (main.App.dream)
+
+
+class Aside(NamedTuple):
+    """Eine kaputte Datenbankdatei, die der Start beiseitegelegt hat (Db.aside)."""
+    file: str           # Name der beiseitegelegten Datei, neben der Datenbank
+    error: str          # was SQLite an ihr bemängelt hat
+    way_back: str       # wie man zum Stand der letzten Nacht zurückkommt, oder dass es keine Kopie gibt
 
 
 def db_path(data_dir: str) -> str:
@@ -115,6 +125,7 @@ PANEL_SELECT = ("SELECT id, name, settings, fw_channel, created, updated, stats_
 class Db:
     def __init__(self, path: str, put_aside: bool = True):
         self.path = path
+        self.aside: Aside | None = None         # gesetzt, wenn dieser Start eine kaputte Datei beiseitegelegt hat
         self._after_commit: list[Callable[[], None]] | None = None     # nur innerhalb von transaction()
         try:
             self.conn = self._connect()
@@ -124,15 +135,28 @@ class Db:
             # scheitern, nichts verschieben. Ein Werkzeug daneben würde dem Server die offene Datei umbenennen.
             if not put_aside or _code(e) not in (sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CORRUPT):
                 raise
-            broken = self.path + ".broken"
-            log.error("%s ist keine lesbare Datenbank (%s): liegt jetzt als %s beiseite, starte leer",
-                      os.path.basename(self.path), e, os.path.basename(broken))
-            for suffix in SIDE_FILES:
-                try:
-                    os.replace(self.path + suffix, broken + suffix)
-                except FileNotFoundError:
-                    pass
+            self.aside = self._put_aside(e)
             self.conn = self._connect()
+
+    def _put_aside(self, e: sqlite3.Error) -> Aside:
+        """Die kaputte Datei samt -wal/-shm unter einem Namen mit Zeit daneben legen. Eine früher beiseitegelegte
+        Datei überschreibt das nie: Gibt es den Namen schon, bekommt dieser eine Nummer. Die nächtliche Kopie bleibt
+        liegen; das Log und Aside.way_back sagen, wie man mit ihr zurückkommt."""
+        name = os.path.basename(self.path)
+        aside = _free_name(f"{self.path}.broken-{_stamp()}")
+        if os.path.exists(self.path + COPY):
+            way_back = (f"Zurück zum Stand der letzten Nacht: Server anhalten, {name + COPY} (die nächtliche Kopie) "
+                        f"als {name} kopieren, dabei {name}-wal und {name}-shm löschen, Server starten")
+        else:
+            way_back = f"Eine nächtliche Kopie ({name + COPY}) gibt es nicht"
+        log.error("%s ist keine lesbare Datenbank (%s): liegt jetzt als %s beiseite, starte leer. %s",
+                  name, e, os.path.basename(aside), way_back)
+        for suffix in SIDE_FILES:
+            try:
+                os.replace(self.path + suffix, aside + suffix)
+            except FileNotFoundError:
+                pass
+        return Aside(os.path.basename(aside), str(e), way_back)
 
     def _connect(self) -> sqlite3.Connection:
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
@@ -284,6 +308,21 @@ def _remove(*paths: str) -> None:
     for path in paths:
         with suppress(OSError):
             os.remove(path)
+
+
+def _stamp() -> str:
+    """Die Zeit im Namen einer beiseitegelegten Datei: JJJJMMTT-HHMM, Ortszeit wie im Log."""
+    return time.strftime("%Y%m%d-%H%M")
+
+
+def _free_name(base: str) -> str:
+    """base, sonst base-2, base-3 ...: der erste Name, den es samt -wal/-shm noch nicht gibt. Eine früher
+    beiseitegelegte Datei ist vielleicht der Rest eines Albums und wird nie überschrieben."""
+    name, n = base, 1
+    while any(os.path.exists(name + suffix) for suffix in SIDE_FILES):
+        n += 1
+        name = f"{base}-{n}"
+    return name
 
 
 def _version(conn: sqlite3.Connection) -> int:

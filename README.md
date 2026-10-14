@@ -129,8 +129,8 @@ Nur quadratische Bildmarken: Schriftzüge sind bei 32 × 32 Pixeln unlesbar, dan
 | `/frame` | Binär für den ESP32: `[1, Helligkeit, 128, 32]` + 12 288 Byte RGB |
 | `/frame.png` | Vorschau; `layout`, `card`, `scale`, `gap=0` |
 | `/display.json` | Display-Modell, dazu `nearby`: alle Flugzeuge im Radius mit Richtung, Höhenwinkel, Sichtbarkeit, Landefolge |
-| `/health` | Quellen, wirksame Anzeige-Einstellungen, Cache, Logos, letzter ESP32-Abruf (`esp32.alive=false`: Panel hängt), `problems`, nächtliches Aufräumen (`dream`), Datenbank (`database.copy`: Zeit der letzten nächtlichen Kopie) |
-| `/ok` | `ok` mit 200, sonst 503 und die Gründe (keine frischen Flugdaten seit 15 min, ESP32 holt seit 10 min nichts, Fehler im Code); für den Docker-Healthcheck und einen Uptime-Monitor |
+| `/health` | Quellen, wirksame Anzeige-Einstellungen, Cache, Logos, letzter ESP32-Abruf (`esp32.alive=false`: Panel hängt), `problems`, nächtliches Aufräumen (`dream`), Datenbank (`database.copy`: Zeit der letzten nächtlichen Kopie, `database.put_aside`: beiseitegelegte kaputte Datenbankdateien) |
+| `/ok` | `ok` mit 200, sonst 503 und die Gründe (keine frischen Flugdaten seit 15 min, ESP32 holt seit 10 min nichts, Fehler im Code, beiseitegelegte Datenbank); für den Docker-Healthcheck und einen Uptime-Monitor |
 | `/issues` | gesammelte Auffälligkeiten (siehe unten), `POST /issues/clear` leert |
 | `/stats` | Tagesstatistik, Sammelalbum, seltene Sichtungen, Landerichtung |
 | `/idle` | Leerlauf-Karten: Stufe, ob sie gerade etwas zu sagen haben, welche dran ist |
@@ -166,10 +166,11 @@ Dann `/health` ansehen: `source.active` sollte `adsblol` sein. Cache, Logos, Sta
 | `exception` | Fehler im Code, mit Datei und Zeile | Bug, Traceback im Container-Log |
 | `setting` | gespeicherte Panel-Einstellung gilt nicht (mehr), etwa nach einem Update; der Server nimmt den Default | den Befehl im Beispiel (`panels unset …`), dann neu setzen |
 | `backup` | nächtliche Kopie der Datenbank gescheitert | Fehler im Beispiel: Platz und Rechte in `data/` prüfen |
+| `database` | die Datenbank war kaputt: Der Server hat sie als `data/flightpanel.db.broken-<Datum>` beiseitegelegt und leer begonnen; `/ok` ist rot, solange der Eintrag steht, und die nächtliche Kopie ruht | der Weg zurück steht im Beispiel (`fix`): `data/flightpanel.db.bak` zurückkopieren; danach `/issues` leeren |
 
 Liegt in `data/flightpanel.db`. Nach dem Durchsehen leeren: `curl -X POST http://server:8080/issues/clear`.
 
-**Dauerbetrieb:** Der Server ist darauf ausgelegt, monatelang ohne Neustart zu laufen. Einmal pro Nacht, zu Beginn der `QUIET_HOURS` (ohne Ruhezeit um 4 Uhr), räumt er auf: `/issues` vergisst Einmaliges (nur an einem Tag gesehen) nach 7 Tagen und alles andere, wenn es 30 Tage nicht mehr aufgetreten ist; Fehler im Code bleiben mindestens 30 Tage. Ist `/issues` trotzdem voll (1000 Einträge), macht der älteste Platz. Der Cache wirft Abgelaufenes bei jedem Speichern weg. Dazu legt er jede Nacht eine stimmige Kopie der Datenbank an, `data/flightpanel.db.bak`, die die der Vornacht ersetzt. Was die letzte Nacht getan hat, steht in `/health` unter `dream`. Das Docker-Log ist auf 15 MB begrenzt (`compose.yml`), alte Images räumt `tools/update.sh` weg. Damit man nicht nachsehen muss: Ein Uptime-Monitor im Homelab (Uptime Kuma o. ä.) auf `http://server:8080/ok` meldet sich nur, wenn wirklich etwas klemmt; `docker ps` zeigt den Container dann als `unhealthy`.
+**Dauerbetrieb:** Der Server ist darauf ausgelegt, monatelang ohne Neustart zu laufen. Einmal pro Nacht, zu Beginn der `QUIET_HOURS` (ohne Ruhezeit um 4 Uhr), räumt er auf: `/issues` vergisst Einmaliges (nur an einem Tag gesehen) nach 7 Tagen und alles andere, wenn es 30 Tage nicht mehr aufgetreten ist; Fehler im Code und eine beiseitegelegte Datenbank bleiben mindestens 30 Tage. Ist `/issues` trotzdem voll (1000 Einträge), macht der älteste Platz. Der Cache wirft Abgelaufenes bei jedem Speichern weg. Dazu legt er jede Nacht eine stimmige Kopie der Datenbank an, `data/flightpanel.db.bak`, die die der Vornacht ersetzt (meldet `/issues` eine beiseitegelegte Datenbank, bleibt sie, wie sie ist: Sie ist der Weg zurück). Was die letzte Nacht getan hat, steht in `/health` unter `dream`. Das Docker-Log ist auf 15 MB begrenzt (`compose.yml`), alte Images räumt `tools/update.sh` weg. Damit man nicht nachsehen muss: Ein Uptime-Monitor im Homelab (Uptime Kuma o. ä.) auf `http://server:8080/ok` meldet sich nur, wenn wirklich etwas klemmt; `docker ps` zeigt den Container dann als `unhealthy`.
 
 ## Hardware und Firmware
 

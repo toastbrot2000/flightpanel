@@ -12,6 +12,8 @@
   exception          Fehler im Code, mit Datei und Zeile
   setting            gespeicherte Panel-Einstellung gilt nicht (mehr), übergangen (main.App)
   backup             die nächtliche Kopie der Datenbank ist gescheitert
+  database           die Datenbank war kaputt und liegt beiseite, der Start war leer (db.Db);
+                     /ok bleibt rot, solange der Eintrag steht, die nächtliche Kopie ruht
 
 Pro Eintrag: wie oft gesehen (je Abruf), an wie vielen Tagen, erstes und letztes
 Mal, bis zu zehn Callsigns, ein Beispiel. Liegt in der Datenbank (Tabelle issues,
@@ -20,8 +22,9 @@ POST /issues/clear fängt von vorn an.
 
 Nachts (main.App.dream) vergisst die Liste von selbst: Einmaliges (nur an einem Tag
 gesehen) nach ONE_OFF_DAYS, alles andere, wenn es FORGET_DAYS nicht mehr aufgetreten
-ist; Fehler im Code (exception) erst dann. Ist sie trotzdem voll, macht der am
-längsten nicht mehr gesehene Eintrag Platz, Neues geht nie verloren."""
+ist; Fehler im Code (exception) und eine beiseitegelegte Datenbank (database) erst
+dann. Ist sie trotzdem voll, macht der am längsten nicht mehr gesehene Eintrag Platz,
+Neues geht nie verloren."""
 
 import json
 import logging
@@ -36,7 +39,7 @@ MAX_KEYS = 1000
 MAX_CALLSIGNS = 10
 ONE_OFF_DAYS = 7        # nur an einem Tag gesehen: nach einer Woche vergessen
 FORGET_DAYS = 30        # alles andere: nach 30 Tagen ohne neues Auftreten
-KEEP_KINDS = {"exception"}   # auch einmalig erst nach FORGET_DAYS
+KEEP_KINDS = {"exception", "database"}   # auch einmalig erst nach FORGET_DAYS
 DAY_S = 24 * 3600
 
 

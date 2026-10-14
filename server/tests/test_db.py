@@ -16,6 +16,7 @@ def test_fresh_file_gets_the_schema_once(tmp_path):
     tables = {r["name"] for r in db.query("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"panels", "identities", "album", "days", "rare", "cache", "issues", "logo_missing", "state"} <= tables
     assert db.one("PRAGMA journal_mode")[0] == "wal"
+    assert db.aside is None                             # nichts war kaputt
     db.close()
     again = Db(path)                                    # zweites Öffnen: nichts doppelt
     assert again.one("PRAGMA user_version")[0] == len(MIGRATIONS)
@@ -30,14 +31,77 @@ def test_state_roundtrip(tmp_path):
     assert db.state_get("course") == {"now": 69.0}
 
 
-def test_broken_file_is_put_aside(tmp_path, caplog):
+@pytest.fixture
+def stamp(monkeypatch):
+    """Die Zeit im Namen einer beiseitegelegten Datei, fest: Sonst hinge der Test an der Minute."""
+    monkeypatch.setattr("flightpanel.db._stamp", lambda: "20261014-0312")
+    return "20261014-0312"
+
+
+def test_broken_file_is_put_aside_under_a_name_with_the_time(tmp_path, caplog, stamp):
+    """Die kaputte Datei liegt danach unverändert unter einem Namen mit Zeit daneben; der Start ist leer, aber
+    arbeitsfähig. db.aside sagt, wohin sie kam und warum."""
     path = tmp_path / "f.db"
-    path.write_text("das ist keine Datenbank, nur Text " * 100)
+    text = "das ist keine Datenbank, nur Text " * 100
+    path.write_text(text)
     with caplog.at_level("ERROR"):
         db = Db(str(path))
-    assert "beiseite" in caplog.text and (tmp_path / "f.db.broken").exists()
+    aside = tmp_path / f"f.db.broken-{stamp}"
+    assert aside.read_text() == text
+    assert db.aside.file == aside.name and "not a database" in db.aside.error
+    assert "beiseite" in caplog.text and aside.name in caplog.text
     db.state_set("k", 1)
     assert db.state_get("k") == 1
+
+
+def test_a_second_incident_does_not_overwrite_the_first_copy(tmp_path, stamp):
+    """Zwei Schäden mit demselben Namen (zwei Starts in einer Minute): Die erste Kopie bleibt, die zweite bekommt
+    eine Nummer. Sonst wäre mit dem zweiten Schaden auch der Rest des ersten Albums weg."""
+    path = tmp_path / "f.db"
+    path.write_text("erster Schaden " * 100)
+    Db(str(path)).close()
+    path.write_text("zweiter Schaden " * 100)
+    db = Db(str(path))
+    assert (tmp_path / f"f.db.broken-{stamp}").read_text().startswith("erster Schaden")
+    assert (tmp_path / f"f.db.broken-{stamp}-2").read_text().startswith("zweiter Schaden")
+    assert db.aside.file == f"f.db.broken-{stamp}-2"
+
+
+def test_the_files_next_to_a_broken_database_go_aside_with_it(tmp_path, stamp):
+    """-wal und -shm gehören zur Datei und ziehen mit um. Das Beiseitelegen allein, ohne SQLite dazwischen: Beim
+    Öffnen räumt SQLite ein ungültiges -wal selbst weg, bevor der Fehler bei Db ankommt."""
+    path = tmp_path / "f.db"
+    for suffix in ("", "-wal", "-shm"):
+        (tmp_path / f"f.db{suffix}").write_text(f"Inhalt{suffix}")
+    db = Db.__new__(Db)                                 # ohne __init__: nur path wird gebraucht
+    db.path = str(path)
+    aside = db._put_aside(Exception("kaputt"))
+    assert aside.file == f"f.db.broken-{stamp}" and aside.error == "kaputt"
+    for suffix in ("", "-wal", "-shm"):
+        assert (tmp_path / f"f.db.broken-{stamp}{suffix}").read_text() == f"Inhalt{suffix}"
+        assert not (tmp_path / f"f.db{suffix}").exists()
+
+
+def test_the_log_names_the_nightly_copy_as_the_way_back(tmp_path, caplog, stamp):
+    """Die nächtliche Kopie (App.dream) ist der Weg zurück: Das Log sagt, welche Datei und was damit zu tun ist.
+    Die Kopie selbst fasst das Beiseitelegen nicht an."""
+    path = tmp_path / "f.db"
+    path.write_text("kaputt " * 100)
+    (tmp_path / "f.db.bak").write_bytes(b"die Kopie der Vornacht")
+    with caplog.at_level("ERROR"):
+        db = Db(str(path))
+    assert "f.db.bak" in caplog.text and "nächtliche Kopie" in caplog.text
+    assert "f.db.bak" in db.aside.way_back and "als f.db kopieren" in db.aside.way_back
+    assert (tmp_path / "f.db.bak").read_bytes() == b"die Kopie der Vornacht"
+
+
+def test_the_log_says_when_there_is_no_nightly_copy_yet(tmp_path, caplog, stamp):
+    path = tmp_path / "f.db"
+    path.write_text("kaputt " * 100)
+    with caplog.at_level("ERROR"):
+        db = Db(str(path))
+    assert "gibt es nicht" in db.aside.way_back and "f.db.bak" in db.aside.way_back
+    assert "gibt es nicht" in caplog.text
 
 
 def test_tools_leave_a_broken_file_alone(tmp_path):
@@ -62,7 +126,7 @@ def test_a_failing_migration_leaves_the_file_alone(tmp_path, monkeypatch):
     monkeypatch.setattr("flightpanel.db.MIGRATIONS", [*MIGRATIONS, broken])
     with pytest.raises(Exception, match="NOT NULL"):
         Db(path)
-    assert not (tmp_path / "f.db.broken").exists()
+    assert not list(tmp_path.glob("f.db.broken*"))
     monkeypatch.undo()
     db = Db(path)
     assert db.panel_get("home")["name"] == "Heim" and db.one("PRAGMA user_version")[0] == len(MIGRATIONS)

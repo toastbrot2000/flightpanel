@@ -140,6 +140,41 @@ def test_a_stored_value_that_no_longer_parses_is_skipped_and_the_rest_applies(tm
     asyncio.run(run())
 
 
+def test_a_database_put_aside_at_the_start_shows_in_issues_ok_and_health(tmp_path, caplog):
+    """Eine kaputte Datenbank beiseitezulegen heißt, leer zu starten: Ohne Hinweis merkt der Besitzer es erst, wenn das
+    Album fehlt. Darum steht es in /issues, /ok bleibt rot, bis dort geleert ist, und /health nennt die Datei. Der
+    Eintrag liegt in der neuen Datenbank und übersteht einen Neustart."""
+    (tmp_path / "flightpanel.db").write_text("das ist keine Datenbank " * 100)
+    (tmp_path / "flightpanel.db.bak").write_bytes(b"Kopie der Vornacht")
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False, quiet_hours=(0, 0))
+
+    async def run():
+        with caplog.at_level("ERROR"):
+            app = App(cfg, env={})
+        try:
+            (aside,) = tmp_path.glob("flightpanel.db.broken-*")
+            assert "flightpanel.db.bak" in caplog.text                       # der Weg zurück steht im Log
+            entry = app.issues.items[f"database:{aside.name}"]
+            assert "flightpanel.db.bak" in entry["example"]["fix"] and entry["example"]["error"]
+            now = time.time()
+            reason = f"Datenbank beiseitegelegt, das Album startete leer: {aside.name} (siehe /issues)"
+            assert app.problems(now) == [reason]
+            assert app.health()["database"]["put_aside"] == [aside.name]
+            app.save()
+            again = App(cfg, env={})                                          # Neustart: die Meldung bleibt
+            try:
+                assert again.problems(now) == [reason]
+                assert again.health()["database"]["put_aside"] == [aside.name]
+                again.issues.clear()                                          # nachgesehen und geleert
+                assert again.problems(now) == [] and again.health()["database"]["put_aside"] == []
+            finally:
+                await again.session.close()
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
 def test_save_writes_everything_and_the_stores_reload_it(tmp_path):
     cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
 
