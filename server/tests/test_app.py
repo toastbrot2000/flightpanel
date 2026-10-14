@@ -37,14 +37,14 @@ def test_old_json_files_are_taken_over_once(tmp_path):
         app = App(cfg, env={})
         try:
             assert app.cache.get("route:EZY1") == {"origin": "LGW"}
-            assert "exception:x" in app.issues.items and "easyJet" in app.stats.dex and app.stats.course == 249
+            assert "exception:x" in app.issues.items and "easyJet" in app.stats.dex and app.airfield.course == 249
             assert app.logos.missing() == ["FX"] and app.iss.tle is not None
-            assert app.model.landing_course == 249          # Startwert der Anzeige ist schon die übernommene Piste
+            assert app.airfield.landing_course == 249  # Startwert des ersten Abrufs ist schon die übernommene Piste
             for name in ("cache.json", "issues.json", "stats.json", "tle.txt", "logos/.missing.json"):
                 assert not (tmp_path / name).exists() and (tmp_path / f"{name}.imported").exists(), name
             again = App(cfg, env={})                      # zweiter Start: alles aus der Datenbank
             assert "easyJet" in again.stats.dex and again.cache.get("route:EZY1") and again.iss.tle == app.iss.tle
-            assert again.issues.since == app.issues.since and again.model.landing_course == 249
+            assert again.issues.since == app.issues.since and again.airfield.landing_course == 249
             await again.session.close()
         finally:
             await app.session.close()

@@ -1,4 +1,4 @@
-"""Statistik: Tag, Sammelalbum, Flaute, seltene Flugzeuge, Landerichtung, Datenbank."""
+"""Statistik: Tag, Sammelalbum, Flaute, seltene Flugzeuge, Datenbank."""
 
 import time
 from datetime import datetime, timedelta
@@ -92,20 +92,6 @@ def test_rare_sightings(tmp_path):
     assert st.rare_now(t + 600) == []
 
 
-def test_course_needs_three_polls_to_flip(tmp_path):
-    st = mk(tmp_path)
-    t = ts(2026, 10, 10, 12, 0)
-    st.observe([], DisplayModel(landing_course=249, course_votes=2), t)
-    assert st.course == 249 and st.course_since == t
-    for i in (1, 2):
-        st.observe([], DisplayModel(landing_course=69, course_votes=1), t + i * 20)
-        assert st.course == 249
-    st.observe([], DisplayModel(landing_course=69, course_votes=1), t + 60)
-    assert st.course == 69 and st.prev_course == 249 and st.course_since == t + 60
-    st.observe([], DisplayModel(landing_course=249, course_votes=0), t + 80)   # ohne Stimmen: nichts
-    assert st.course == 69
-
-
 def test_extras_join_their_brand_once_listed(tmp_path):
     """Ein Exot, der inzwischen in airlines.json steht, zählt beim nächsten Start zur
     Marke statt doppelt (CXI: adsbdb sagte "Shanxi Airlines", es ist Corendon)."""
@@ -139,11 +125,11 @@ def test_save_load_roundtrip_and_broken_file(tmp_path):
     st.save()
     again = mk(tmp_path, db)
     assert again.today() == st.today() and again.dex.keys() == st.dex.keys() and again.day["shown"] == {"v1"}
-    assert again.course == 249 and "r" in again.rare and again.since == st.since
+    assert "r" in again.rare and again.since == st.since
     db.close()
     (tmp_path / "flightpanel.db").write_text("{kaputt", encoding="utf-8")
     broken = mk(tmp_path)                                            # kaputte Datei: beiseite, leer
-    assert broken.dex == {} and broken.course is None
+    assert broken.dex == {} and broken.rare == {}
 
 
 def test_high_visits_come_from_airlines_json():
@@ -197,7 +183,7 @@ def test_old_stats_json_is_taken_over(tmp_path):
     st.load_legacy(raw)
     st.save()
     again = mk(tmp_path, db)
-    assert again.since == t - 86400 and "easyJet" in again.dex and again.course == 249 and again.prev_course == 69
+    assert again.since == t - 86400 and "easyJet" in again.dex
     assert again.history["2026-10-09"]["aircraft"] == 5 and "r1" in again.rare and again.last_in_view == t - 60
     assert again.day["date"] == today and again.day["aircraft"] == {"a", "b"} and again.today()["shown"] == 1
     old = mk(tmp_path / "old", make_db(tmp_path / "old"))             # Server lag Tage still: alles History
@@ -243,8 +229,6 @@ def test_album_and_day_survive_the_database_unchanged(tmp_path):
     assert again.dex["easyJet"]["last"] == ts(2026, 10, 10, 12, 1)
     assert again.day == st.day and again.history == st.history and again.rare == st.rare
     assert (again.since, again.last_obs, again.last_in_view) == (st.since, st.last_obs, st.last_in_view)
-    assert again.course_seen == ts(2026, 10, 10, 12, 1) != again.course_since
-    assert (again.course, again.prev_course, again.course_since) == (st.course, st.prev_course, st.course_since)
 
 
 def test_rare_sightings_expire_in_the_database_too(tmp_path):
@@ -394,7 +378,7 @@ def test_old_stats_json_with_odd_entries_keeps_the_good_ones(tmp_path, caplog):
     assert again.report()["dex"]["seen"] == 1                           # und /stats bleibt lesbar
 
 
-def test_old_stats_json_with_odd_rare_course_and_numbers_keeps_the_good_ones(tmp_path, caplog):
+def test_old_stats_json_with_odd_rare_and_numbers_keeps_the_good_ones(tmp_path, caplog):
     t = time.time()
     st = mk(tmp_path)
     since = st.since
@@ -403,9 +387,9 @@ def test_old_stats_json_with_odd_rare_course_and_numbers_keeps_the_good_ones(tmp
            "course": {"now": "249", "prev": 69}}
     with caplog.at_level("WARNING"):
         st.load_legacy(raw)
-    assert "4 Einträge" in caplog.text                                  # since, r2, r3, course
+    assert "3 Einträge" in caplog.text                                  # since, r2, r3
     assert st.since == since and st.last_obs == 0.0 and st.last_in_view == t - 60
-    assert set(st.rare) == {"r1"} and st.course is None and st.prev_course is None
+    assert set(st.rare) == {"r1"}
 
 
 @pytest.mark.parametrize("raw", [[], "Text", {"dex": ["kaputt"], "since": 5}, {"dex": None, "since": 5}],

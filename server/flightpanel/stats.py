@@ -8,12 +8,10 @@
               Hours, Ausfall) startet die Uhr neu: Nachts ist keine Flaute.
   Selten      Typen aus data/rare.json (A380, Antonov, Beluga), Regierung und
               Militär (data.load_rare), solange sie in der Nähe sind
-  Piste       Landerichtung und seit wann sie gilt, für die Pistenkarte und als
-              Startwert nach einem Neustart
 
-Liegt je Panel in der Datenbank (db.py: Tabellen album, days, rare, Spalten in panels;
-die Landerichtung in state), GET /stats zeigt alles. main.App.save() schreibt, was
-sich geändert hat."""
+Liegt je Panel in der Datenbank (db.py: Tabellen album, days, rare, Spalten in panels),
+GET /stats zeigt alles; die Landerichtung führt airfield.py für alle Panels.
+main.App.save() schreibt, was sich geändert hat."""
 
 import json
 import logging
@@ -24,7 +22,6 @@ from .airlines import AIRLINER_CATEGORIES, callsign_airline
 from .config import Config
 from .data import rare_match
 from .db import Db
-from .geo import angle_diff
 from .model import DisplayModel, State
 from .storage import is_number
 from .view import sighting
@@ -36,7 +33,6 @@ NEW_GRACE_S = 6 * 3600       # so lange nach dem ersten Start keine NEU!-Fanfare
 HISTORY_DAYS = 60
 RARE_KEEP_S = 24 * 3600      # Sichtungen so lange in /stats
 RARE_LOG = 30
-COURSE_CONFIRM = 3           # so viele Abrufe in Folge, bis eine neue Landerichtung gilt
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -80,11 +76,6 @@ def _usable_rare(_key, r) -> bool:
     return isinstance(r, dict) and is_number(r.get("first")) and is_number(r.get("last"))
 
 
-def _usable_course(c: dict) -> bool:
-    return (all(c.get(k) is None or is_number(c[k]) for k in ("now", "prev"))
-            and all(is_number(c.get(k, 0)) for k in ("since", "seen")))
-
-
 def _legacy_part(raw: dict, name: str, usable) -> tuple[dict, int]:
     """Die brauchbaren Einträge des Abschnitts name einer alten Datei und wie viele wegfielen. Fehlt der Abschnitt,
     ist er leer; ist er kein Objekt, zählt er als ein weggefallener Eintrag."""
@@ -124,11 +115,6 @@ class Stats:
         self.last_obs = 0.0
         self.last_in_view = 0.0
         self.rare: dict[str, dict] = {}
-        self.course: float | None = None
-        self.prev_course: float | None = None
-        self.course_since = 0.0
-        self.course_seen = 0.0
-        self._pending: tuple[float, int] | None = None
         self._finished: dict[str, dict] = {}     # abgeschlossene Tage, noch nicht geschrieben
         self._gone_days: set[str] = set()        # aus der History gefallen
         self._gone_brands: set[str] = set()      # Exoten, die zur Marke gezogen sind
@@ -160,16 +146,13 @@ class Stats:
                         for r in days if r is not cur}
         self.rare = {r["icao24"]: json.loads(r["data"])
                      for r in self.db.query("SELECT icao24, data FROM rare WHERE panel_id = ?", (pid,))}
-        c = self.db.state_get("course") or {}
-        self.course, self.prev_course = c.get("now"), c.get("prev")
-        self.course_since, self.course_seen = c.get("since", 0.0), c.get("seen", 0.0)
 
     def load_legacy(self, raw: dict) -> None:
         """Alte stats.json übernehmen (main.absorb_legacy, einmalig). Einzelne Einträge, die so nicht zu gebrauchen
         sind (von Hand verändert: kein Objekt, ohne Zeitpunkt oder Datum, Zahl als Text), fallen weg, ein Abschnitt, der
         kein Objekt ist, ganz; eine Warnung nennt, wie viele. Ist die Datei im Ganzen unbrauchbar (kein Objekt, dex kein
         Objekt), wirft sie ValueError, bevor etwas übernommen ist: absorb_legacy lässt sie dann liegen, statt eine
-        halbe zu übernehmen und umzubenennen."""
+        halbe zu übernehmen und umzubenennen. Die Landerichtung darin übernimmt airfield.Airfield.load_legacy."""
         if not isinstance(raw, dict) or not isinstance(raw.get("dex", {}), dict):
             raise ValueError("stats.json ist kein Objekt oder dex darin keins")
         dex, skipped = _legacy_part(raw, "dex", _usable_album)
@@ -177,13 +160,10 @@ class Stats:
         skipped += bad
         rare, bad = _legacy_part(raw, "rare", _usable_rare)
         skipped += bad
-        d, c = raw.get("day"), raw.get("course")
+        d = raw.get("day")
         day = _legacy_day(d) if isinstance(d, dict) else None
-        course = c if isinstance(c, dict) and _usable_course(c) else None
         numbers = {k: raw[k] for k in ("since", "last_obs", "last_in_view") if is_number(raw.get(k))}
         if d and day is None:                           # {} oder fehlend: kein laufender Tag in der Datei
-            skipped += 1
-        if c is not None and course is None:
             skipped += 1
         skipped += sum(1 for k in ("since", "last_obs", "last_in_view") if raw.get(k) is not None) - len(numbers)
 
@@ -200,10 +180,6 @@ class Stats:
         self.rare.update(rare)
         for attr, value in numbers.items():
             setattr(self, attr, value)
-        if course is not None:
-            self.course, self.prev_course = course.get("now", self.course), course.get("prev", self.prev_course)
-            self.course_since = course.get("since", self.course_since)
-            self.course_seen = course.get("seen", self.course_seen)
         if skipped:
             log.warning("stats.json: %d Einträge unbrauchbar, übergangen", skipped)
         self.dirty = True
@@ -263,8 +239,6 @@ class Stats:
         self.db.execute("DELETE FROM rare WHERE panel_id = ?", (pid,))
         self.db.executemany("INSERT INTO rare (panel_id, icao24, data) VALUES (?, ?, ?)",
                             [(pid, k, json.dumps(v, ensure_ascii=False)) for k, v in self.rare.items()])
-        self.db.state_set("course", {"now": self.course, "prev": self.prev_course, "since": self.course_since,
-                                     "seen": self.course_seen})
         # Zwischen diesem save() und dem COMMIT ändert sich nichts: App.save() ist synchron (kein await),
         # observe() kommt nicht dazwischen. Darum darf dirty danach aus.
         self.db.after_commit(lambda: self._saved(finished, gone_days, gone_brands))
@@ -328,7 +302,6 @@ class Stats:
         for f in model.flights:
             if f.visible:
                 self.day["shown"].add(f.icao24)
-        self._course(model, now)
         self.rare = {k: v for k, v in self.rare.items() if now - v["last"] < RARE_KEEP_S}
         if len(self.rare) > RARE_LOG:
             keep = sorted(self.rare.items(), key=lambda kv: -kv[1]["last"])[:RARE_LOG]
@@ -366,24 +339,6 @@ class Stats:
         e.update(last=now, callsign=s.callsign or s.icao24.upper(), type=s.actype, airline=airline,
                  dist_km=round(v.dist_km), az=round(v.az), elev=round(v.elev, 1),
                  alt_m=int(alt) if alt is not None else None)
-
-    def _course(self, model: DisplayModel, now: float) -> None:
-        c = model.landing_course
-        if c is None or not model.course_votes:
-            return
-        self.course_seen = now
-        if self.course is None:
-            self.course, self.course_since = c, now
-            return
-        if angle_diff(c, self.course) < 90:
-            self._pending = None
-            return
-        n = self._pending[1] + 1 if self._pending and angle_diff(self._pending[0], c) < 90 else 1
-        self._pending = (c, n)
-        if n >= COURSE_CONFIRM:
-            self.prev_course, self.course, self.course_since = self.course, c, now
-            self._pending = None
-            log.info("Landerichtung gewechselt: %03.0f°", c)
 
     # ------------------------------------------------------------ Abfragen --
     def today(self) -> dict:
@@ -430,7 +385,4 @@ class Stats:
                         "missing": sorted({n["name"] for n in self.names.values() if n["airline"] and n["name"]}
                                           - {e["name"] for e in self.dex.values() if e["known"]})},
                 "rare": sorted(self.rare.values(), key=lambda e: -e["last"]),
-                "course": {"now": self.course, "prev": self.prev_course,
-                           "since": time.strftime("%Y-%m-%d %H:%M", time.localtime(self.course_since))
-                           if self.course_since else None},
                 "history": self.history}

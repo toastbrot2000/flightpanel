@@ -56,6 +56,7 @@ class Ctx:
     model: Any                                    # model.DisplayModel
     now: float
     stats: Any = None                             # stats.Stats
+    airfield: Any = None                          # airfield.Airfield: Landerichtung, für alle Panels gleich
     metar: Any = None                             # metar.MetarSource
     astro: Any = None                             # astro.Iss
     logos: Any = None                             # logos.LogoStore

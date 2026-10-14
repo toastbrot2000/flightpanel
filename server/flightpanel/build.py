@@ -51,7 +51,9 @@ async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, d
     horizon_s: Zeit bis zum nächsten Abruf, für die Sichtfeld-Vorschau.
     prev_course: Landerichtung vom letzten Abruf, falls gerade niemand landet.
     issues: sammelt Auffälligkeiten. adsbim, origins: weitere Routenquellen, optional.
-    recent: wer zuletzt hier landete oder startete, über Abrufe hinweg (airport.Recent).
+    recent: wer zuletzt hier landete oder startete, über Abrufe hinweg (airport.Recent). Nachgeführt wird es
+    danach, einmal je Abruf (airfield.Airfield.observe): Bauen mehrere Panels im selben Abruf, sehen alle denselben
+    Stand.
     rare: seltene Typen und Betreiber (data.load_rare), für Flight.rare."""
     b = _Builder(cfg, adsb, names, issues, origins, recent, rare)
     if adsbim is not None:
@@ -82,8 +84,6 @@ async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, d
                          arrivals=_arrivals(states, b.seq, b.etas, routes, in_view_ids, names),
                          landing_course=course, course_votes=votes, alert=find_alert(cfg, states, names))
     await b.upcoming(model, cands, preds, {f.icao24 for f in flights})
-    if recent is not None:
-        recent.update(model.arrivals, model.departures, model.generated_at)
     return model
 
 

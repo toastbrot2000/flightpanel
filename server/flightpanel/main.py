@@ -24,8 +24,8 @@ from . import USER_AGENT
 from .adsbdb import AdsbDb
 from .adsbim import AdsbIm
 from .adsblol import AdsbLol, Paused
+from .airfield import Airfield
 from .airlines import short_airline
-from .airport import Recent
 from .astro import Iss
 from .build import build_model
 from .cache import Cache
@@ -51,7 +51,6 @@ log = logging.getLogger("main")
 SAVE_EVERY_S = 60           # Geändertes in die Datenbank; auch die Nachtaufräumung hängt daran
 METAR_EVERY_S = 20 * 60
 ISS_EVERY_S = 10 * 60       # Bahndaten einmal am Tag, Überflüge stündlich (astro.py)
-LANDED_S = 90               # Landezeit darunter zählt als Bewegung am Platz
 DREAM_FALLBACK_MIN = 4 * 60  # ohne QUIET_HOURS wird um 4 Uhr aufgeräumt
 OK_STALE_S = 15 * 60        # GET /ok: so lange ohne frische Flugdaten ist ein Problem
 OK_ESP32_S = 10 * 60        # ... so lange ohne Abruf des ESP32, wenn er schon da war
@@ -67,15 +66,16 @@ def dream_due(cfg: Config, last_day: str | None, now: float) -> bool:
             and t.tm_hour * 60 + t.tm_min >= (start if start != end else DREAM_FALLBACK_MIN))
 
 
-def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, logos: LogoStore,
+def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, airfield: Airfield, logos: LogoStore,
                   iss: Iss | None) -> list[str]:
-    """Zustand aus den JSON-Dateien früherer Fassungen (bis Oktober 2026) einmalig übernehmen.
+    """Zustand aus den JSON-Dateien früherer Fassungen (bis Oktober 2026) einmalig übernehmen. Aus stats.json nimmt
+    Stats Album und Statistik, Airfield die Landerichtung.
     Gibt die übernommenen Dateien zurück; App benennt sie in *.imported um, sobald das
     Übernommene gespeichert ist. Eine unlesbare oder unbrauchbare Datei bleibt, wie sie ist,
     und steht im Log; der Start geht weiter."""
     taken = []
-    for name, store in (("cache.json", cache), ("issues.json", issues), ("stats.json", stats),
-                        (os.path.join("logos", ".missing.json"), logos)):
+    for name, stores in (("cache.json", (cache,)), ("issues.json", (issues,)), ("stats.json", (stats, airfield)),
+                         (os.path.join("logos", ".missing.json"), (logos,))):
         path = os.path.join(data_dir, name)
         if not os.path.exists(path):
             continue
@@ -84,7 +84,8 @@ def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, log
             log.warning("%s nicht übernommen, bleibt liegen", name)
             continue
         try:
-            store.load_legacy(raw)
+            for store in stores:                        # Stats zuerst: Wirft es, nimmt auch Airfield nichts
+                store.load_legacy(raw)
         except Exception as e:                          # von Hand verändert: lieber ohne als gar nicht starten
             log.warning("%s nicht übernommen (%s), bleibt liegen", name, e)
             continue
@@ -178,11 +179,12 @@ class App:
         # Anzeige
         self.logos = make_logo_store(cfg, self.session, self.db)
         self.rare = load_rare(data, self.names)
+        self.airfield = Airfield(self.db)
         self.stats = Stats(self.db, cfg.lan_panel, cfg, self.names, self.rare)
 
         # Alte JSON-Dateien einmalig übernehmen. Das muss vor dem Modell geschehen: Dessen Landerichtung
-        # zu Beginn kommt aus der Statistik.
-        taken = absorb_legacy(data, self.cache, self.issues, self.stats, self.logos, self.iss)
+        # zu Beginn kommt aus airfield (aus stats.json übernommen).
+        taken = absorb_legacy(data, self.cache, self.issues, self.stats, self.airfield, self.logos, self.iss)
         if taken:
             # Erst gespeichert, dann umbenannt: ein Absturz dazwischen verliert nichts.
             self.save()
@@ -193,10 +195,10 @@ class App:
                     log.warning("%s lässt sich nicht in *.imported umbenennen (%s): von Hand umbenennen, sonst "
                                 "übernimmt der nächste Start sie noch einmal", os.path.relpath(path, data), e)
 
-        self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=self.metar, astro=self.iss, logos=self.logos,
-                               names=self.names)
+        self.idle = IdleScreen(cfg, CARDS, stats=self.stats, airfield=self.airfield, metar=self.metar, astro=self.iss,
+                               logos=self.logos, names=self.names)
         self.renderer = Renderer(cfg, self.logos, idle=self.idle)
-        self.model = DisplayModel(empty=True, source="startup", landing_course=self.stats.course)
+        self.model = DisplayModel(empty=True, source="startup", landing_course=self.airfield.course)
 
         # Zustand
         self.started = time.time()
@@ -204,8 +206,6 @@ class App:
         self.adsblol_failing = False
         self.opensky_last_try = 0.0
         self.last_model_ok = 0.0
-        self.last_airport_move = 0.0            # letzter Start oder letzte Landung am Platz
-        self.recent = Recent()                  # wer zuletzt hier landete oder startete
         self.last_frame_fetch = 0.0             # setzt web.py bei jedem /frame
         self.frame_count = 0
         self.counters = {"polls": 0, "ok": 0, "adsblol": 0, "opensky": 0}
@@ -323,17 +323,17 @@ class App:
         """Ein Abruf: Flugzeuge holen, Modell bauen, Statistik nachführen."""
         if self.cfg.mock:
             self.model = mock_model(self.cfg, seed=int(t0 // 20))
+            self.airfield.observe(self.model, t0)
             self.stats.observe([], self.model, t0)
         else:
             states = await self.fetch_states()
             self.model = await build_model(self.cfg, states, self.adsb, self.names,
-                                           horizon_s=self.refresh_period(), prev_course=self.model.landing_course,
+                                           horizon_s=self.refresh_period(), prev_course=self.airfield.landing_course,
                                            issues=self.issues, adsbim=self.adsbim, origins=self.origins,
-                                           source=self.active_source, recent=self.recent, rare=self.rare)
+                                           source=self.active_source, recent=self.airfield.recent, rare=self.rare)
+            self.airfield.observe(self.model, t0)       # wer landet und startet, Landerichtung: einmal je Abruf
             self.counters[self.active_source] += 1
-            if self.model.departures or any(a["eta_s"] <= LANDED_S for a in self.model.arrivals):
-                self.last_airport_move = t0
-            self.model.last_airport_move = self.last_airport_move
+            self.model.last_airport_move = self.airfield.last_move
             await self._observe(states, t0)
             log.info("%s: %d empfangen, %d im Radius, %d im Sichtfeld, angezeigt: %s. Nächster Abruf in %d s",
                      self.active_source, len(states), len(self.model.nearby),
@@ -425,6 +425,7 @@ class App:
         with self.db.transaction():
             self.cache.save()
             self.issues.save()
+            self.airfield.save()
             self.stats.save()
 
     def dream(self, now: float) -> None:

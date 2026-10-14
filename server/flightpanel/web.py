@@ -146,7 +146,8 @@ class _Handlers:
         return web.json_response(self.panel.issues_report())
 
     async def stats(self, req: web.Request) -> web.Response:
-        return _pretty(self.panel.stats.report())
+        p = self.panel
+        return _pretty({**p.stats.report(), "course": p.airfield.report()})     # Landerichtung: für alle Panels gleich
 
     async def idle(self, req: web.Request) -> web.Response:
         return _pretty(self.panel.idle.status(self.panel.model, time.time()))

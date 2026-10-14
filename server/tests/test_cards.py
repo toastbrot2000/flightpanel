@@ -7,6 +7,7 @@ import pytest
 from PIL import Image
 
 from conftest import NAMES, make_cfg, make_db, state
+from flightpanel.airfield import Airfield
 from flightpanel.astro import Pass, sun_day
 from flightpanel.cards import CARDS, album, fun, runway, sky, traffic
 from flightpanel.colors import GOLD
@@ -102,27 +103,27 @@ def test_weather_headline_fits_for_every_ceiling():
         assert wide.crop((128, 0, 256, 32)).getbbox() is None, f"Wolken auf {m.ceiling_m} m"
 
 
-def _stats(tmp_path, course=249, since_min=60, seen_min=5, prev=None, now=None):
-    st = Stats(make_db(tmp_path), "home", make_cfg(), NAMES, {"types": {}, "callsigns": {}})
-    st.course, st.prev_course = course, prev
-    st.course_since = now - since_min * 60
-    st.course_seen = now - seen_min * 60
-    return st
+def _airfield(tmp_path, course=249, since_min=60, seen_min=5, prev=None, now=None):
+    af = Airfield(make_db(tmp_path))
+    af.course, af.prev_course = course, prev
+    af.course_since = now - since_min * 60
+    af.course_seen = now - seen_min * 60
+    return af
 
 
 def test_runway_card_only_when_stable(tmp_path):
     t = ts(2026, 10, 10, 15, 0)
     stamp = datetime.fromtimestamp(t, UTC).strftime("%d%H%MZ")
-    h = runway.runway_cond(ctx(t, stats=_stats(tmp_path, now=t)))
+    h = runway.runway_cond(ctx(t, airfield=_airfield(tmp_path, now=t)))
     assert h.data == {"course": 249, "wind": "Westwind"}
-    assert runway.runway_cond(ctx(t, stats=_stats(tmp_path, since_min=10, now=t))) is None      # frisch gewechselt
-    assert runway.runway_cond(ctx(t, stats=_stats(tmp_path, seen_min=300, now=t))) is None      # lange kein Verkehr
+    assert runway.runway_cond(ctx(t, airfield=_airfield(tmp_path, since_min=10, now=t))) is None   # frisch gewechselt
+    assert runway.runway_cond(ctx(t, airfield=_airfield(tmp_path, seen_min=300, now=t))) is None   # lange kein Verkehr
     head = metar_src(f"EDDB {stamp} 25012KT CAVOK 13/05 Q1007", t)
-    assert runway.runway_cond(ctx(t, stats=_stats(tmp_path, now=t), metar=head)).data["wind"] == "Wind W 12 kt"
+    assert runway.runway_cond(ctx(t, airfield=_airfield(tmp_path, now=t), metar=head)).data["wind"] == "Wind W 12 kt"
     tail = metar_src(f"EDDB {stamp} 07012KT CAVOK 13/05 Q1007", t)
-    assert runway.runway_cond(ctx(t, stats=_stats(tmp_path, now=t), metar=tail)) is None        # Rückenwind
-    assert runway.runway_change_cond(ctx(t, stats=_stats(tmp_path, since_min=10, prev=69, now=t))) is not None
-    assert runway.runway_change_cond(ctx(t, stats=_stats(tmp_path, since_min=90, prev=69, now=t))) is None
+    assert runway.runway_cond(ctx(t, airfield=_airfield(tmp_path, now=t), metar=tail)) is None     # Rückenwind
+    assert runway.runway_change_cond(ctx(t, airfield=_airfield(tmp_path, since_min=10, prev=69, now=t))) is not None
+    assert runway.runway_change_cond(ctx(t, airfield=_airfield(tmp_path, since_min=90, prev=69, now=t))) is None
 
 
 def test_view_line_texts():

@@ -99,7 +99,9 @@ def test_returning_plane_keeps_its_direction_through_level_flight_and_landing():
 
     def poll(**kw):
         s = state(icao="3c56ec", cs="EWG9SK", **kw)
-        return asyncio.run(build_model(cfg, [s], adsb, NAMES, recent=recent))
+        m = asyncio.run(build_model(cfg, [s], adsb, NAMES, recent=recent))
+        recent.update(m.arrivals, m.departures, m.generated_at)     # einmal je Abruf, wie airfield.Airfield.observe
+        return m
 
     f = poll(lat=lat, lon=lon, alt=800, track=249, vrate=-4).flights[0]          # sinkt im Endanflug
     assert f.status == "ARR" and f.seq == 1 and (f.origin, f.dest) == ("", "")    # "?→BER" statt "BER→NCE"
@@ -111,6 +113,16 @@ def test_returning_plane_keeps_its_direction_through_level_flight_and_landing():
     # ohne Gedächtnis: wer steigt, fliegt ab, auch mit derselben Route
     assert not returning(cfg, state(cs="EWG9SK", lat=lat, lon=lon, alt=800, vrate=8), OUTBOUND)
     assert returning(cfg, state(cs="EWG9SK", lat=lat, lon=lon, alt=800, vrate=0), OUTBOUND, hint="arr")
+
+
+def test_build_model_leaves_recent_to_the_caller():
+    """Bauen mehrere Panels im selben Abruf ihr Modell, sehen alle denselben Stand; nachgeführt wird danach einmal
+    (airfield.Airfield.observe). Sonst sähe das zweite Panel schon, was das erste eingetragen hat."""
+    recent = Recent()
+    lat, lon = destination(BER[0], BER[1], 69, 15)
+    s = state(icao="3c56ec", cs="EWG9SK", lat=lat, lon=lon, alt=800, track=249, vrate=-4)
+    m = asyncio.run(build_model(make_cfg(), [s], FakeAdsb({"EWG9SK": OUTBOUND}), NAMES, recent=recent))
+    assert m.arrivals and recent.hint(s) is None
 
 
 def test_calibration_aircraft_is_no_arrival_and_unknown_operators_are_noted(tmp_path):

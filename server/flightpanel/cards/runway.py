@@ -49,7 +49,7 @@ def _view_line(ctx: Ctx, course: float) -> tuple[str, tuple]:
 
 # ---------------------------------------------------------- Landerichtung --
 def runway_cond(ctx: Ctx):
-    st = ctx.stats
+    st = ctx.airfield
     if st is None or st.course is None or not st.course_seen:
         return None
     if ctx.now - st.course_since < RUNWAY_STABLE_S or ctx.now - st.course_seen > RUNWAY_SEEN_S:
@@ -73,7 +73,7 @@ def runway_draw(img, ctx, d, t_in, f):
 
 
 def runway_change_cond(ctx: Ctx):
-    st = ctx.stats
+    st = ctx.airfield
     if st is None or st.course is None or st.prev_course is None:
         return None
     age = ctx.now - st.course_since
