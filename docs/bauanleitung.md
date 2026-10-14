@@ -227,6 +227,7 @@ Das Testbild läuft nur nach dem Einschalten (Netzteil an). Nach einem Neustart 
 | Schrift gespiegelt oder auf dem Kopf | Panels drehen, nicht die Software |
 | Bunter Schnee, Flackern | Dupont-Kabel prüfen (CLK, LAT, OE, GND), dann `HUB75_CLKPHASE` |
 | Nur obere oder untere Hälfte jedes Panels | R2/G2/B2 oder R1/G1/B1 nicht gesteckt |
+| Rechtes Panel blau statt grün, Schrift rosa statt orange | Panel mit Farbfolge R-B-G (kommt je nach Charge vor): am ESP32 G1 und B1 tauschen (Kabel 2 an G27, Kabel 3 an G26), ebenso G2 und B2 (Kabel 6 an G13, Kabel 7 an G12) |
 
 **Prüfstand beim ersten Einschalten** (ESP32 per USB, `pio device monitor`, 115200 Baud). Die Konsole nennt mit `Reset-Grund N`, warum der ESP32 gestartet ist: 1 Einschalten, 3 Software-Neustart (10-Minuten-Regel, OTA), 4 Absturz, 5 bis 7 Watchdog (6 = Task-Watchdog), 9 Unterspannung.
 
