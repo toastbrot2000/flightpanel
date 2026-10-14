@@ -56,6 +56,7 @@ def runway_name(course: float) -> str:
 
 
 _PATH_CACHE: dict[tuple, list[tuple[float, float, float]]] = {}
+PATH_CACHE_MAX = 256    # jede Änderung am Sichtfeld gibt neue Schlüssel (panels set, Einstellungsseite)
 
 
 def path_in_view(cfg: Config, course: float, kind: str) -> list[tuple[float, float, float]]:
@@ -78,6 +79,8 @@ def path_in_view(cfg: Config, course: float, kind: str) -> list[tuple[float, flo
         if in_view(cfg, v):
             out.append((d, v.az, v.elev))
         d += 0.5
+    if len(_PATH_CACHE) >= PATH_CACHE_MAX:
+        _PATH_CACHE.clear()
     _PATH_CACHE[key] = out
     return out
 
@@ -142,8 +145,8 @@ class Recent:
 
     Ein einzelner Abruf verrät die Richtung nicht immer: am Boden, im
     Horizontalflug. Bei Callsigns, die hin und zurück fliegen (EWG9SK BER-NCE-BER),
-    entscheidet sie aber, welche Strecke stimmt. build_model fragt hint() und
-    trägt am Ende Landefolge und Abflüge nach (update)."""
+    entscheidet sie aber, welche Strecke stimmt. build_model fragt nur hint();
+    nachgeführt wird (update) einmal je Abruf von airfield.Airfield.observe."""
 
     KEEP_S = 15 * 60        # so lange nach dem letzten Mal in Landefolge oder Abflügen
 

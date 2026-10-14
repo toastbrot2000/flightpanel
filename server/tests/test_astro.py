@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime
 
 from conftest import FIXTURES, make_cfg
-from flightpanel.astro import TLE_URLS, Iss, parse_tle, sun_crossing, sun_position, sun_radec, tle_epoch
+from flightpanel.astro import TLE_URLS, Iss, Orbit, parse_tle, sun_crossing, sun_day, sun_position, sun_radec, tle_epoch
 from flightpanel.db import Db
 from flightpanel.issues import Issues
 
@@ -43,7 +43,7 @@ def _tle_text():
 
 
 def _iss():
-    return Iss(make_cfg(home_lat=BERLIN[0], home_lon=BERLIN[1]), tle_text=_tle_text())
+    return Iss(make_cfg(home_lat=BERLIN[0], home_lon=BERLIN[1]), Orbit(tle_text=_tle_text()))
 
 
 def test_iss_position_matches_independent_source():
@@ -54,7 +54,7 @@ def test_iss_position_matches_independent_source():
 
 def test_iss_passes_and_validity():
     iss = _iss()
-    epoch = tle_epoch(iss.tle[0])
+    epoch = tle_epoch(iss.orbit.tle[0])
     assert iss.usable(epoch + 86400) and not iss.usable(epoch + 15 * 86400)
     # Diese Woche liegen alle Überflüge im Hellen: sichtbar ist keiner
     assert iss.compute_passes(epoch, hours=24) == []
@@ -77,11 +77,11 @@ def test_parse_tle_formats():
 def test_tle_lives_in_the_database(tmp_path):
     db = Db(str(tmp_path / "f.db"))
     text = _tle_text()
-    iss = Iss(make_cfg(), db=db)
-    assert iss.sat is None and iss.needs_tle(0)
-    assert iss.set_tle_text(text, fetched=1791654544)
-    again = Iss(make_cfg(), db=db)
-    assert again.tle == iss.tle and again.tle_fetched == 1791654544 and not again.needs_tle(1791654544 + 3600)
+    orbit = Orbit(db)
+    assert orbit.sat is None and orbit.needs_tle(0)
+    assert orbit.set_tle_text(text, fetched=1791654544)
+    again = Orbit(db)
+    assert again.tle == orbit.tle and again.tle_fetched == 1791654544 and not again.needs_tle(1791654544 + 3600)
     assert not again.set_tle_text("Too many requests", fetched=0)
 
 
@@ -116,13 +116,13 @@ def test_refresh_tle_stores_the_answer_in_the_database(tmp_path):
     """Die erste Quelle meldet einen HTTP-Fehler, die zweite liefert Bahndaten: sie liegen danach in der Datenbank."""
     db = Db(str(tmp_path / "f.db"))
     session = _Session(_Answer(503, "Service Unavailable"), _Answer(200, _tle_text()))
-    iss = Iss(make_cfg(), db=db, session=session)
+    orbit = Orbit(db, session=session)
     before = time.time()
-    assert asyncio.run(iss.refresh_tle())
-    assert session.urls == TLE_URLS and iss.last_error is None
-    assert before <= iss.tle_fetched <= time.time() and not iss.needs_tle(time.time())
-    again = Iss(make_cfg(), db=db)                                      # nach einem Neustart
-    assert again.tle == iss.tle and again.tle_fetched == iss.tle_fetched
+    assert asyncio.run(orbit.refresh_tle())
+    assert session.urls == TLE_URLS and orbit.last_error is None
+    assert before <= orbit.tle_fetched <= time.time() and not orbit.needs_tle(time.time())
+    again = Orbit(db)                                                   # nach einem Neustart
+    assert again.tle == orbit.tle and again.tle_fetched == orbit.tle_fetched
 
 
 def test_refresh_tle_failures_are_reported_until_the_next_success(tmp_path):
@@ -131,19 +131,46 @@ def test_refresh_tle_failures_are_reported_until_the_next_success(tmp_path):
     db = Db(str(tmp_path / "f.db"))
     issues = Issues(db)
     session = _Session(_Answer(429, "Too many requests"), _Answer(200, "Too many requests"))
-    iss = Iss(make_cfg(), db=db, session=session, issues=issues)
-    assert not asyncio.run(iss.refresh_tle())
+    orbit = Orbit(db, session=session, issues=issues)
+    assert not asyncio.run(orbit.refresh_tle())
     error = "celestrak.org: HTTP 429; tle.ivanstanojevic.me: keine Bahnelemente in der Antwort"
-    assert iss.last_error == error and issues.items["rate_limit:tle"]["example"] == {"error": error}
-    assert iss.sat is None and db.state_get("tle") is None and db.state_get("tle_fetched") is None
+    assert orbit.last_error == error and issues.items["rate_limit:tle"]["example"] == {"error": error}
+    assert orbit.sat is None and db.state_get("tle") is None and db.state_get("tle_fetched") is None
     session.answers = [_Answer(200, _tle_text())]
-    assert asyncio.run(iss.refresh_tle()) and iss.last_error is None and db.state_get("tle") is not None
+    assert asyncio.run(orbit.refresh_tle()) and orbit.last_error is None and db.state_get("tle") is not None
 
 
 def test_passes_are_computed_in_a_thread_without_touching_the_database(tmp_path):
     """update_passes ruft compute_passes in einem eigenen Thread auf, die Datenbank gehört aber dem Thread der
     Event-Loop: Griffe compute_passes darauf zu, scheiterte SQLite hier."""
-    iss = Iss(make_cfg(home_lat=BERLIN[0], home_lon=BERLIN[1]), db=Db(str(tmp_path / "f.db")), tle_text=_tle_text())
-    now = tle_epoch(iss.tle[0]) + 86400
+    iss = Iss(make_cfg(home_lat=BERLIN[0], home_lon=BERLIN[1]),
+              Orbit(Db(str(tmp_path / "f.db")), tle_text=_tle_text()))
+    now = tle_epoch(iss.orbit.tle[0]) + 86400
     asyncio.run(iss.update_passes(now))
     assert iss.passes_at == now
+
+
+def test_two_windows_share_one_orbit_and_recompute_after_new_data():
+    """Bahndaten einmal für alle Panels; Stand und Überflüge rechnet jedes Fenster selbst, und neu, sobald neue
+    Bahndaten da sind (auch innerhalb der Stunde)."""
+    orbit = Orbit(tle_text=_tle_text())
+    berlin = Iss(make_cfg(home_lat=BERLIN[0], home_lon=BERLIN[1]), orbit)
+    madrid = Iss(make_cfg(home_lat=40.42, home_lon=-3.70), orbit)
+    t = 1791654544
+    assert berlin.state(t)[:2] != madrid.state(t)[:2]                 # dieselbe ISS, ein anderer Himmel
+    now = tle_epoch(orbit.tle[0]) + 86400
+    asyncio.run(berlin.update_passes(now))
+    assert berlin.passes_at == now
+    asyncio.run(berlin.update_passes(now + 60))                       # innerhalb der Stunde: nichts neu
+    assert berlin.passes_at == now
+    assert orbit.set_tle_text(_tle_text(), now + 120)                 # neue Bahndaten
+    asyncio.run(berlin.update_passes(now + 180))
+    assert berlin.passes_at == now + 180
+
+
+def test_the_sun_cache_has_room_for_many_windows():
+    from flightpanel import astro
+    astro._SUN_CACHE.clear()
+    for i in range(20):
+        sun_day(1791654544, 52.0 + i / 100, 13.4)
+    assert len(astro._SUN_CACHE) == 20

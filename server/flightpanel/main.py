@@ -26,7 +26,7 @@ from .adsbim import AdsbIm
 from .adsblol import AdsbLol, Paused
 from .airfield import Airfield
 from .airlines import short_airline
-from .astro import Iss
+from .astro import Iss, Orbit
 from .build import build_model
 from .cache import Cache
 from .cards import CARDS
@@ -67,7 +67,7 @@ def dream_due(cfg: Config, last_day: str | None, now: float) -> bool:
 
 
 def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, airfield: Airfield, logos: LogoStore,
-                  iss: Iss | None) -> list[str]:
+                  orbit: Orbit | None) -> list[str]:
     """Zustand aus den JSON-Dateien früherer Fassungen (bis Oktober 2026) einmalig übernehmen. Aus stats.json nimmt
     Stats Album und Statistik, Airfield die Landerichtung.
     Gibt die übernommenen Dateien zurück; App benennt sie in *.imported um, sobald das
@@ -91,10 +91,10 @@ def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, air
             continue
         taken.append(path)
     path = os.path.join(data_dir, "tle.txt")
-    if iss is not None and os.path.exists(path):
+    if orbit is not None and os.path.exists(path):
         try:
             with open(path, encoding="utf-8") as f:
-                if not iss.set_tle_text(f.read(), os.path.getmtime(path)):
+                if not orbit.set_tle_text(f.read(), os.path.getmtime(path)):
                     raise ValueError("keine Bahndaten darin")
         except Exception as e:                          # kein Text oder keine Bahndaten darin
             log.warning("tle.txt nicht übernommen (%s), bleibt liegen", e)
@@ -174,7 +174,8 @@ class App:
                                 auth=None if self.opensky.anonymous else self.opensky.auth_headers)
                         if cfg.track_origin else None)
         self.metar = MetarSource(self.session, cfg.metar_station, self.issues) if cfg.metar else None
-        self.iss = Iss(cfg, self.db, self.session, self.issues) if cfg.iss else None
+        self.orbit = Orbit(self.db, self.session, self.issues) if cfg.iss else None
+        self.iss = Iss(cfg, self.orbit) if self.orbit else None     # die ISS vom Fenster des Panels am LAN-Port
 
         # Anzeige
         self.logos = make_logo_store(cfg, self.session, self.db)
@@ -184,7 +185,7 @@ class App:
 
         # Alte JSON-Dateien einmalig übernehmen. Das muss vor dem Modell geschehen: Dessen Landerichtung
         # zu Beginn kommt aus airfield (aus stats.json übernommen).
-        taken = absorb_legacy(data, self.cache, self.issues, self.stats, self.airfield, self.logos, self.iss)
+        taken = absorb_legacy(data, self.cache, self.issues, self.stats, self.airfield, self.logos, self.orbit)
         if taken:
             # Erst gespeichert, dann umbenannt: ein Absturz dazwischen verliert nichts.
             self.save()
@@ -403,8 +404,8 @@ class App:
         while not self._stop.is_set():
             now = time.time()
             try:
-                if self.iss.needs_tle(now):
-                    await self.iss.refresh_tle()
+                if self.orbit.needs_tle(now):
+                    await self.orbit.refresh_tle()
                 await self.iss.update_passes(now)
             except Exception as e:
                 log.warning("ISS: %s", e)
@@ -535,10 +536,11 @@ class App:
                 "last_error": self.metar.last_error,
                 "raw": self.metar.current.raw if self.metar.current else None,
             },
-            "iss": None if not self.iss else {
-                "usable": self.iss.usable(now),
-                "tle_fetched_age_h": round((now - self.iss.tle_fetched) / 3600, 1) if self.iss.tle_fetched else None,
-                "last_error": self.iss.last_error,
+            "iss": None if not self.orbit else {
+                "usable": self.orbit.usable(now),
+                "tle_fetched_age_h": (round((now - self.orbit.tle_fetched) / 3600, 1)
+                                      if self.orbit.tle_fetched else None),
+                "last_error": self.orbit.last_error,
                 "visible_passes_24h": len(self.iss.passes),
             },
             "idle_card": self.idle.last_pick,
@@ -563,7 +565,7 @@ class App:
         loops = [self.poll_loop(), self.save_loop()]
         if self.metar and not self.cfg.mock:
             loops.append(self.metar_loop())
-        if self.iss and not self.cfg.mock:
+        if self.orbit and not self.cfg.mock:
             loops.append(self.astro_loop())
         self._tasks = [asyncio.create_task(c) for c in loops]
         for t in self._tasks:

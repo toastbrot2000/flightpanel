@@ -38,12 +38,12 @@ def test_old_json_files_are_taken_over_once(tmp_path):
         try:
             assert app.cache.get("route:EZY1") == {"origin": "LGW"}
             assert "exception:x" in app.issues.items and "easyJet" in app.stats.dex and app.airfield.course == 249
-            assert app.logos.missing() == ["FX"] and app.iss.tle is not None
+            assert app.logos.missing() == ["FX"] and app.orbit.tle is not None
             assert app.airfield.landing_course == 249  # Startwert des ersten Abrufs ist schon die übernommene Piste
             for name in ("cache.json", "issues.json", "stats.json", "tle.txt", "logos/.missing.json"):
                 assert not (tmp_path / name).exists() and (tmp_path / f"{name}.imported").exists(), name
             again = App(cfg, env={})                      # zweiter Start: alles aus der Datenbank
-            assert "easyJet" in again.stats.dex and again.cache.get("route:EZY1") and again.iss.tle == app.iss.tle
+            assert "easyJet" in again.stats.dex and again.cache.get("route:EZY1") and again.orbit.tle == app.orbit.tle
             assert again.issues.since == app.issues.since and again.airfield.landing_course == 249
             await again.session.close()
         finally:
@@ -307,9 +307,11 @@ def test_hand_edited_old_files_lose_only_their_odd_entries_and_the_start_goes_on
 
 
 def test_a_stats_file_of_the_wrong_shape_stays_and_nothing_of_it_is_taken(tmp_path, caplog):
-    """Ist der Aufbau der Datei hin (dex kein Objekt), wird nichts übernommen und nichts umbenannt: Eine halbe
-    Übernahme umzubenennen verlöre den Rest, den man von Hand noch retten könnte."""
-    (tmp_path / "stats.json").write_text(json.dumps({"since": 5, "dex": ["kaputt"]}))
+    """Ist der Aufbau der Datei hin (dex kein Objekt), wird nichts übernommen und nichts umbenannt, auch die
+    Landerichtung darin nicht (Stats kommt vor Airfield an die Reihe): Eine halbe Übernahme umzubenennen verlöre den
+    Rest, den man von Hand noch retten könnte."""
+    (tmp_path / "stats.json").write_text(json.dumps({"since": 5, "dex": ["kaputt"],
+                                                     "course": {"now": 249, "since": 5, "seen": 5}}))
     cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False)
 
     async def run():
@@ -317,7 +319,7 @@ def test_a_stats_file_of_the_wrong_shape_stays_and_nothing_of_it_is_taken(tmp_pa
             app = App(cfg, env={})
         try:
             assert (tmp_path / "stats.json").exists() and not (tmp_path / "stats.json.imported").exists()
-            assert app.stats.dex == {} and app.stats.since != 5
+            assert app.stats.dex == {} and app.stats.since != 5 and app.airfield.course is None
             assert "stats.json nicht übernommen" in caplog.text
         finally:
             await app.session.close()
@@ -368,7 +370,7 @@ def test_an_unusable_tle_file_is_left_alone_and_the_rest_is_taken(tmp_path, capl
         with caplog.at_level("WARNING"):
             app = App(cfg, env={})
         try:
-            assert app.iss.tle is None and app.cache.get("route:EZY1") == {"origin": "LGW"}
+            assert app.orbit.tle is None and app.cache.get("route:EZY1") == {"origin": "LGW"}
             assert (tmp_path / "tle.txt").read_bytes() == content and not (tmp_path / "tle.txt.imported").exists()
             assert not (tmp_path / "cache.json").exists() and (tmp_path / "cache.json.imported").exists()
             assert "tle.txt nicht übernommen" in caplog.text

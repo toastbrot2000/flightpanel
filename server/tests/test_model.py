@@ -162,3 +162,12 @@ def test_rare_flights_are_marked():
               state(icao="ezy", cs="EZY1234", lat=52.58)]
     m = asyncio.run(build_model(make_cfg(max_flights=4), states, FakeAdsb(), NAMES, rare=rare))
     assert {f.icao24: f.rare for f in m.flights} == {"vip": True, "big": True, "ezy": False}
+
+
+def test_the_path_cache_does_not_grow_without_bound():
+    """Jede Änderung am Sichtfeld (panels set, bald die Einstellungsseite) gibt neue Schlüssel."""
+    from flightpanel import airport
+    airport._PATH_CACHE.clear()
+    for i in range(airport.PATH_CACHE_MAX + 10):
+        path_in_view(make_cfg(home_lat=52.5 + i / 10000), 249, "approach")
+    assert 0 < len(airport._PATH_CACHE) <= airport.PATH_CACHE_MAX

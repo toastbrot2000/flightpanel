@@ -4,10 +4,11 @@ also passend zum geeichten Sichtfeld.
 
 Sonne: rein gerechnet (Näherung nach dem Astronomical Almanac, ~0,01°), kein Netz.
 ISS: Bahnelemente (TLE) von Celestrak, ersatzweise einer zweiten Quelle, einmal
-am Tag; zwischengespeichert in der Datenbank (state) und bis 14 Tage nach ihrer
-Epoche genutzt. Daraus mit SGP4 die Überflüge der nächsten 24 h, die man sehen kann:
-ISS mindestens 10° hoch, von der Sonne beschienen, beim Beobachter schon dunkel.
-Ohne gültige Bahnelemente gibt es keine ISS-Karten, sonst ändert sich nichts."""
+am Tag für alle Panels (Orbit); zwischengespeichert in der Datenbank (state) und
+bis 14 Tage nach ihrer Epoche genutzt. Daraus je Fenster (Iss) mit SGP4 die
+Überflüge der nächsten 24 h, die man sehen kann: ISS mindestens 10° hoch, von der
+Sonne beschienen, beim Beobachter schon dunkel. Ohne gültige Bahnelemente gibt es
+keine ISS-Karten, sonst ändert sich nichts."""
 
 import asyncio
 import json
@@ -91,6 +92,7 @@ def sun_crossing(t0: float, t1: float, lat: float, lon: float, elev: float) -> f
 
 
 _SUN_CACHE: dict[tuple, dict] = {}
+SUN_CACHE_MAX = 64      # Platz für viele Fenster (Panels) über ein paar Tage
 
 
 def sun_day(now: float, lat: float, lon: float) -> dict:
@@ -110,7 +112,7 @@ def sun_day(now: float, lat: float, lon: float) -> dict:
            # tief stehende Sonne: abends unter 8°, morgens bis 8°
            "golden_evening": sun_crossing(noon, t0 + 86400, lat, lon, 8.0),
            "golden_morning": sun_crossing(t0, noon, lat, lon, 8.0)}
-    if len(_SUN_CACHE) > 8:
+    if len(_SUN_CACHE) >= SUN_CACHE_MAX:
         _SUN_CACHE.clear()
     _SUN_CACHE[key] = out
     return out
@@ -205,27 +207,28 @@ class Pass:
     view_start: float | None = None    # erster Moment im Sichtfeld, falls überhaupt
 
 
-class Iss:
-    def __init__(self, cfg, db=None, session: aiohttp.ClientSession | None = None, issues=None,
+class Orbit:
+    """Die Bahndaten der ISS (TLE), einmal für alle Panels: von Celestrak, ersatzweise einer zweiten Quelle, einmal
+    am Tag; zwischengespeichert in der Datenbank (state: tle, tle_fetched). Wo die ISS von einem Fenster aus steht
+    und wann man sie dort sieht, rechnet Iss."""
+
+    def __init__(self, db=None, session: aiohttp.ClientSession | None = None, issues=None,
                  tle_text: str | None = None):
         """db: Bahndaten aus der Datenbank (state: tle, tle_fetched); tle_text: fertige
         Bahndaten, für Tests."""
-        self.cfg = cfg
         self.db = db
         self.session = session
         self.issues = issues
         self.tle: tuple[str, str] | None = None
         self.sat = None
         self.tle_fetched: float = 0
-        self.passes: list[Pass] = []
-        self.passes_at: float = 0
+        self.version = 0                # zählt neue Bahndaten: Iss rechnet seine Überflüge dann neu
         self.last_error: str | None = None
         if tle_text is not None:
             self.set_tle_text(tle_text, time.time())
         elif db is not None:
             self._load()
 
-    # ----------------------------------------------------------- Bahndaten --
     def _load(self) -> None:
         text = self.db.state_get("tle")
         tle = parse_tle(text) if text else None
@@ -249,7 +252,7 @@ class Iss:
         from sgp4.api import Satrec
         self.sat = Satrec.twoline2rv(*tle)
         self.tle = tle
-        self.passes_at = 0
+        self.version += 1
 
     def usable(self, now: float) -> bool:
         return self.sat is not None and now - tle_epoch(self.tle[0]) < TLE_MAX_AGE_D * 86400
@@ -277,26 +280,41 @@ class Iss:
     def needs_tle(self, now: float) -> bool:
         return self.sat is None or now - self.tle_fetched > TLE_REFRESH_S
 
-    # ------------------------------------------------------------- Rechnen --
-    def state(self, t: float) -> tuple[float, float, float, bool] | None:
-        """(Richtung, Höhenwinkel, Entfernung km, beschienen) vom Standort aus."""
+    def position(self, t: float) -> tuple[float, float, float] | None:
+        """Ort der ISS zur Zeit t (TEME, km); None ohne Bahndaten oder wenn SGP4 scheitert."""
         if self.sat is None:
             return None
         days = t / 86400.0
-        jd, fr = 2440587.5 + math.floor(days), days - math.floor(days)
-        err, r, _ = self.sat.sgp4(jd, fr)
-        if err != 0:
+        err, r, _ = self.sat.sgp4(2440587.5 + math.floor(days), days - math.floor(days))
+        return None if err else r
+
+
+class Iss:
+    """Die ISS von einem Fenster aus (cfg: Standort und Sichtfeld eines Panels), aus den gemeinsamen Bahndaten
+    (orbit): wo sie gerade steht und die Überflüge der nächsten 24 h, die man von dort sieht."""
+
+    def __init__(self, cfg, orbit: Orbit):
+        self.cfg = cfg
+        self.orbit = orbit
+        self.passes: list[Pass] = []
+        self.passes_at: float = 0       # 0: beim nächsten update_passes neu rechnen (auch nach neuen Einstellungen)
+        self._version = -1              # aus welchem Stand der Bahndaten passes stammt
+
+    def usable(self, now: float) -> bool:
+        return self.orbit.usable(now)
+
+    def state(self, t: float) -> tuple[float, float, float, bool] | None:
+        """(Richtung, Höhenwinkel, Entfernung km, beschienen) vom Standort aus."""
+        r = self.orbit.position(t)
+        if r is None:
             return None
         az, el, rng = look_angles(self.cfg.home_lat, self.cfg.home_lon, self.cfg.home_alt_m, teme_to_ecef(r, t))
         return az, el, rng, sunlit(r, t)
 
     def subpoint(self, t: float) -> tuple[float, float, float] | None:
         """(Breite, Länge, Höhe km) unter der ISS."""
-        if self.sat is None:
-            return None
-        days = t / 86400.0
-        err, r, _ = self.sat.sgp4(2440587.5 + math.floor(days), days - math.floor(days))
-        return None if err else ecef_to_geodetic(*teme_to_ecef(r, t))
+        r = self.orbit.position(t)
+        return None if r is None else ecef_to_geodetic(*teme_to_ecef(r, t))
 
     def _visible(self, t: float, st) -> bool:
         return (st is not None and st[1] >= PASS_MIN_ELEV and st[3]
@@ -334,10 +352,11 @@ class Iss:
         if not self.usable(now):
             self.passes = []
             return
-        if now - self.passes_at < 3600:
+        if now - self.passes_at < 3600 and self._version == self.orbit.version:
             return
+        version = self.orbit.version
         self.passes = await asyncio.to_thread(self.compute_passes, now - 600)
-        self.passes_at = now
+        self.passes_at, self._version = now, version
         log.info("ISS: %d sichtbare Überflüge in %d h", len(self.passes), PASS_HOURS)
 
     def next_pass(self, now: float) -> Pass | None:
