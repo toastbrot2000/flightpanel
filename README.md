@@ -187,7 +187,7 @@ Liegt in `data/flightpanel.db`. Nach dem Durchsehen leeren: `curl -X POST http:/
 
 ## Hardware und Firmware
 
-PlatformIO, Board `esp32dev` (klassischer ESP32, WROOM-32), Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14. Der ESP32 holt alle 2 s `/panel/frame` und zeigt es an (ein unverändertes Bild kommt per ETag als 304); ohne Server bleibt das letzte Bild stehen, nach 60 s mit einem roten Punkt unten rechts, nach 10 min startet er neu. WLAN und Server-Adresse trägt man im Einrichtungs-WLAN des Panels ein, vom Handy aus (Bauanleitung, Abschnitt 4).
+PlatformIO, Board `esp32dev` (klassischer ESP32, WROOM-32), Bibliothek ESP32-HUB75-MatrixPanel-DMA 3.0.14. Der ESP32 holt alle 2 s `/panel/frame` und zeigt es an (ein unverändertes Bild kommt per ETag als 304); ohne Server bleibt das letzte Bild stehen, nach 60 s mit einem roten Punkt unten rechts, nach 10 min startet er neu. WLAN und Server-Adresse trägt man im Einrichtungs-WLAN des Panels ein, vom Handy aus (Bauanleitung, Abschnitt 4). Als Server-Adresse eine IP oder einen Namen ohne Punkt; ein Name wie `<name>.fritz.box` gehört zusätzlich in die `.env` des Servers (`LAN_HOSTS=<name>.fritz.box`), sonst antwortet er dem Panel mit 421 (Schutz vor DNS-Rebinding).
 
 ```bash
 cd firmware
