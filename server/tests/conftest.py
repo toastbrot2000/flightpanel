@@ -51,6 +51,7 @@ class FakeAdsb:
     def __init__(self, routes=None, airlines=None):
         self.routes = routes or {}
         self.airlines = airlines or {}
+        self.last_error = None          # wie AdsbDb: /health liest es
 
     async def route(self, cs):
         return self.routes.get(cs, {})

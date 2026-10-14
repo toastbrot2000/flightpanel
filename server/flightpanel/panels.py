@@ -19,7 +19,7 @@ Schlüssel, der von Hand klein geschrieben in die Datenbank kam, und räumen ihn
 
 Im Container:
   docker compose exec flightpanel python3 -m flightpanel.panels set home HOME_LAT=52.52 HOME_LON=13.40
-Der Server liest die Einstellungen beim Start: danach docker compose restart flightpanel."""
+Der laufende Server übernimmt Änderungen spätestens nach einer Minute, ohne Neustart."""
 
 import argparse
 import os
@@ -118,7 +118,7 @@ def _check(cfg: Config, pid: str, settings: dict[str, str]) -> None:
 def _save(db: Db, cfg: Config, p: dict, new: dict[str, str]) -> None:
     _check(cfg, p["id"], new)                   # prüft; ValueError nennt die Einstellung
     db.panel_set_settings(p["id"], new)
-    print(f"{p['id']}: {len(new)} Einstellungen gesetzt. Gilt nach: docker compose restart flightpanel")
+    print(f"{p['id']}: {len(new)} Einstellungen gesetzt; der Server übernimmt sie spätestens nach einer Minute")
 
 
 def cmd_set(db: Db, cfg: Config, args) -> None:
@@ -155,7 +155,8 @@ def cmd_add(db: Db, cfg: Config, args) -> None:
     except ValueError as e:
         raise ValueError(f"id {args.id!r}: {e}") from None
     db.panel_add(args.id, args.name)
-    print(f"{args.id} angelegt. Einstellungen: set {args.id} HOME_LAT=... HOME_LON=... VIEW_FROM=...")
+    print(f"{args.id} angelegt; der Server bedient es spätestens nach einer Minute. "
+          f"Standort: set {args.id} HOME_LAT=... HOME_LON=... VIEW_FROM=...")
 
 
 def cmd_remove(db: Db, cfg: Config, args) -> None:
@@ -165,7 +166,7 @@ def cmd_remove(db: Db, cfg: Config, args) -> None:
     if not args.yes:
         raise ValueError(f"löscht {p['id']} samt Album und Statistik; zum Bestätigen --yes")
     db.panel_remove(p["id"])
-    print(f"{p['id']} gelöscht")
+    print(f"{p['id']} gelöscht; der Server lässt es spätestens nach einer Minute fallen")
 
 
 def cmd_backup(db: Db, cfg: Config, args) -> None:

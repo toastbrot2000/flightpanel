@@ -359,11 +359,6 @@ class Config:
             return self.brightness_day
         return self.brightness_evening
 
-    def active_seconds_per_day(self) -> int:
-        """Sekunden pro Tag außerhalb der Quiet Hours, in denen abgerufen wird."""
-        a, b = self.quiet_hours
-        return (24 * 60 - (b - a) % (24 * 60)) * 60
-
 
 # Ruhiger Modus: seltener wechseln, nicht blinken, in der Infozeile nur Landezeit und
 # Höhe/Tempo. Nur Defaults; ausdrücklich gesetzte Werte gehen vor.

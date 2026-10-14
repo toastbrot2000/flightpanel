@@ -90,7 +90,6 @@ def test_brightness_schedule():
                brightness_evening=35)
     at = lambda h, m=0: c.brightness(datetime(2026, 10, 10, h, m).timestamp())   # noqa: E731
     assert (at(12), at(20), at(23, 30), at(6, 29), at(6, 30)) == (90, 35, 0, 0, 35)
-    assert c.active_seconds_per_day() == (24 * 60 - 7 * 60 - 30) * 60
     assert in_hours((23 * 60, 60), 0) and not in_hours((23 * 60, 60), 120)
 
 

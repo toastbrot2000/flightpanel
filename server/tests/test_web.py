@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from aiohttp.test_utils import TestClient, TestServer
 
 from conftest import FakeAdsb, make_cfg, state
-from flightpanel.main import App
+from flightpanel.main import REST_S, App
 from flightpanel.mock import mock_model
 from flightpanel.model import DisplayModel, Flight
 from flightpanel.web import make_web_app
@@ -54,13 +54,13 @@ def test_ok_says_what_is_wrong(tmp_path):
             app.last_model_ok = now
             assert (await client.get("/ok")).status == 200
             app.last_model_ok = now - 20 * 60                          # seit 20 min nichts Neues
-            app.frame_count, app.last_frame_fetch = 5, now - 15 * 60    # ESP32 war da, ist weg
+            app.lan.frame_count, app.lan.last_frame_fetch = 5, now - 15 * 60    # ESP32 war da, ist weg
             app.issues.note("exception", "KeyError build.py:12")
             r = await client.get("/ok")
             text = await r.text()
             assert r.status == 503 and "Flugdaten" in text and "ESP32" in text and "KeyError" in text
             night = App(replace(cfg, quiet_hours=(0, 24 * 60)))         # Ruhezeit: dunkel ist normal
-            night.last_model_ok, night.frame_count, night.last_frame_fetch = now - 3600, 5, now - 3600
+            night.last_model_ok, night.lan.frame_count, night.lan.last_frame_fetch = now - 3600, 5, now - 3600
             assert night.problems(now) == []
             await night.session.close()
         finally:
@@ -76,12 +76,14 @@ def test_quiet_hours_drop_the_old_picture(tmp_path):
                        quiet_hours=(0, 24 * 60))            # rund um die Uhr Ruhezeit
         app = App(cfg)
         try:
-            app.model = mock_model(cfg, 3)
-            app.model.flights = app.model.flights or [app.model.upcoming]
-            assert app._quiet_hours(time.time())
-            assert app.model.flights == [] and app.model.empty and app.model.stale
+            p = app.lan
+            p.model = mock_model(cfg, 3)
+            p.model.flights = p.model.flights or [p.model.upcoming]
+            assert not p.active(time.time())
+            assert await app.poll_once(time.time()) == REST_S          # ruht: nichts abgerufen, Bild weg
+            assert p.model.flights == [] and p.model.empty and p.model.stale
             day = App(replace(cfg, quiet_hours=(0, 0)))       # keine Ruhezeit
-            assert not day._quiet_hours(time.time())
+            assert day.lan.active(time.time())
             await day.session.close()
         finally:
             await app.session.close()
@@ -118,7 +120,7 @@ def test_preview_with_another_layout_shows_the_panels_flight(tmp_path, monkeypat
         app = App(cfg)
         a = Flight(icao24="a", callsign="EZY1", status="OVF", dist_km=5, bearing=150, alt_ft=2500, speed_kt=100,
                    track=250, vrate_fpm=0)
-        app.model = DisplayModel(source="test", flights=[a, replace(a, icao24="b", callsign="EZY2", bearing=160)])
+        app.lan.model = DisplayModel(source="test", flights=[a, replace(a, icao24="b", callsign="EZY2", bearing=160)])
         client = TestClient(TestServer(make_web_app(app)))
         await client.start_server()
         try:
@@ -141,8 +143,8 @@ def test_unknown_operators_in_the_album_get_their_operator_name(tmp_path):
         app = App(cfg)
         try:
             app.adsb = FakeAdsb(airlines={"XYZ": "Example Air Charter Ltd"})
-            await app._observe([state(icao="x1", cs="XYZ123")], time.time())
-            return app.stats.dex["XYZ"]["name"]
+            await app._observe(app.lan, [state(icao="x1", cs="XYZ123")], time.time())
+            return app.lan.stats.dex["XYZ"]["name"]
         finally:
             await app.session.close()
 

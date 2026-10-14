@@ -7,16 +7,18 @@ import os
 import shlex
 import shutil
 import time
+from dataclasses import replace
 
 import aiohttp
 import pytest
 from aiohttp import web
 from test_sources import response_error
 
-from conftest import FIXTURES, make_cfg
+from conftest import BER, DATA, FIXTURES, FakeAdsb, make_cfg, state
 from flightpanel import panels
 from flightpanel.db import Db, db_path
-from flightpanel.main import App, _main, check_data_dir
+from flightpanel.geo import destination, haversine_km
+from flightpanel.main import REST_S, App, _main, check_data_dir
 from flightpanel.stats import Stats
 from flightpanel.web import make_web_app
 
@@ -38,13 +40,14 @@ def test_old_json_files_are_taken_over_once(tmp_path):
         app = App(cfg, env={})
         try:
             assert app.cache.get("route:EZY1") == {"origin": "LGW"}
-            assert "exception:x" in app.issues.items and "easyJet" in app.stats.dex and app.airfield.course == 249
+            assert "exception:x" in app.issues.items and "easyJet" in app.lan.stats.dex and app.airfield.course == 249
             assert app.logos.missing() == ["FX"] and app.orbit.tle is not None
             assert app.airfield.landing_course == 249  # Startwert des ersten Abrufs ist schon die übernommene Piste
             for name in ("cache.json", "issues.json", "stats.json", "tle.txt", "logos/.missing.json"):
                 assert not (tmp_path / name).exists() and (tmp_path / f"{name}.imported").exists(), name
             again = App(cfg, env={})                      # zweiter Start: alles aus der Datenbank
-            assert "easyJet" in again.stats.dex and again.cache.get("route:EZY1") and again.orbit.tle == app.orbit.tle
+            assert "easyJet" in again.lan.stats.dex and again.cache.get("route:EZY1")
+            assert again.orbit.tle == app.orbit.tle
             assert again.issues.since == app.issues.since and again.airfield.landing_course == 249
             await again.session.close()
         finally:
@@ -59,7 +62,7 @@ def test_env_panel_keys_are_taken_over_on_the_first_start_then_ignored(tmp_path,
     async def run():
         first = App(cfg, env={"HOME_LAT": "51.0", "CARD_PIGEON": "0", "CARD_CLOCK": "1"})
         try:
-            assert first.cfg.home_lat == 51.0 and first.cfg.cards_off == {"pigeon"}
+            assert first.lan.cfg.home_lat == 51.0 and first.lan.cfg.cards_off == {"pigeon"}
             assert first.db.panel_get("home")["settings"] == {"HOME_LAT": "51.0", "CARD_PIGEON": "0"}
             assert first.server_cfg.home_lat == cfg.home_lat          # der Server selbst bleibt, wie er war
         finally:
@@ -67,7 +70,7 @@ def test_env_panel_keys_are_taken_over_on_the_first_start_then_ignored(tmp_path,
         with caplog.at_level("WARNING"):
             second = App(cfg, env={"HOME_LAT": "40.0"})
         try:
-            assert second.cfg.home_lat == 51.0
+            assert second.lan.cfg.home_lat == 51.0
             assert "HOME_LAT" in caplog.text and "panels set home" in caplog.text
             assert "aus .env entfernen" in caplog.text                  # und wie die Warnung verschwindet
         finally:
@@ -86,7 +89,7 @@ def test_a_bad_old_env_value_stops_the_start_and_is_not_stored(tmp_path):
             App(cfg, env={"HOME_LAT": "hier"})
         app = App(cfg, env={"HOME_LAT": "51.0"})                # .env repariert: jetzt übernommen
         try:
-            assert app.cfg.home_lat == 51.0
+            assert app.lan.cfg.home_lat == 51.0
         finally:
             await app.session.close()
 
@@ -110,7 +113,7 @@ def test_a_stored_setting_the_server_does_not_know_is_skipped_and_the_rest_appli
         with caplog.at_level("WARNING"):
             app = App(cfg, env={})
         try:
-            assert app.cfg.home_lat == 51.0
+            assert app.lan.cfg.home_lat == 51.0
             warning = next(r.getMessage() for r in caplog.records if "OLD_SETTING" in r.getMessage())
             assert "python -m flightpanel.panels unset home OLD_SETTING" in warning
             assert app.issues.items["setting:home OLD_SETTING"]["example"]["error"] == (
@@ -132,7 +135,8 @@ def test_a_stored_value_that_no_longer_parses_is_skipped_and_the_rest_applies(tm
         with caplog.at_level("WARNING"):
             app = App(cfg, env={})
         try:
-            assert (app.cfg.home_lat, app.cfg.radius_km, app.cfg.view_from) == (cfg.home_lat, cfg.radius_km, 45)
+            assert (app.lan.cfg.home_lat, app.lan.cfg.radius_km, app.lan.cfg.view_from) == (
+                cfg.home_lat, cfg.radius_km, 45)
             warning = next(r.getMessage() for r in caplog.records if "HOME_LAT" in r.getMessage())
             assert "HOME_LAT='95'" in warning and "RADIUS_KM='nan'" in warning
             assert "python -m flightpanel.panels unset home HOME_LAT RADIUS_KM" in warning
@@ -159,7 +163,7 @@ def test_the_command_suggested_for_skipped_settings_works(tmp_path, caplog, monk
         with caplog.at_level("WARNING"):
             app = App(cfg, env={})
         try:
-            assert app.cfg.home_lat == 51.0
+            assert app.lan.cfg.home_lat == 51.0
             return {it["example"]["fix"] for key, it in app.issues.items.items() if key.startswith("setting:")}
         finally:
             await app.session.close()
@@ -245,7 +249,7 @@ def test_save_writes_everything_and_the_stores_reload_it(tmp_path):
             app.save()
             again = App(cfg, env={})
             assert again.cache.get("route:X") == {"origin": "LGW"} and "exception:KeyError x.py:1" in again.issues.items
-            assert again.stats.last_obs == app.stats.last_obs > 0           # observe() lief und wurde geschrieben
+            assert again.lan.stats.last_obs == app.lan.stats.last_obs > 0   # observe() lief und wurde geschrieben
             await again.session.close()
         finally:
             await app.session.close()
@@ -291,13 +295,13 @@ def test_hand_edited_old_files_lose_only_their_odd_entries_and_the_start_goes_on
         try:
             assert app.cache.get("route:A") == {"origin": "LGW"} and app.cache.get("route:S") == {"origin": "S"}
             assert len(app.cache) == 2 and set(app.issues.items) == {"exception:x"}
-            assert set(app.stats.dex) == {"easyJet"}
+            assert set(app.lan.stats.dex) == {"easyJet"}
             for name in ("cache.json", "issues.json", "stats.json"):
                 assert not (tmp_path / name).exists() and (tmp_path / f"{name}.imported").exists(), name
             app.save()                                  # und jedes weitere Speichern geht
             again = App(cfg, env={})
             try:
-                assert set(again.stats.dex) == {"easyJet"} and set(again.issues.items) == {"exception:x"}
+                assert set(again.lan.stats.dex) == {"easyJet"} and set(again.issues.items) == {"exception:x"}
                 assert again.cache.get("route:S") == {"origin": "S"}
             finally:
                 await again.session.close()
@@ -320,7 +324,7 @@ def test_a_stats_file_of_the_wrong_shape_stays_and_nothing_of_it_is_taken(tmp_pa
             app = App(cfg, env={})
         try:
             assert (tmp_path / "stats.json").exists() and not (tmp_path / "stats.json.imported").exists()
-            assert app.stats.dex == {} and app.stats.since != 5 and app.airfield.course is None
+            assert app.lan.stats.dex == {} and app.lan.stats.since != 5 and app.airfield.course is None
             assert "stats.json nicht übernommen" in caplog.text
         finally:
             await app.session.close()
@@ -470,7 +474,7 @@ def test_without_env_the_process_environment_counts(tmp_path, monkeypatch):
     async def run():
         app = App(cfg)
         try:
-            assert app.cfg.home_lat == 51.0 and app.db.panel_get("home")["settings"] == {"HOME_LAT": "51.0"}
+            assert app.lan.cfg.home_lat == 51.0 and app.db.panel_get("home")["settings"] == {"HOME_LAT": "51.0"}
         finally:
             await app.session.close()
 
@@ -498,7 +502,7 @@ def test_the_lan_panel_is_the_one_named_in_the_config(tmp_path):
     async def run():
         app = App(cfg, env={"HOME_LAT": "51.0"})
         try:
-            assert [p["id"] for p in app.db.panel_list()] == ["wohnzimmer"] and app.stats.panel_id == "wohnzimmer"
+            assert [p["id"] for p in app.db.panel_list()] == ["wohnzimmer"] and app.lan.stats.panel_id == "wohnzimmer"
             assert app.db.panel_get("wohnzimmer")["settings"] == {"HOME_LAT": "51.0"}
         finally:
             await app.session.close()
@@ -626,6 +630,171 @@ def test_a_failing_opensky_request_leaves_no_position_in_log_or_issues(tmp_path,
                 app._note_poll_error(e)
             assert "opensky-network.org" in caplog.text and "52.1234" not in caplog.text
             assert "52.1234" not in json.dumps(app.issues_report()) and app.issues.items
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def panel_rows(tmp_path, **panels) -> None:
+    """Panels in der Datenbank, wie panels.py sie anlegt: home und die übergebenen (id=Einstellungen)."""
+    db = Db(db_path(str(tmp_path)))
+    for pid, settings in {"home": {}, **panels}.items():
+        db.panel_add(pid, settings=settings)
+    db.close()
+
+
+ANNA = {"HOME_LAT": "52.40", "HOME_LON": "14.05", "RADIUS_KM": "10", "SCAN_RADIUS_KM": "10"}   # östlich von BER
+
+
+def test_one_poll_serves_every_panel_with_one_fetch(tmp_path):
+    """Zwei Panels, ein Abruf: Sein Umkreis deckt beide ab. Landefolge und Landerichtung sind in beiden gleich, die
+    Statistik zählt je Panel nur, was in seinem Abrufradius war, und /issues zählt einmal je Abruf."""
+    shutil.copy(os.path.join(DATA, "airlines.json"), tmp_path)
+    panel_rows(tmp_path, anna=ANNA)
+    cfg = make_cfg(data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False, quiet_hours=(0, 0),
+                   route_adsbim=False, track_origin=False)
+    lat, lon = destination(BER[0], BER[1], 69, 15)
+    states = [state(icao="a1", cs="EZY1", lat=52.55, lon=13.42, alt=1500),          # nur bei home
+              state(icao="b1", cs="DLH2", lat=52.40, lon=14.06, alt=1500),          # nur bei anna
+              # landet, Betreiber XYZ steht nicht in airlines.json: beide Panels sehen ihn in der Landefolge
+              state(icao="3c56ec", cs="XYZ9SK", lat=lat, lon=lon, alt=800, track=249, vrate=-4)]
+    calls = []
+
+    async def fetch(lat, lon, radius_km):
+        calls.append((lat, lon, radius_km))
+        return states
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            app.adsb = FakeAdsb()
+            app.adsblol.fetch = fetch
+            await app.poll_once(time.time())
+            (lat0, lon0, r), = calls
+            home, anna = app.panels["home"], app.panels["anna"]
+            for p in (home, anna):
+                assert haversine_km(lat0, lon0, p.cfg.home_lat, p.cfg.home_lon) + p.cfg.fetch_radius_km <= r + 1e-9
+            assert home.model.landing_course == anna.model.landing_course
+            assert [a["callsign"] for a in home.model.arrivals] == [a["callsign"] for a in anna.model.arrivals]
+            assert "XYZ9SK" in [a["callsign"] for a in home.model.arrivals]
+            assert "a1" in home.stats.day["aircraft"] and "a1" not in anna.stats.day["aircraft"]
+            assert "b1" in anna.stats.day["aircraft"] and "b1" not in home.stats.day["aircraft"]
+            assert app.issues.items["unknown_operator:XYZ"]["seen"] == 1          # einmal je Abruf, nicht je Panel
+            assert app.counters["polls"] == 1 and app.last_model_ok > 0
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_panels_cli_changes_apply_without_a_restart(tmp_path):
+    """panels.py schreibt neben dem laufenden Server; der übernimmt es beim nächsten Durchgang: neue Panels,
+    geänderte Einstellungen (Album und Statistik bleiben), gelöschte Panels (ohne dass das Speichern scheitert).
+    Ein gelöschtes und gleich wieder angelegtes Panel beginnt mit leerem Album."""
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False, quiet_hours=(0, 0))
+
+    async def run():
+        app = App(cfg, env={})
+        cli = Db(db_path(str(tmp_path)), put_aside=False)             # wie panels.py, neben dem laufenden Server
+        try:
+            t = time.time()
+            await app.poll_once(t)
+            home, stats = app.lan, app.lan.stats
+            cli.panel_set_settings("home", {"VIEW_FROM": "90"})
+            cli.panel_add("anna", settings={"HOME_LAT": "52.40", "HOME_LON": "14.05"})
+            await app.poll_once(t + 20)
+            assert app.lan is home and home.cfg.view_from == 90 and home.stats is stats
+            anna = app.panels["anna"]
+            assert anna.cfg.home_lon == 14.05 and anna.model.source == "mock"
+            cli.panel_remove("anna")
+            app.save()                                                # schreibt für anna nichts mehr: kein Fehler
+            assert set(app.panels) == {"home"}
+            cli.panel_add("anna")
+            await app.poll_once(t + 40)
+            assert app.panels["anna"] is not anna and app.panels["anna"].stats.dex == {}
+        finally:
+            cli.close()
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_a_resting_panel_is_dark_and_outside_the_fetch(tmp_path):
+    """home in der Ruhezeit, anna wach: Abgerufen wird nur für anna, home ist schwarz. Ruhen beide, ruft der Server
+    nichts ab und sieht in einer Minute wieder nach."""
+    panel_rows(tmp_path, anna={**ANNA, "QUIET_HOURS": "00:00-00:00"})
+    cfg = make_cfg(data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False, quiet_hours=(0, 24 * 60),
+                   route_adsbim=False, track_origin=False)
+    calls = []
+
+    async def fetch(lat, lon, radius_km):
+        calls.append((lat, lon, radius_km))
+        return []
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            app.adsb = FakeAdsb()
+            app.adsblol.fetch = fetch
+            await app.poll_once(time.time())
+            anna = app.panels["anna"]
+            assert calls == [(anna.cfg.home_lat, anna.cfg.home_lon, anna.cfg.fetch_radius_km)]
+            assert app.lan.model.stale and app.lan.model.empty
+            anna.cfg = replace(anna.cfg, quiet_hours=(0, 24 * 60))   # nun ruhen beide
+            assert await app.poll_once(time.time()) == REST_S and len(calls) == 1
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_a_panel_too_far_from_the_airport_stays_dark_and_widens_nothing(tmp_path):
+    """Ein weiteres Panel in München (BER ist der Flughafen; panels.py ließe das nicht zu): Es ruft nicht ab, ist
+    schwarz, /issues und Log sagen warum; der Abruf ist der von home allein."""
+    panel_rows(tmp_path, far={"HOME_LAT": "48.35", "HOME_LON": "11.79"})
+    cfg = make_cfg(data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False, quiet_hours=(0, 0),
+                   route_adsbim=False, track_origin=False)
+    calls = []
+
+    async def fetch(lat, lon, radius_km):
+        calls.append((lat, lon, radius_km))
+        return []
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            app.adsb = FakeAdsb()
+            app.adsblol.fetch = fetch
+            far = app.panels["far"]
+            assert "PANEL_MAX_KM" in far.off and not far.active(time.time())
+            assert "PANEL_MAX_KM" in app.issues.items["setting:far HOME"]["example"]["error"]
+            await app.poll_once(time.time())
+            home = app.lan.cfg
+            assert calls == [(home.home_lat, home.home_lon, home.fetch_radius_km)]
+            assert far.model.stale and app.health()["panels"]["far"]["off"] == far.off
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_only_the_lan_panels_esp32_counts_for_ok(tmp_path):
+    """Ein Freund zieht den Stecker: kein Grund, den Container ungesund zu melden. Das ESP32 am LAN-Port schon."""
+    panel_rows(tmp_path, anna=ANNA)
+    cfg = make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False, quiet_hours=(0, 0))
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            now = time.time()
+            app.last_model_ok = now
+            anna = app.panels["anna"]
+            anna.frame_count, anna.last_frame_fetch = 5, now - 3600
+            assert app.problems(now) == []
+            app.lan.frame_count, app.lan.last_frame_fetch = 5, now - 3600
+            assert any("ESP32" in p for p in app.problems(now))
+            assert set(app.health()["panels"]) == {"home", "anna"}
         finally:
             await app.session.close()
 

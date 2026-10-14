@@ -1,4 +1,5 @@
-"""HTTP: Bild für den ESP32, Vorschau im Browser, Zustand und Statistik.
+"""HTTP: Bild für den ESP32, Vorschau im Browser, Zustand und Statistik. Bedient wird das Panel am LAN-Port
+(LAN_PANEL); /health, /ok und /issues gelten für den ganzen Server.
 
   GET  /              Vorschauseite (lädt /frame.png alle 2 s neu)
   GET  /frame         Binär für den ESP32: [1, Helligkeit, Breite, Höhe] + RGB
@@ -55,10 +56,10 @@ setInterval(status, 10000);
 """
 
 
-def make_web_app(panel: "App") -> web.Application:
-    h = _Handlers(panel)
-    app = web.Application()
-    app.add_routes([
+def make_web_app(app: "App") -> web.Application:
+    h = _Handlers(app)
+    web_app = web.Application()
+    web_app.add_routes([
         web.get("/", h.index),
         web.get("/frame", h.frame),
         web.get("/frame.png", h.frame_png),
@@ -70,7 +71,7 @@ def make_web_app(panel: "App") -> web.Application:
         web.get("/stats", h.stats),
         web.get("/idle", h.idle),
     ])
-    return app
+    return web_app
 
 
 def _pretty(obj) -> web.Response:
@@ -78,12 +79,12 @@ def _pretty(obj) -> web.Response:
 
 
 class _Handlers:
-    def __init__(self, panel: "App"):
-        self.panel = panel
+    def __init__(self, app: "App"):
+        self.app = app
 
     def _render(self, layout: str | None = None, card: str | None = None) -> Image.Image:
-        p = self.panel
-        r = (Renderer(replace(p.cfg, layout=layout), p.logos, idle=p.idle, rotation=p.renderer.rotation)
+        p = self.app.lan
+        r = (Renderer(replace(p.cfg, layout=layout), self.app.logos, idle=p.idle, rotation=p.renderer.rotation)
              if layout else p.renderer)
         return r.render(p.model, time.time(), card=card or None)
 
@@ -96,10 +97,10 @@ class _Handlers:
             return None
 
     async def frame(self, req: web.Request) -> web.Response:
-        p = self.panel
+        app, p = self.app, self.app.lan
         now = time.time()
         if p.last_frame_fetch and now - p.last_frame_fetch > ESP32_GAP_S:
-            p.issues.note("esp32_gap", "frames", gap_s=round(now - p.last_frame_fetch))
+            app.issues.note("esp32_gap", "frames", gap_s=round(now - p.last_frame_fetch))
         p.last_frame_fetch = now
         p.frame_count += 1
         body = p.renderer.frame_bytes(self._render(), p.renderer.brightness(now))
@@ -112,11 +113,11 @@ class _Handlers:
         except ValueError:
             scale = 6
         gap = req.query.get("gap", "1") != "0"
-        return web.Response(body=self.panel.renderer.png(img, scale, gap), content_type="image/png",
+        return web.Response(body=self.app.lan.renderer.png(img, scale, gap), content_type="image/png",
                             headers={"Cache-Control": "no-store"})
 
     async def index(self, req: web.Request) -> web.Response:
-        p = self.panel
+        p = self.app.lan
         layout = self._layout(req) or p.cfg.layout
         card = req.query.get("card", "")
         if card not in p.idle.cards:
@@ -127,27 +128,28 @@ class _Handlers:
                                                  "layouts": layouts}, content_type="text/html")
 
     async def display(self, req: web.Request) -> web.Response:
-        return web.Response(text=self.panel.model.to_json(), content_type="application/json")
+        return web.Response(text=self.app.lan.model.to_json(), content_type="application/json")
 
     async def ok(self, req: web.Request) -> web.Response:
-        problems = self.panel.problems(time.time())
+        problems = self.app.problems(time.time())
         return web.Response(text="\n".join(problems or ["ok"]) + "\n", status=503 if problems else 200,
                             headers={"Cache-Control": "no-store"})
 
     async def health(self, req: web.Request) -> web.Response:
-        return web.json_response(self.panel.health())
+        return web.json_response(self.app.health())
 
     async def issues(self, req: web.Request) -> web.Response:
-        return _pretty(self.panel.issues_report())
+        return _pretty(self.app.issues_report())
 
     async def issues_clear(self, req: web.Request) -> web.Response:
-        self.panel.issues.clear()
-        self.panel.issues.save()
-        return web.json_response(self.panel.issues_report())
+        self.app.issues.clear()
+        self.app.issues.save()
+        return web.json_response(self.app.issues_report())
 
     async def stats(self, req: web.Request) -> web.Response:
-        p = self.panel
-        return _pretty({**p.stats.report(), "course": p.airfield.report()})     # Landerichtung: für alle Panels gleich
+        # Landerichtung: für alle Panels gleich
+        return _pretty({**self.app.lan.stats.report(), "course": self.app.airfield.report()})
 
     async def idle(self, req: web.Request) -> web.Response:
-        return _pretty(self.panel.idle.status(self.panel.model, time.time()))
+        p = self.app.lan
+        return _pretty(p.idle.status(p.model, time.time()))

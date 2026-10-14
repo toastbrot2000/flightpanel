@@ -422,7 +422,7 @@ def test_dream_leaves_a_copy_of_the_database_with_the_album(tmp_path):
         app = App(make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False), env={})
         try:
             now = time.time()
-            app.stats.observe([state(cs="EZY1")], DisplayModel(), now)
+            app.lan.stats.observe([state(cs="EZY1")], DisplayModel(), now)
             app.save()
             bak = tmp_path / "flightpanel.db.bak"
             bak.write_text("die Kopie der Vornacht")
