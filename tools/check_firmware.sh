@@ -6,6 +6,7 @@
 #   4. Build ohne include/fw_pubkey.h (ohne signierte Updates) und mit (die Vorlage als Testschlüssel).
 # Geflasht wird mit pio auf dem Rechner, an dem der ESP32 hängt.
 # Toolchain und Bibliotheken landen im Docker-Volume flightpanel-pio (einmal ~1 GB).
+# Die Firmware bettet ../server/flightpanel/certs/roots.pem ein; der Container bekommt nur diese Datei dazu.
 #
 #   sh tools/check_firmware.sh
 set -e
@@ -26,14 +27,16 @@ if [ -n "$insecure" ]; then
   exit 1
 fi
 
-SRC="$(pwd -W 2>/dev/null || pwd)/firmware"   # pwd -W: Git Bash unter Windows
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # pwd -W: Git Bash unter Windows
 MSYS_NO_PATHCONV=1 docker run --rm \
-  -v "$SRC:/src:ro" -v flightpanel-pio:/root/.platformio \
+  -v "$ROOT/firmware:/src:ro" -v "$ROOT/server/flightpanel/certs:/certs:ro" -v flightpanel-pio:/root/.platformio \
   python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 sh -c '
     set -e
     apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git g++ >/dev/null
     pip install -q --root-user-action=ignore --require-hashes -r /src/platformio.lock
-    mkdir /build && cp -r /src/. /build && cd /build
+    mkdir -p /build/firmware /build/server/flightpanel/certs
+    cp -r /src/. /build/firmware && cp /certs/roots.pem /build/server/flightpanel/certs/
+    cd /build/firmware
     rm -rf .pio
     [ -f include/secrets.h ] || cp include/secrets.h.example include/secrets.h
 

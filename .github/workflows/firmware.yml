@@ -1,11 +1,11 @@
-# Firmware: kompiliert sie mit PlatformIO (dasselbe Skript wie lokal), wenn sie sich ändert.
+# Firmware: kompiliert sie mit PlatformIO (dasselbe Skript wie lokal), wenn sie oder ihre Vertrauensliste sich ändert.
 name: firmware
 
 on:
   push:
-    paths: ["firmware/**", "tools/check_firmware.sh", ".github/workflows/firmware.yml"]
+    paths: ["firmware/**", "server/flightpanel/certs/roots.pem", "tools/check_firmware.sh", ".github/workflows/firmware.yml"]
   pull_request:
-    paths: ["firmware/**", "tools/check_firmware.sh", ".github/workflows/firmware.yml"]
+    paths: ["firmware/**", "server/flightpanel/certs/roots.pem", "tools/check_firmware.sh", ".github/workflows/firmware.yml"]
 
 jobs:
   build:
