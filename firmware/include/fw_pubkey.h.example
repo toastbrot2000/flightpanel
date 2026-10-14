@@ -1,22 +1,22 @@
 #pragma once
-// Öffentlicher Schlüssel für signierte Firmware-Updates (ECDSA P-256).
+// Public key for signed firmware updates (ECDSA P-256).
 //
-// Kopieren nach include/fw_pubkey.h (steht in .gitignore) und den Platzhalter unten durch den eigenen öffentlichen
-// Schlüssel ersetzen. Gibt es fw_pubkey.h, baut die Firmware die Update-Prüfung ein (src/fwsig.cpp); ohne die Datei
-// nimmt sie keine Updates über den Server an. Ganze Anleitung: docs/bauanleitung.md, Abschnitt 4, "Signierte Updates".
+// Copy to include/fw_pubkey.h (listed in .gitignore) and replace the placeholder below with your own public key.
+// If fw_pubkey.h exists, the firmware includes the update check (src/fwsig.cpp); without it, the panel accepts no
+// updates from the server. Full instructions: docs/hardware.md, section 7, "Signed firmware updates".
 //
-// Schlüsselpaar einmal anlegen, außerhalb des Repos und außerhalb jedes synchronisierten Ordners (OneDrive, Dropbox,
-// iCloud ...). openssl fragt nach einer Passphrase; die tippt später bei jedem Release ein Mensch:
+// Create the key pair once, outside the repository and outside any synced folder (OneDrive, Dropbox,
+// iCloud ...). openssl asks for a passphrase, which you will type at every release:
 //
 //   mkdir -p ~/flightpanel-signing
 //   openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -aes-256-cbc -out ~/flightpanel-signing/fw_signing.pem
 //   openssl pkey -in ~/flightpanel-signing/fw_signing.pem -pubout
 //
-// Die Ausgabe des letzten Befehls, von BEGIN PUBLIC KEY bis END PUBLIC KEY, ersetzt die drei Zeilen des Platzhalters.
-// Nie den privaten Schlüssel einfügen: Jede firmware.bin ist öffentlich. Steht hier PRIVATE, bricht der Build ab.
+// The output of the last command, from BEGIN PUBLIC KEY to END PUBLIC KEY, replaces the three placeholder lines.
+// Never paste the private key: every firmware.bin is public. If PRIVATE appears here, the build fails.
 //
-// Mit dem Platzhalter baut die Firmware, nimmt aber kein Update an (der Schlüssel ist nicht lesbar), und
-// tools/fw_release.sh lehnt jedes Release ab: Die Signatur passt nicht zu diesem Schlüssel.
+// With the placeholder the firmware builds but accepts no update (the key is unreadable), and
+// tools/fw_release.sh refuses every release: the signature doesn't match this key.
 
 static constexpr char FW_PUBKEY_PEM[] = R"PEM(
 -----BEGIN PUBLIC KEY-----

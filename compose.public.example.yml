@@ -1,22 +1,22 @@
-# Zugang von außen für Panels von Freunden: Beispiel, Anleitung in docs/freunde.md.
+# Remote panels: example, instructions in docs/remote-panels.md.
 #
-# Benutzen: nach compose.override.yml kopieren und die Platzhalter in <spitzen Klammern> ersetzen. Compose liest
-# diese Datei ohne weiteres Zutun neben compose.yml, und sie steht in .gitignore (Domain und Tunnel gehören nicht
-# ins öffentliche Repo):
+# Usage: copy to compose.override.yml and replace the placeholders in <angle brackets>. Compose reads that file
+# automatically next to compose.yml; it is listed in .gitignore (domain and tunnel don't belong in a public
+# repository):
 #
 #   cp compose.public.example.yml compose.override.yml
 #   docker compose up -d
 #
-# Was sie tut:
-#  - legt das Docker-Netz "flightpanel-public" an. Darin hängen nur der Server und cloudflared, sonst nichts
-#    (kein Traefik, keine anderen Dienste): Nur dort ist PUBLIC_PORT erreichbar.
-#  - hängt den Server in dieses Netz. Für PUBLIC_PORT (8081) steht hier kein "ports:", und es darf auch keins
-#    dazukommen: Sonst wäre der Port ohne Cloudflare davor erreichbar. Veröffentlicht bleibt allein 8080.
-#  - startet cloudflared, der Anfragen von Cloudflare abholt und an http://flightpanel:8081 weitergibt. Routen und
-#    Access stellt man im Cloudflare-Dashboard ein (docs/freunde.md, Abschnitte 2 und 3).
+# What it does:
+#  - creates the Docker network "flightpanel-public". Only the server and cloudflared are attached to it, nothing
+#    else (no Traefik, no other services): PUBLIC_PORT is reachable only there.
+#  - attaches the server to this network. There is no "ports:" entry for PUBLIC_PORT (8081), and none may be
+#    added: the port would then be reachable without Cloudflare in front. Only 8080 stays published.
+#  - starts cloudflared, which picks up requests from Cloudflare and forwards them to http://flightpanel:8081. Routes
+#    and Access are configured in the Cloudflare dashboard (docs/remote-panels.md, steps 2 and 3).
 #
-# Wer schon einen cloudflared betreibt und ihn weiterverwenden will, streicht den Block "cloudflared" und hängt den
-# vorhandenen Container in seiner eigenen Compose-Datei an dieses Netz:
+# If you already run cloudflared and want to reuse it, delete the "cloudflared" block and attach the existing
+# container to this network in its own compose file:
 #   networks:
 #     flightpanel-public:
 #       external: true
@@ -24,28 +24,27 @@
 services:
   flightpanel:
     networks:
-      - default         # wie bisher: Datenquellen im Netz und der LAN-Port 8080
-      - public          # dazu das Netz zu cloudflared
-    # Label traefik.enable=false, Härtung und alles Übrige stehen schon in compose.yml
+      - default         # as before: data sources on the internet and the LAN port 8080
+      - public          # plus the network to cloudflared
+    # Label traefik.enable=false, hardening and everything else are already in compose.yml
 
   cloudflared:
-    # FESTNAGELN IST PFLICHT: nie ":latest" oder ein Tag allein, ein Tag lässt sich nachträglich verschieben.
-    # Die Regel des Projekts für alles, was ausgeführt wird: nichts, was nicht seit mindestens 7 Tagen
-    # veröffentlicht ist. Version und Digest holen:
-    #   1. auf https://github.com/cloudflare/cloudflared/releases eine Version wählen, die mindestens 7 Tage alt ist
+    # PINNING IS MANDATORY: never ":latest" or a bare tag, a tag can be moved later.
+    # Only use a release that has been published for at least 7 days. To get version and digest:
+    #   1. pick a version at least 7 days old on https://github.com/cloudflare/cloudflared/releases
     #   2. docker buildx imagetools inspect cloudflare/cloudflared:<version>
-    #      (die Zeile "Digest: sha256:…"; ohne buildx: docker pull cloudflare/cloudflared:<version>, dann
+    #      (the line "Digest: sha256:…"; without buildx: docker pull cloudflare/cloudflared:<version>, then
     #      docker image inspect --format '{{index .RepoDigests 0}}' cloudflare/cloudflared:<version>)
-    #   3. beides unten eintragen. Ein späteres Update ist wieder von Hand, nach 7 Tagen Wartezeit
+    #   3. enter both below. Later updates are manual again, after the 7-day wait
     image: cloudflare/cloudflared:<version>@sha256:<digest>
     command: ["tunnel", "--no-autoupdate", "run"]
     restart: unless-stopped
-    # Der Token des Tunnels steht in einer eigenen Datei, nicht in .env: Die liest auch der Server-Container, und er
-    # braucht den Token nicht. cloudflared.env enthält nur die Zeile TUNNEL_TOKEN=… (chmod 600, steht in .gitignore)
+    # The tunnel token lives in its own file, not in .env: the server container reads .env too and doesn't need
+    # the token. cloudflared.env contains only the line TUNNEL_TOKEN=… (chmod 600, listed in .gitignore)
     env_file:
       - cloudflared.env
     networks:
-      - public          # nur dieses Netz: cloudflared sieht vom Homelab nichts außer dem Server
+      - public          # this network only: cloudflared sees nothing on your network except the server
     cap_drop:
       - ALL
     security_opt:
@@ -58,4 +57,4 @@ services:
 
 networks:
   public:
-    name: flightpanel-public   # fester Name, damit sich ein vorhandener cloudflared anhängen kann (external: true)
+    name: flightpanel-public   # fixed name, so an existing cloudflared can attach (external: true)

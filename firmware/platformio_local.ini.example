@@ -1,19 +1,19 @@
-; Lokale PlatformIO-Einstellungen, nur auf diesem Rechner (platformio_local.ini steht in .gitignore).
+; Local PlatformIO settings, for this machine only (platformio_local.ini is listed in .gitignore).
 ;
 ;   cp platformio_local.ini.example platformio_local.ini
 ;
-; platformio.ini liest die Datei über extra_configs, wenn es sie gibt; ohne sie baut die
-; Firmware trotzdem. Gebraucht wird sie nur fürs Hochladen per WLAN:
+; platformio.ini reads the file via extra_configs if it exists; without it the
+; firmware still builds. It is only needed for uploading over Wi-Fi:
 ;
 ;   pio run -e esp32dev_ota -t upload
 ;
-; Das Passwort muss zu OTA_PASSWORD in include/secrets.h passen. Ist das dort leer, läuft auf
-; dem Panel kein OTA, und es gibt nichts, wohin hochgeladen werden könnte.
+; The password must match OTA_PASSWORD in include/secrets.h. If that is empty, the panel
+; runs no OTA and there is nothing to upload to.
 ;
-; Am einfachsten aus Buchstaben und Ziffern. Nicht verwenden: "%" (PlatformIO lehnt dann die
-; ganze Konfiguration ab, auch für normale Builds) und "${" (wird ersetzt). Nach einem
-; Leerzeichen beginnen ";" und "#" einen Kommentar.
-; pio im Ordner firmware/ aufrufen, von dort aus wird die Datei gesucht.
+; Letters and digits are simplest. Don't use "%" (PlatformIO then rejects the whole
+; configuration, including normal builds) or "${" (gets substituted). After a space,
+; ";" and "#" start a comment.
+; Run pio inside the firmware/ folder; that is where the file is looked for.
 
 [env:esp32dev_ota]
 upload_flags =

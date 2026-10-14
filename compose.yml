@@ -3,13 +3,13 @@ services:
     build: ./server
     container_name: flightpanel
     restart: unless-stopped
-    user: "${PUID:-1000}:${PGID:-1000}"     # ohne Rechte; auf Linux der Besitzer von ./data (PUID, PGID in .env)
+    user: "${PUID:-1000}:${PGID:-1000}"     # unprivileged; on Linux the owner of ./data (PUID, PGID in .env)
     env_file: .env
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/data        # mitgelieferte Daten (airlines.json ...), Logos, Datenbank; muss PUID:PGID gehören
-    # Härtung: nichts Schreibbares außer /data und /tmp (klein), keine Rechte, keine neuen Rechte, wenige Prozesse
+      - ./data:/data        # bundled data (airlines.json ...), logos, database; must be owned by PUID:PGID
+    # Hardening: nothing writable except /data and a small /tmp, no capabilities, no new privileges, few processes
     read_only: true
     tmpfs:
       - /tmp:size=64m
@@ -18,9 +18,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    labels:                 # ein Traefik mit Docker-Provider soll den Port ohne Anmeldung nicht veröffentlichen
+    labels:                 # keep a Traefik with Docker provider from publishing this port, which has no login
       - traefik.enable=false
-    logging:                # Docker-Log begrenzen (rund 1 MB am Tag), sonst wächst es ohne Ende
+    logging:                # cap the Docker log (about 1 MB a day), otherwise it grows forever
       driver: json-file
       options:
         max-size: "5m"

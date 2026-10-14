@@ -1,12 +1,12 @@
-# Eigene Einstellungen (Standort!) und Zugangsdaten
+# Your own settings (location!) and credentials
 .env
 firmware/include/secrets.h
 firmware/include/fw_pubkey.h
 firmware/platformio_local.ini
 
-# Im Betrieb erzeugt (Docker-Volume ./data)
+# Generated at runtime (Docker volume ./data)
 data/flightpanel.db*
-# Kopien der Datenbank unter anderem Namen (panels backup, nächtliche Kopie): Standort und Album
+# Database copies under other names (panels backup, nightly copy): location and album
 data/*.db
 data/*.db-*
 data/*.db.*
@@ -18,12 +18,12 @@ data/stats.json
 data/tle.txt
 data/*.tmp
 data/*.log
-# Logos sind Marken der Airlines: Der Server holt sie selbst, auch handgemachte bleiben lokal
+# Logos are airline trademarks: the server fetches them itself, hand-made ones stay local too
 data/logos/*
-# Firmware-Releases (tools/fw_release.sh): signierte Images gehören auf den Server, nicht ins Repo
+# Firmware releases (tools/fw_release.sh): signed images belong on the server, not in the repository
 data/firmware/
 
-# Werkzeuge
+# Tools
 firmware/.pio/
 __pycache__/
 *.pyc
@@ -31,12 +31,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Zugang von außen für Freunde (docs/freunde.md): die eigene Compose-Ergänzung (Domain, Tunnel) und der Token des Tunnels
+# Remote panels (docs/remote-panels.md): your compose override (domain, tunnel) and the tunnel token
 compose.override.yml
 cloudflared.env
 
-# Worktrees von Claude-Code-Sitzungen (eigene Git-Repos, nie einchecken)
+# Worktrees of Claude Code sessions (separate Git checkouts, never commit)
 .claude/worktrees/
 
-# Interne Planungsdokumente
+# Internal planning documents
 docs/superpowers/
