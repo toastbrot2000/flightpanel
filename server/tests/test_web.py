@@ -458,17 +458,17 @@ def test_without_a_known_panel_the_firmware_comes_from_stable(tmp_path):
         app = App(make_cfg(mock=True, data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False), env={})
         try:
             set_channel(app, "canary", time.time() + 10)
-            assert Handlers(app, lambda req: None, lambda origin: False).channel(None) == "stable"
-            assert Handlers(app, lambda req: app.lan, lambda origin: False).channel(None) == "canary"
+            assert Handlers(app, lambda req: None, lambda origin, req: False).channel(None) == "stable"
+            assert Handlers(app, lambda req: app.lan, lambda origin, req: False).channel(None) == "canary"
         finally:
             await app.session.close()
 
     asyncio.run(run())
 
 
-def test_clearing_issues_needs_no_origin_or_one_from_the_lan(tmp_path):
-    """curl schickt keinen Origin (README); ein Browser immer, und dann muss er aus dem LAN kommen: Eine fremde Website
-    im Browser im LAN darf /issues nicht leeren."""
+def test_clearing_issues_needs_no_origin_or_the_servers_own(tmp_path):
+    """curl schickt keinen Origin (README); ein Browser immer, und dann muss es eine Seite dieses Servers sein, unter
+    dem Namen, unter dem er ihn anfragt (Host), in jeder Schreibweise, mit http oder https (ein Proxy davor)."""
     async def run():
         async with lan(tmp_path) as (app, client):
             for origin in ("https://evil.example.com", "null", "http://nas.fritz.box:8080", "http://192.168.1.5.nip.io",
@@ -476,11 +476,40 @@ def test_clearing_issues_needs_no_origin_or_one_from_the_lan(tmp_path):
                 app.issues.note("exception", "x")
                 r = await client.post("/issues/clear", headers={"Origin": origin})
                 assert r.status == 403 and "exception:x" in app.issues.items, origin
-            for headers in ({}, {"Origin": "http://192.168.1.5:8080"}, {"Origin": "http://nas:8080"},
-                            {"Origin": "http://[::1]:8080"}, {"Origin": "https://flightpanel.local"},
-                            {"Origin": "http://nas.internal:8080"}):
+            for headers in ({}, {"Host": "192.168.1.5:8080", "Origin": "http://192.168.1.5:8080"},
+                            {"Host": "nas:8080", "Origin": "http://nas:8080"},
+                            {"Host": "[::1]:8080", "Origin": "http://[::1]:8080"},
+                            {"Host": "flightpanel.local", "Origin": "https://flightpanel.local"},
+                            {"Host": "Nas.Internal:8080", "Origin": "http://nas.internal:8080"}):
                 app.issues.note("exception", "x")
                 r = await client.post("/issues/clear", headers=headers)
                 assert r.status == 200 and "exception:x" not in app.issues.items, headers
+
+    asyncio.run(run())
+
+
+# Seiten anderswo, jede mit ihrem eigenen Origin: im Internet unter einer IP-Adresse (ohne Namen, also ohne
+# DNS-Rebinding), Adressen, die nie ein Server im LAN ist, und andere Geräte im LAN
+FOREIGN_PAGES = ("http://203.0.113.5", "https://203.0.113.5:8443", "http://8.8.8.8", "http://[2001:db8::1]",
+                 "http://169.254.169.254", "http://nas:8080", "http://192.168.1.6:8080")
+
+
+def own_origin(client: TestClient) -> str:
+    """Der Origin der Seiten des Servers, wie der Test-Client ihn anspricht (Host: 127.0.0.1:<Port>)."""
+    return f"http://{client.host}:{client.port}"
+
+
+@pytest.mark.parametrize("origin", FOREIGN_PAGES)
+def test_a_page_elsewhere_cannot_clear_issues(tmp_path, origin):
+    """/issues/clear kommt ohne Rückfrage des Browsers an (kein JSON, kein eigener Header). Galt jede IP-Adresse als
+    LAN, leerte eine Seite unter http://203.0.113.5, im Browser im LAN geöffnet, die Liste samt der Warnung, dass die
+    Datenbank beiseitegelegt wurde."""
+    async def run():
+        async with lan(tmp_path) as (app, client):
+            app.issues.note("exception", "x")
+            r = await client.post("/issues/clear", headers={"Origin": origin})
+            assert r.status == 403 and "exception:x" in app.issues.items
+            r = await client.post("/issues/clear", headers={"Origin": own_origin(client)})
+            assert r.status == 200 and "exception:x" not in app.issues.items
 
     asyncio.run(run())

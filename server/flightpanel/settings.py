@@ -11,9 +11,9 @@ nur mit dem Schalter (web.make_web_app, web.make_public_app).
                    Datenbank bleibt, wie sie war.
 
 Schreiben nur als application/json (sonst 415), mit höchstens MAX_BODY Byte (sonst 413) und einem Origin, den die
-Handler zulassen (sonst 403): am LAN-Port eine Seite aus dem LAN (web.lan_origin), am Zugang von außen genau
-https://<PUBLIC_HOST> (web.make_public_app). Welches Panel gemeint ist, sagt der Resolver der Handler: am LAN-Port
-das Panel am LAN-Port, von außen das der Anmeldung.
+Handler zulassen (sonst 403): am LAN-Port eine Seite dieses Servers (web.same_origin, web.lan_origin), am Zugang von
+außen genau https://<PUBLIC_HOST> (web.make_public_app). Welches Panel gemeint ist, sagt der Resolver der Handler:
+am LAN-Port das Panel am LAN-Port, von außen das der Anmeldung.
 
 Skript und Stil liegen in static/ (settings.js, settings.css), nicht in der Seite: Die Content-Security-Policy
 (web.SECURITY_HEADERS) lässt nur Dateien vom Server selbst laufen. Zum Eichen holt die Seite alle 5 s display.json
@@ -127,7 +127,7 @@ class SettingsPage:
 
     async def post(self, req: web.Request) -> web.Response:
         origin = req.headers.get("Origin")
-        if not origin or not self.h.origin_ok(origin):
+        if not origin or not self.h.origin_ok(origin, req):
             return _refuse(403, "Gespeichert wird nur von dieser Seite aus: Der Browser schickte einen fremden oder "
                                 "keinen Origin.")
         if req.content_type != "application/json":

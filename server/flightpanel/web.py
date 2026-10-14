@@ -32,7 +32,8 @@ Der LAN-Port hat keine Anmeldung und gehört nur ins LAN. Darum (lan_guard):
     ein Router vergibt (nas.fritz.box), stehen nur, wenn der Betreiber sie in LAN_HOSTS einträgt.
   - Ist der Zugang von außen eingerichtet (Config.public), sagt er 403 zu allem, was Cloudflare-Header trägt: Dann
     hängt der Tunnel am falschen Port.
-  - Schreiben nur mit einem Origin aus dem LAN (lan_origin); POST /issues/clear auch ganz ohne (curl im README).
+  - Schreiben nur von den Seiten dieses Servers: Origin gleich dem Host der Anfrage (same_origin) und aus dem LAN
+    (lan_origin); POST /issues/clear auch ganz ohne (curl im README).
   - Jede Antwort trägt SECURITY_HEADERS, auch Fehler und statische Dateien: Skripte und Stile kommen nur als Dateien
     vom Server selbst, nie aus der Seite.
 """
@@ -178,7 +179,8 @@ def make_web_app(app: "App") -> web.Application:
     web_app[ROUTES] = {}
     web_app.on_response_prepare.append(security_headers)
     links = LAN_LINKS + (("/settings",) if cfg.settings_page else ())
-    h = Handlers(app, lambda req: app.lan, lambda origin: lan_origin(origin, cfg.lan_hosts), links)
+    h = Handlers(app, lambda req: app.lan,
+                 lambda origin, req: same_origin(origin, req) and lan_origin(origin, cfg.lan_hosts), links)
     add_panel_routes(web_app, h)
     add(web_app, "GET", "/health", h.health)
     add(web_app, "GET", "/ok", h.ok)
@@ -205,7 +207,7 @@ def make_public_app(app: "App", gate: "Gate") -> web.Application:
     web_app.on_response_prepare.append(security_headers)
     origin = f"https://{cfg.public_host}"
     links = PUBLIC_LINKS + (("/settings",) if cfg.settings_page else ())
-    h = Handlers(app, _panel_of(app, gate), lambda o: o == origin, links, max_scale=PUBLIC_MAX_SCALE)
+    h = Handlers(app, _panel_of(app, gate), lambda o, req: o == origin, links, max_scale=PUBLIC_MAX_SCALE)
     for method, path, kind, handler in (
             ("GET", "/", EMAIL, h.index),                       # Vorschau, verlinkt nur das eigene Panel
             ("GET", "/frame.png", EMAIL, h.frame_png),
@@ -288,6 +290,17 @@ def lan_origin(origin: str, extra: tuple[str, ...] = ()) -> bool:
     nur ein Name, den lan_host annimmt (kein Pfad, kein Benutzer). "null" (etwa aus einer Datei) ist fremd."""
     scheme, sep, host = origin.partition("://")
     return bool(sep) and scheme in ("http", "https") and lan_host(host, extra)
+
+
+def same_origin(origin: str, req: web.Request) -> bool:
+    """Kommt ein Schreibzugriff von einer Seite dieses Servers, so wie der Browser ihn anfragt? Origin http oder https,
+    dahinter genau der Host der Anfrage (Name und Port, groß oder klein egal). Den Host setzt der Browser aus der
+    Adresse, die er anfragt; eine Seite anderswo schickt ihren eigenen Origin, auch eine unter einer IP-Adresse im
+    Internet (http://203.0.113.5) oder auf einem anderen Gerät im LAN. Am LAN-Port zusammen mit lan_origin; am Zugang
+    von außen gilt PUBLIC_HOST (vor dem Port steht cloudflared)."""
+    scheme, sep, host = origin.partition("://")
+    return (bool(sep) and scheme in ("http", "https")
+            and [h.lower() for h in req.headers.getall("Host", [])] == [host.lower()])
 
 
 def lan_guard(cfg: Config):
@@ -394,10 +407,10 @@ def _pretty(obj) -> web.Response:
 
 class Handlers:
     """Die Handler, für jeden Port dieselben. resolve(req) gibt das Panel der Anfrage (None: keines bekannt, nur am
-    Zugang von außen bei den Firmware-Dateien), origin_ok(origin) sagt, ob eine Seite mit diesem Origin schreiben
-    darf, links, was die Vorschau verlinkt, max_scale, wie groß /frame.png höchstens wird."""
+    Zugang von außen bei den Firmware-Dateien), origin_ok(origin, req) sagt, ob eine Seite mit diesem Origin mit
+    dieser Anfrage schreiben darf, links, was die Vorschau verlinkt, max_scale, wie groß /frame.png höchstens wird."""
 
-    def __init__(self, app: "App", resolve: Resolver, origin_ok: Callable[[str], bool],
+    def __init__(self, app: "App", resolve: Resolver, origin_ok: Callable[[str, web.Request], bool],
                  links: tuple[str, ...] = (), max_scale: int = LAN_MAX_SCALE):
         self.app = app
         self.resolve = resolve
@@ -419,7 +432,7 @@ class Handlers:
     def foreign(self, req: web.Request) -> bool:
         """Ein Origin, der nicht schreiben darf? Ohne Origin nicht: Ein Browser schickt bei POST immer einen."""
         origin = req.headers.get("Origin")
-        return origin is not None and not self.origin_ok(origin)
+        return origin is not None and not self.origin_ok(origin, req)
 
     def _render(self, p: "Panel", layout: str | None = None, card: str | None = None) -> Image.Image:
         r = (Renderer(replace(p.cfg, layout=layout), self.app.logos, idle=p.idle, rotation=p.renderer.rotation)

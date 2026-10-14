@@ -1,5 +1,5 @@
 """Einstellungsseite (SETTINGS_PAGE=1): aus den Panel-Feldern in config.py gebaut, jeder Wert escaped, kein Skript und
-kein Stil in der Seite. Speichern nur als JSON, mit einem Origin aus dem LAN, geprüft wie panels set; das Panel
+kein Stil in der Seite. Speichern nur als JSON, von der Seite dieses Servers, geprüft wie panels set; das Panel
 übernimmt es sofort, ohne Neustart. Ohne den Schalter gibt es die Seite nicht."""
 
 import asyncio
@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from test_web import inline_free
+from test_web import FOREIGN_PAGES, inline_free
 
 from conftest import make_cfg
 from flightpanel.cards import CARDS
@@ -18,7 +18,8 @@ from flightpanel.config import panel_fields
 from flightpanel.main import App
 from flightpanel.web import STATIC_DIR, make_web_app
 
-ORIGIN = "http://192.168.1.5:8080"
+HOST = "192.168.1.5:8080"           # so fragt der Browser den Server an (Host) ...
+ORIGIN = f"http://{HOST}"           # ... und das ist dann der Origin seiner Seiten
 
 
 @asynccontextmanager
@@ -36,9 +37,10 @@ async def page(tmp_path, settings_page=True, **kw):
         await app.session.close()
 
 
-async def save(client, settings=None, origin=ORIGIN, content_type="application/json", body=None):
-    """POST /settings, wie settings.js es schickt: {"settings": {NAME: Wert | None}} als JSON."""
-    headers = {"Content-Type": content_type}
+async def save(client, settings=None, origin=ORIGIN, content_type="application/json", body=None, host=HOST):
+    """POST /settings, wie settings.js es schickt: {"settings": {NAME: Wert | None}} als JSON, an den Server unter
+    host."""
+    headers = {"Content-Type": content_type, "Host": host}
     if origin is not None:
         headers["Origin"] = origin
     data = body if body is not None else json.dumps({"settings": settings}).encode()
@@ -197,12 +199,27 @@ def test_saving_needs_an_origin_from_the_lan(tmp_path, origin):
     asyncio.run(run())
 
 
-def test_lan_origins_may_save(tmp_path):
+def test_the_servers_own_pages_may_save_under_every_lan_name(tmp_path):
     async def run():
         async with page(tmp_path, lan_hosts=("nas.fritz.box",)) as (app, client):
-            for origin in ("http://192.168.1.5:8080", "http://nas:8080", "http://[::1]:8080",
-                           "https://flightpanel.local", "http://nas.internal:8080", "http://nas.fritz.box:8080"):
-                assert (await save(client, {"HOME_LAT": "52.45"}, origin=origin)).status == 200, origin
+            for host, origin in (("192.168.1.5:8080", "http://192.168.1.5:8080"), ("nas:8080", "http://nas:8080"),
+                                 ("[::1]:8080", "http://[::1]:8080"), ("flightpanel.local", "https://flightpanel.local"),
+                                 ("nas.internal:8080", "http://nas.internal:8080"), ("NAS:8080", "http://nas:8080"),
+                                 ("nas.fritz.box:8080", "http://nas.fritz.box:8080")):
+                assert (await save(client, {"HOME_LAT": "52.45"}, origin=origin, host=host)).status == 200, origin
+            assert stored(app) == {"HOME_LAT": "52.45"}
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("origin", FOREIGN_PAGES)
+def test_a_page_elsewhere_cannot_save(tmp_path, origin):
+    """Auch nicht unter einer IP-Adresse oder von einem anderen Gerät im LAN: nur die Seite dieses Servers."""
+    async def run():
+        async with page(tmp_path) as (app, client):
+            r = await save(client, {"HOME_LAT": "52.45"}, origin=origin)
+            assert r.status == 403 and (await r.json())["error"] and stored(app) == {}
+            assert (await save(client, {"HOME_LAT": "52.45"})).status == 200
             assert stored(app) == {"HOME_LAT": "52.45"}
 
     asyncio.run(run())
@@ -233,7 +250,7 @@ def test_too_much_is_refused_also_when_sent_in_pieces(tmp_path):
                 yield b'eta"}}'
 
             r = await client.post("/settings", data=pieces(),
-                                  headers={"Origin": ORIGIN, "Content-Type": "application/json"})
+                                  headers={"Host": HOST, "Origin": ORIGIN, "Content-Type": "application/json"})
             assert r.status == 413 and stored(app) == {}
             assert (await save(client, {"HOME_LAT": " " * 16000 + "52.45"})).status == 200   # knapp unter 16 KB
             assert stored(app) == {"HOME_LAT": "52.45"}
