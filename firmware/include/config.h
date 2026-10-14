@@ -39,8 +39,11 @@
 #define HUB75_DOUBLE_BUFFER  true
 
 // ---- Verhalten ------------------------------------------------------------
-#define POLL_MS            2000     // Abstand der /frame-Abrufe
-#define HTTP_TIMEOUT_MS    3000
+#define POLL_MS            2000     // Abstand der /panel/frame-Abrufe
+#define HTTP_TIMEOUT_MS    3000     // Antwort: so lange darf zwischen zwei Zeilen oder Paketen Ruhe sein
+#define HTTP_CONNECT_MS    5000     // TCP-Verbindungsaufbau
+#define TLS_HANDSHAKE_S    15       // TLS-Handschlag (die Bibliothek wartet sonst 120 s)
+#define FRAME_DEADLINE_MS  10000    // ganzes Bild empfangen; ein Server, der nur tröpfelt, ist ein Fehler
 #define OFFLINE_MARK_MS    60000    // nach so lange ohne Frame: roter Punkt unten rechts
 #define RESTART_AFTER_MS   600000   // nach so lange ohne Frame: Neustart
 #define WDT_TIMEOUT_S      60       // Task-Watchdog auf loop(): hängt ein Durchlauf so lange, Neustart (OTA füttert mit)

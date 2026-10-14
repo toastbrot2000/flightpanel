@@ -3,17 +3,20 @@
 //
 //   display   HUB75-Ausgabe            settings  WLAN, Server, Token im NVS
 //   wlan      WLAN als Station         portal    Einrichtungs-WLAN (voll oder nur WLAN)
+//   net       die eine Verbindung      frame     GET /panel/frame mit ETag und Diagnose
 //   ota       ArduinoOTA mit Passwort  watchdog  Task-Watchdog auf loop()
 //
 // Frame-Format (Server -> ESP32): [Version, Helligkeit, Breite, Höhe] + RGB
 
 #include <Arduino.h>
-#include <HTTPClient.h>
 #include <WiFi.h>
 #include <esp_system.h>   // esp_reset_reason()
 
 #include "config.h"
 #include "display.h"
+#include "frame.h"
+#include "fw_version.h"
+#include "net.h"
 #include "ota.h"
 #include "portal.h"
 #include "settings.h"
@@ -21,8 +24,8 @@
 #include "wlan.h"
 
 static Settings cfg;
-static uint8_t frame[FRAME_LEN];
-static uint32_t lastOk = 0;          // millis() des letzten gültigen Frames
+static uint8_t frameBuf[FRAME_LEN];
+static uint32_t lastOk = 0;          // millis() des letzten gültigen Bildes (auch 304)
 static uint32_t lastPoll = 0;
 static uint32_t failures = 0;
 static bool offlineMarked = false;
@@ -45,47 +48,11 @@ static bool bootHeld(uint32_t windowEnd) {
   return false;
 }
 
-// ---- Frame holen und anzeigen ---------------------------------------------
-static bool fetchFrame() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-  WiFiClient client;
-  HTTPClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
-  http.setUserAgent("flightpanel-esp32");
-  if (!http.begin(client, cfg.server + "/frame")) return false;
-  const int code = http.GET();
-  bool ok = false;
-  if (code == HTTP_CODE_OK) {
-    const int len = http.getSize();
-    if (len == FRAME_LEN) {
-      WiFiClient* s = http.getStreamPtr();
-      size_t got = 0;
-      const uint32_t t0 = millis();
-      while (got < FRAME_LEN && millis() - t0 < HTTP_TIMEOUT_MS) {
-        const int n = s->readBytes(frame + got, FRAME_LEN - got);
-        if (n <= 0) { delay(1); continue; }
-        got += n;
-      }
-      ok = (got == FRAME_LEN) && frame[0] == PROTO_VERSION && frame[2] == WIDTH && frame[3] == HEIGHT;
-      if (!ok) Serial.printf("Frame ungültig: got=%u ver=%u %ux%u\n", (unsigned)got, frame[0], frame[2], frame[3]);
-    } else {
-      Serial.printf("Frame: falsche Länge %d (erwartet %d)\n", len, FRAME_LEN);
-    }
-  } else {
-    Serial.printf("HTTP %d\n", code);
-  }
-  http.end();
-  if (!ok) return false;
-  display::showFrame(frame);
-  return true;
-}
-
-// ---- Arduino ----------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
   delay(200);
   const uint32_t start = millis();
-  Serial.printf("\nflightpanel HUB75 %ux%u (%d Panels)\n", WIDTH, HEIGHT, PANEL_CHAIN);
+  Serial.printf("\nflightpanel HUB75 %ux%u (%d Panels), Firmware %s\n", WIDTH, HEIGHT, PANEL_CHAIN, FW_VERSION);
   // Das Testbild gibt es nur nach dem Einschalten. Jeder andere Neustart (Software-Reset nach RESTART_AFTER_MS ohne
   // Daten, OTA, Watchdog, Unterspannung, Einrichtungs-WLAN) bleibt still, sonst blitzt das Panel bei einem
   // Serverausfall die ganze Nacht alle 10 Minuten auf.
@@ -106,6 +73,7 @@ void setup() {
   }
 
   wlan::begin(cfg);
+  net::begin(cfg);
   ota::begin();
   lastOk = millis();   // Neustart-Zähler erst ab jetzt
 }
@@ -122,7 +90,9 @@ void loop() {
       Serial.println("Einrichtungs-WLAN ohne Ergebnis zu, WLAN weiter weg: Neustart");
       ESP.restart();   // still; danach wieder 5 min Versuche, dann wieder das Einrichtungs-WLAN
     }
-    lastOk = millis();   // WLAN wieder da: Fristen neu beginnen
+    // Das Panel zeigte Name und Passwort: nächstes Bild ganz holen (kein 304), Fristen neu beginnen
+    frame::forgetEtag();
+    lastOk = millis();
     offlineMarked = false;
     return;
   }
@@ -130,17 +100,20 @@ void loop() {
   const uint32_t now = millis();
   if (now - lastPoll >= POLL_MS) {
     lastPoll = now;
-    if (fetchFrame()) {
+    const frame::Result r = frame::fetch(frameBuf);
+    if (r == frame::Result::Fresh) display::showFrame(frameBuf);
+    if (r == frame::Result::Failed) {
+      failures++;
+    } else {   // neues Bild oder 304: das angezeigte ist aktuell
       lastOk = now;
       failures = 0;
       offlineMarked = false;
-    } else {
-      failures++;
     }
   }
 
   if (now - lastOk > OFFLINE_MARK_MS && !offlineMarked) {
     display::markOffline();
+    frame::forgetEtag();   // der Punkt liegt auf dem Bild: das nächste ganz holen, ein 304 ließe ihn stehen
     offlineMarked = true;
     Serial.printf("offline seit %lus (%lu Fehler)\n", (unsigned long)((now - lastOk) / 1000), (unsigned long)failures);
   }

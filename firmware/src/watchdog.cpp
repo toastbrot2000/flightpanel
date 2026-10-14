@@ -1,10 +1,12 @@
 // Task-Watchdog: Arduino-ESP32 2.0.17 (IDF 4.4) legt ihn beim Start mit 5 s und Panic an und überwacht nur den
 // Leerlauf-Task von Core 0, loop() nicht. Hier wird er auf WDT_TIMEOUT_S gesetzt (esp_task_wdt_init ändert bei
 // laufendem Watchdog Timeout und Panic) und der loop()-Task kommt dazu. RESTART_AFTER_MS fängt nur einen Server
-// ohne Bilder, keinen Hänger in loop(). 60 s liegen über jeder einzelnen Wartezeit hier: DNS 15 s, Verbindung
-// 5 s, Antwort 3 s, in setup() WLAN-Aufbau 10 s und Testbild 4 s. Länger dauern können nur eine tröpfelnde
-// Antwort (readBytes() gibt erst nach 3 s ohne Byte auf) und ein OTA-Upload; dessen onProgress-Rückrufe füttern.
-// API von IDF 4.4, beim Umstieg auf Arduino 3.x neu prüfen.
+// ohne Bilder, keinen Hänger in loop(). 60 s liegen über jeder einzelnen Wartezeit: DNS bis 15 s, Verbindung 5 s,
+// TLS-Handschlag 15 s, Antwort 3 s je Zeile; in setup() WLAN-Aufbau 10 s, Testbild samt BOOT-Fenster 6 s, Suche
+// nach WLANs 4 s. Länger dauern können ein Bild-Download (jedes Paket füttert, FRAME_DEADLINE_MS begrenzt), das
+// Einrichtungs-WLAN (die Schleife füttert) und ein OTA-Upload (jeder Block füttert). Hängt eine Antwort ohne
+// Daten, aber bei offener Verbindung, wartet HTTPClient::writeToStream ohne eigene Frist: Das fängt erst der
+// Watchdog. API von IDF 4.4, beim Umstieg auf Arduino 3.x neu prüfen.
 #include "watchdog.h"
 
 #include <Arduino.h>

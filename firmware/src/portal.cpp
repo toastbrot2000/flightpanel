@@ -13,6 +13,7 @@
 
 #include "config.h"
 #include "display.h"
+#include "net.h"
 #include "settings.h"
 #include "watchdog.h"
 
@@ -299,6 +300,7 @@ String apPassword() {
 namespace portal {
 
 void run(Mode mode, const Settings& current) {
+  net::stop();   // nie neben einer TLS-Verbindung: deren Puffer zuerst frei
   st = State();
   st.mode = mode;
   st.current = &current;
