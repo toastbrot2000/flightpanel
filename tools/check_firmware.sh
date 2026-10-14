@@ -6,6 +6,7 @@
 #   4. Build ohne include/fw_pubkey.h (ohne signierte Updates) und mit (die Vorlage als Testschlüssel).
 # Geflasht wird mit pio auf dem Rechner, an dem der ESP32 hängt.
 # Toolchain und Bibliotheken landen im Docker-Volume flightpanel-pio (einmal ~1 GB).
+# Gebaut wird, was im Ordner liegt: ohne include/secrets.h wie für Freunde (Einrichtungs-WLAN, kein OTA).
 # Die Firmware bettet ../server/flightpanel/certs/roots.pem ein; der Container bekommt nur diese Datei dazu.
 #
 #   sh tools/check_firmware.sh
@@ -38,8 +39,6 @@ MSYS_NO_PATHCONV=1 docker run --rm \
     cp -r /src/. /build/firmware && cp /certs/roots.pem /build/server/flightpanel/certs/
     cd /build/firmware
     rm -rf .pio
-    [ -f include/secrets.h ] || cp include/secrets.h.example include/secrets.h
-
     echo "== Testmanifest: Signatur über die ersten drei Zeilen (openssl)"
     head -n 3 test/data/golden_manifest.txt > /tmp/signed.txt
     tail -n 1 test/data/golden_manifest.txt | tr -d "\n" | openssl base64 -d -A > /tmp/sig.der

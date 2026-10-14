@@ -9,4 +9,5 @@ void clear();
 void testPattern();                        // Kettenfolge, Geometrie, Orientierung; nur nach dem Einschalten
 void showFrame(const uint8_t* frame);      // Kopf schon geprüft: [Version, Helligkeit, Breite, Höhe] + RGB
 void markOffline();                        // roter Punkt unten rechts auf dem letzten Bild
+void showLines(const char* const lines[], int count);   // bis zu 4 Zeilen Text, z. B. Name und Passwort
 }  // namespace display

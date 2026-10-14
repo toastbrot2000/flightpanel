@@ -1,5 +1,6 @@
 #pragma once
-// Hardware- und Anzeige-Konfiguration. Zugangsdaten stehen in secrets.h.
+// Hardware-, Anzeige- und Netz-Konfiguration. WLAN, Server und Token stehen im NVS (Einrichtungs-WLAN);
+// include/secrets.h liefert auf dem Prüfstand nur Vorgaben dafür und das OTA-Passwort (defaults.h).
 
 // ---- Panel-Geometrie ------------------------------------------------------
 #define PANEL_RES_X    64       // Pixel eines Panels, horizontal
@@ -46,6 +47,15 @@
 #define WDT_TEST_HANG_MS   70000    // Prüfstand: "h" + Enter im seriellen Monitor lässt loop() so lange stehen; > WDT_TIMEOUT_S
 #define TEST_PATTERN_AT_BOOT true   // Panels einfärben, Rahmen, Schrift; nur nach dem Einschalten, nicht nach Neustarts
 #define TEST_BRIGHTNESS    40
+
+// ---- WLAN und Einrichtungs-WLAN (portal.cpp) ---------------------------------
+#define WIFI_RETRY_MS      10000    // WLAN weg: so oft neu verbinden
+#define OUTAGE_PORTAL_MS   300000   // so lange ohne WLAN: Einrichtungs-WLAN, nur WLAN-Felder (5 min)
+#define PORTAL_CLOSE_MS    600000   // Einrichtungs-WLAN schließt nach 10 min; ohne Einrichtung bleibt es offen
+#define PORTAL_RETRY_MS    30000    // im Ausfall-Portal: das gespeicherte WLAN so oft wieder versuchen
+#define BOOT_PIN           0        // BOOT-Taste (GPIO0, gedrückt = LOW)
+#define BOOT_HOLD_MS       3000     // so lange halten: volles Einrichtungs-WLAN
+#define BOOT_WINDOW_MS     6000     // nach dem Einschalten: bis dahin muss das Drücken beginnen (Testbild ~4 s)
 
 #define FRAME_HEADER       4
 #define FRAME_LEN          (FRAME_HEADER + WIDTH * HEIGHT * 3)   // 12292

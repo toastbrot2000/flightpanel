@@ -1,4 +1,4 @@
-// HUB75-Ausgabe: Testbild, Bilder vom Server, Offline-Punkt.
+// HUB75-Ausgabe: Testbild, Bilder vom Server, Offline-Punkt und Text für das Einrichtungs-WLAN.
 #include "display.h"
 
 #include <Arduino.h>
@@ -81,6 +81,20 @@ void markOffline() {
   // Letztes Bild bleibt stehen, nur ein dunkelroter Punkt unten rechts dazu
   putPixel(WIDTH - 1, HEIGHT - 1, 60, 0, 0);
   if (HUB75_DOUBLE_BUFFER) { show(); putPixel(WIDTH - 1, HEIGHT - 1, 60, 0, 0); }   // beide Puffer
+}
+
+void showLines(const char* const lines[], int count) {
+  // Schrift der Bibliothek: 6 x 8 Pixel je Zeichen, also 21 Zeichen und 4 Zeilen auf 128 x 32. Nur ASCII.
+  panel->setBrightness8(TEST_BRIGHTNESS);
+  panel->fillScreenRGB888(0, 0, 0);
+  panel->setTextWrap(false);
+  panel->setTextSize(1);
+  for (int i = 0; i < count && i < HEIGHT / 8; i++) {
+    panel->setTextColor(i % 2 ? panel->color565(255, 255, 255) : panel->color565(255, 120, 0));
+    panel->setCursor(1, i * 8);
+    panel->print(lines[i]);
+  }
+  show();
 }
 
 }  // namespace display

@@ -4,15 +4,9 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 
+#include "defaults.h"
 #include "display.h"
-#include "secrets.h"
 #include "watchdog.h"
-
-// OTA gibt es nur mit Passwort. Ohne eines wäre das Flashen im WLAN für jeden offen; dann startet ArduinoOTA gar
-// nicht (kein offener Port, kein mDNS-Name flightpanel.local).
-#ifndef OTA_PASSWORD
-#define OTA_PASSWORD ""   // ältere secrets.h ohne diese Zeile: kein OTA
-#endif
 
 // "changeme" stand bis Oktober 2026 in der Vorlage und im öffentlichen Repo: zählt wie keins.
 static constexpr bool sameText(const char* a, const char* b) {
