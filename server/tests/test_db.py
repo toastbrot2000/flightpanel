@@ -181,6 +181,31 @@ def test_backup_copies_everything(tmp_path):
     assert Db(str(tmp_path / "copy.db")).state_get("k") == "v"
 
 
+@pytest.mark.parametrize("name", ["f.db", "./f.db", "f.db-wal", "f.db-shm"])
+def test_backup_refuses_the_database_itself_and_its_side_files(tmp_path, name):
+    """Eine Kopie auf die Datenbank selbst oder auf ihr -wal/-shm zerstörte sie, statt sie zu sichern."""
+    db = Db(str(tmp_path / "f.db"))
+    db.state_set("k", "v")
+    with pytest.raises(ValueError, match="Datenbank selbst"):
+        db.backup(str(tmp_path / name))
+    assert db.state_get("k") == "v" and db.one("PRAGMA integrity_check")[0] == "ok"
+
+
+def test_backup_replaces_an_older_copy_only_once_the_new_one_is_complete(tmp_path):
+    """Die nächtliche Kopie überschreibt die der Vornacht: Eine kaputte alte hält sie nicht auf, und eine
+    abgebrochene neue lässt die alte stehen. Reste bleiben keine liegen."""
+    db = Db(str(tmp_path / "f.db"))
+    target = tmp_path / "copy.db"
+    target.write_text("die Kopie von gestern, inzwischen kaputt " * 100)
+    db.state_set("k", "heute")
+    db.backup(str(target))
+    db.close()
+    with pytest.raises(Exception, match="closed"):
+        db.backup(str(target))                          # scheitert mittendrin
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["copy.db", "f.db"]
+    assert Db(str(target)).state_get("k") == "heute"
+
+
 def test_a_second_connection_sees_commits(tmp_path):
     """panels.py schreibt, während der Server läuft: beide sehen dieselbe Datei."""
     path = str(tmp_path / "f.db")

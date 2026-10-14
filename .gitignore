@@ -4,6 +4,11 @@ firmware/include/secrets.h
 
 # Im Betrieb erzeugt (Docker-Volume ./data)
 data/flightpanel.db*
+# Kopien der Datenbank unter anderem Namen (panels backup, nächtliche Kopie): Standort und Album
+data/*.db
+data/*.db-*
+data/*.db.*
+data/*.bak
 data/*.imported
 data/cache.json
 data/issues.json

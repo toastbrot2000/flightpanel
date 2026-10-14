@@ -117,6 +117,25 @@ def test_backup(run, tmp_path):
     assert run("backup", str(tmp_path / "copy.db"))[0] == 0 and (tmp_path / "copy.db").exists()
 
 
+def test_backup_never_overwrites_a_file_without_force(run, tmp_path):
+    """Eine vorhandene Datei bleibt, wie sie ist: Es könnte die Sicherung von gestern sein oder etwas ganz anderes.
+    Erst --force ersetzt sie."""
+    target = tmp_path / "copy.db"
+    target.write_text("schon da")
+    code, out, err = run("backup", str(target))
+    assert code == 2 and err.startswith("Fehler: ") and "--force" in err and out == ""
+    assert target.read_text() == "schon da"
+    assert run("backup", str(target), "--force")[0] == 0
+    assert Db(str(target), put_aside=False).panel_get("home") is not None
+
+
+@pytest.mark.parametrize("name", ["flightpanel.db", "flightpanel.db-wal", "flightpanel.db-shm"])
+def test_backup_refuses_the_live_database_even_with_force(run, tmp_path, name):
+    code, _, err = run("backup", str(tmp_path / name), "--force")
+    assert code == 2 and err.startswith("Fehler: ") and "Datenbank selbst" in err
+    assert Db(str(tmp_path / "flightpanel.db"), put_aside=False).panel_get("home") is not None
+
+
 def test_a_backup_that_cannot_be_written_is_reported(run, tmp_path):
     """Ein Tippfehler im Zielverzeichnis ist eine Meldung, kein Traceback."""
     code, _, err = run("backup", str(tmp_path / "gibt-es-nicht" / "copy.db"))

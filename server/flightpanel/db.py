@@ -29,13 +29,14 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 log = logging.getLogger("db")
 
 DatabaseError = sqlite3.DatabaseError       # für Werkzeuge neben dem Server (panels.py), ohne sqlite3-Import
 
 DB_FILE = "flightpanel.db"
+SIDE_FILES = ("", "-wal", "-shm", "-journal")     # die Datenbank und was SQLite neben ihr anlegt
 
 
 def db_path(data_dir: str) -> str:
@@ -125,7 +126,7 @@ class Db:
             broken = self.path + ".broken"
             log.error("%s ist keine lesbare Datenbank (%s): liegt jetzt als %s beiseite, starte leer",
                       os.path.basename(self.path), e, os.path.basename(broken))
-            for suffix in ("", "-wal", "-shm", "-journal"):
+            for suffix in SIDE_FILES:
                 try:
                     os.replace(self.path + suffix, broken + suffix)
                 except FileNotFoundError:
@@ -213,12 +214,25 @@ class Db:
                      (key, json.dumps(value, ensure_ascii=False)))
 
     def backup(self, dest: str) -> None:
-        """Kopie der Datenbank, auch im laufenden Betrieb."""
-        out = sqlite3.connect(dest)
+        """Kopie der Datenbank, auch im laufenden Betrieb, in sich stimmig (SQLite-Backup). Sie entsteht neben dest
+        (dest.tmp) und ersetzt dest erst, wenn sie fertig ist: Eine abgebrochene Kopie lässt die vorige stehen, eine
+        kaputte vorige hält die neue nicht auf. Nie auf die Datenbank selbst oder ihr -wal/-shm, auch nicht unter
+        anderem Namen für dieselbe Datei: Die Kopie zerstörte sie."""
+        if any(_same_file(dest, self.path + suffix) for suffix in SIDE_FILES):
+            raise ValueError(f"{dest} ist die Datenbank selbst oder gehört zu ihr: Die Kopie braucht einen anderen "
+                             "Namen")
+        tmp = dest + ".tmp"
+        _remove(tmp, tmp + "-journal")                  # Reste eines abgebrochenen Laufs
         try:
-            self.conn.backup(out)
-        finally:
-            out.close()
+            out = sqlite3.connect(tmp)
+            try:
+                self.conn.backup(out)
+            finally:
+                out.close()
+            os.replace(tmp, dest)
+        except BaseException:
+            _remove(tmp, tmp + "-journal")
+            raise
 
     def close(self) -> None:
         self.conn.close()
@@ -254,6 +268,21 @@ class Db:
 def _code(e: sqlite3.Error) -> int:
     """Der SQLite-Fehlercode ohne die erweiterten Bits; 0, wenn der Fehler nicht von SQLite selbst kommt."""
     return getattr(e, "sqlite_errorcode", 0) & 0xFF
+
+
+def _same_file(a: str, b: str) -> bool:
+    """Dieselbe Datei, auch unter anderem Namen (Groß- und Kleinschreibung auf einem Windows-Laufwerk, Links); gibt
+    es eine der beiden nicht, entscheidet der Pfad."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return os.path.realpath(a) == os.path.realpath(b)
+
+
+def _remove(*paths: str) -> None:
+    for path in paths:
+        with suppress(OSError):
+            os.remove(path)
 
 
 def _version(conn: sqlite3.Connection) -> int:

@@ -7,7 +7,8 @@
   unset <id> KEY ...          zurück auf den Default
   add <id> [--name NAME]      weiteres Panel (das am LAN-Port, LAN_PANEL, legt der Server an)
   remove <id> --yes           Panel samt Album und Statistik löschen
-  backup <datei>              Kopie der Datenbank, auch im laufenden Betrieb
+  backup <datei> [--force]    Kopie der Datenbank, auch im laufenden Betrieb; eine vorhandene
+                              Datei ersetzt sie nur mit --force, die Datenbank selbst nie
 
 Panel-Einstellungen sind Standort, Sichtfeld, Anzeige, Helligkeit und Ruhezeit und die
 Leerlauf-Karten (CARD_<ID>=0); sie liegen je Panel in DATA_DIR/flightpanel.db. Alles
@@ -18,6 +19,7 @@ Im Container:
 Der Server liest die Einstellungen beim Start: danach docker compose restart flightpanel."""
 
 import argparse
+import os
 import sys
 import time
 
@@ -127,6 +129,11 @@ def cmd_remove(db: Db, cfg: Config, args) -> None:
 
 
 def cmd_backup(db: Db, cfg: Config, args) -> None:
+    """Nie still überschreiben: Eine vorhandene Datei könnte die Sicherung von gestern sein oder etwas ganz anderes.
+    Die Datenbank selbst lehnt Db.backup ab, auch mit --force."""
+    if os.path.exists(args.file) and not args.force:
+        raise ValueError(f"{args.file} gibt es schon und bleibt, wie sie ist. Einen neuen Namen nehmen, etwa mit "
+                         "Datum, oder mit --force ersetzen")
     db.backup(args.file)
     print(f"Kopie: {args.file}")
 
@@ -149,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     add("unset", cmd_unset, ("id", {}), ("keys", {"nargs": "+", "metavar": "KEY"}))
     add("add", cmd_add, ("id", {}), ("--name", {"default": ""}))
     add("remove", cmd_remove, ("id", {}), ("--yes", {"action": "store_true"}))
-    add("backup", cmd_backup, ("file", {}))
+    add("backup", cmd_backup, ("file", {}), ("--force", {"action": "store_true"}))
     args = parser.parse_args(argv)
     try:
         cfg = Config.from_env()
@@ -165,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args.func(db, cfg, args)
         return 0
-    except (ValueError, DatabaseError) as e:    # auch: Datenbank gesperrt, Sicherungsziel nicht schreibbar
+    except (ValueError, DatabaseError, OSError) as e:   # auch: Datenbank gesperrt, Sicherungsziel nicht schreibbar
         print(f"Fehler: {e}", file=sys.stderr)
         return 2
     finally:
