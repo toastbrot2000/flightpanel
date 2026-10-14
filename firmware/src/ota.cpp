@@ -6,6 +6,7 @@
 
 #include "defaults.h"
 #include "display.h"
+#include "frame.h"
 #include "watchdog.h"
 
 // "changeme" stand bis Oktober 2026 in der Vorlage und im öffentlichen Repo: zählt wie keins.
@@ -26,11 +27,13 @@ void begin() {
   }
   ArduinoOTA.setHostname(HOSTNAME);
   ArduinoOTA.setPassword(OTA_PASSWORD);
-  ArduinoOTA.onStart([]() { display::clear(); Serial.println("OTA start"); });
+  // Ein Upload macht das Panel schwarz. Scheitert er, läuft das alte Image weiter, und mit dem ETag des letzten Bildes
+  // bekäme es nur 304 und bliebe schwarz, bis sich das Bild ändert: ETag vergessen, der nächste Abruf holt es ganz.
+  ArduinoOTA.onStart([]() { display::clear(); frame::forgetEtag(); Serial.println("OTA start"); });
   // Ein Upload hält loop() länger als WDT_TIMEOUT_S an: jeder empfangene Block füttert den Watchdog.
   ArduinoOTA.onProgress([](unsigned int, unsigned int) { watchdog::feed(); });
   ArduinoOTA.onEnd([]() { Serial.println("OTA fertig"); });
-  ArduinoOTA.onError([](ota_error_t e) { Serial.printf("OTA Fehler %u\n", e); });
+  ArduinoOTA.onError([](ota_error_t e) { frame::forgetEtag(); Serial.printf("OTA Fehler %u\n", e); });
   ArduinoOTA.begin();
 }
 
