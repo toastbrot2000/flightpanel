@@ -6,7 +6,15 @@ from datetime import datetime
 import pytest
 
 from conftest import DATA
-from flightpanel.config import Config, default_text, in_hours, is_panel_key, panel_fields, panel_settings_from_env
+from flightpanel.config import (
+    Config,
+    default_text,
+    in_hours,
+    is_panel_key,
+    panel_fields,
+    panel_id,
+    panel_settings_from_env,
+)
 
 
 def env(**kw):
@@ -127,6 +135,14 @@ def test_env_panel_keys_are_not_server_settings():
     assert c.home_lat == Config.home_lat and c.view_from == 0 and c.cards_off == frozenset() and c.poll_interval == 30
     assert panel_settings_from_env(e) == {"HOME_LAT": "51.0", "VIEW_FROM": "110", "CARD_PIGEON": "0"}
     assert c.lan_panel == "home" and Config.from_env(env(LAN_PANEL="wohnzimmer")).lan_panel == "wohnzimmer"
+
+
+def test_lan_panel_follows_the_panel_id_rule():
+    assert Config.from_env(env(LAN_PANEL="wohnzimmer")).lan_panel == "wohnzimmer"
+    with pytest.raises(ValueError, match="LAN_PANEL"):
+        Config.from_env(env(LAN_PANEL="Wohnzimmer"))
+    with pytest.raises(ValueError):
+        panel_id("wohnzimmer\n")                    # $ allein ließe einen Zeilenumbruch am Ende durch
 
 
 def test_for_panel_rejects_what_is_not_a_panel_setting():

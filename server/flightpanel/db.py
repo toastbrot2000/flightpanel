@@ -33,6 +33,8 @@ from contextlib import contextmanager
 
 log = logging.getLogger("db")
 
+DatabaseError = sqlite3.DatabaseError       # für Werkzeuge neben dem Server (panels.py), ohne sqlite3-Import
+
 DB_FILE = "flightpanel.db"
 
 

@@ -21,6 +21,7 @@ der Umgebung steht, gilt trotzdem."""
 import logging
 import math
 import os
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import Field, dataclass, field, fields, replace
 from datetime import datetime
@@ -89,6 +90,16 @@ def _share(s: str) -> float:
     if not 0 <= v <= 1:
         raise ValueError("erlaubt: 0 bis 1")
     return v
+
+
+PANEL_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+def panel_id(text: str) -> str:
+    """Kennung eines Panels (LAN_PANEL, panels add): Kleinbuchstaben, Ziffern, - und _, höchstens 32 Zeichen."""
+    if not PANEL_ID.fullmatch(text):                # fullmatch: $ ließe einen Zeilenumbruch am Ende durch
+        raise ValueError("Kleinbuchstaben, Ziffern, - und _, höchstens 32 Zeichen")
+    return text
 
 
 def in_hours(rng: tuple[int, int], minute: int) -> bool:
@@ -217,7 +228,7 @@ class Config:
     # --- Betrieb
     data_dir: str = _env("DATA_DIR", "./data")
     http_port: int = _env("HTTP_PORT", 8080, _int(1, 65535))
-    lan_panel: str = _env("LAN_PANEL", "home")              # das Panel am LAN-Port (:8080)
+    lan_panel: str = _env("LAN_PANEL", "home", panel_id)    # das Panel am LAN-Port (:8080)
     stale_after: int = _env("STALE_AFTER", 120, _int(0))    # Sekunden ohne Daten bis gedimmt
     empty_after: int = _env("EMPTY_AFTER", 600, _int(0))    # ... bis leer
     log_level: str = _env("LOG_LEVEL", "INFO")
