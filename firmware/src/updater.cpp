@@ -76,32 +76,48 @@ void clearTries() {
 // ---- Rettungs-Uhr (RTC-Speicher, grob im NVS) -------------------------------------------------------------------
 // Wie lange das Panel das Zertifikat des Servers schon ablehnt, über Neustarts hinweg: Ohne Bilder startet es alle
 // 10 min neu (RESTART_AFTER_MS), eine Uhr im RAM käme nie auf 24 h. RTC_NOINIT übersteht Neustart, Watchdog und
-// Absturz, nicht das Ausschalten; dafür steht ihr Stand stündlich im NVS (rescue.h), und nach dem Einschalten zählt
-// sie von dort weiter. Gezählt wird Laufzeit, keine Uhrzeit (das Panel kennt keine). Andere Fehler (WLAN, DNS, HTTP)
-// halten die Uhr nicht an. Auf 0 geht sie, sobald das Zertifikat wieder durchgeht: mit einem Bild oder einer anderen
-// Antwort über die geprüfte Verbindung.
+// Absturz, nicht das Ausschalten; dafür steht ihr Stand stündlich im NVS (rescue.h), samt dem letzten Rettungsversuch,
+// und nach dem Einschalten zählt sie von dort weiter. Gezählt wird Laufzeit, keine Uhrzeit (das Panel kennt keine).
+// Andere Fehler (WLAN, DNS, HTTP) halten die Uhr nicht an. Auf 0 geht sie, sobald das Zertifikat wieder durchgeht: mit
+// einem Bild oder einer anderen Antwort über die geprüfte Verbindung.
 const uint32_t CLOCK_MAGIC = 0x46505243;   // "FPRC"
 const char* const RESCUE_NS = "fwrescue";  // eigener NVS-Namensraum: clearTries() leert "fwupdate" ganz
 uint8_t savedSteps = 0;                    // Stand im NVS (rescue::steps)
+uint8_t savedTry = rescue::UNKNOWN;        // Schritt des letzten Rettungsversuchs im NVS (rescue::restoreTry)
 
-uint8_t loadSteps() {
-  uint8_t s = 0;
+void loadSaved() {
   Preferences p;
   if (p.begin(RESCUE_NS, false)) {   // schreibbar: legt den Namensraum an (lesend: Fehler im Log, solange er fehlt)
-    s = p.getUChar("steps", 0);
+    savedSteps = p.getUChar("steps", 0);
+    savedTry = p.getUChar("try", rescue::UNKNOWN);
     p.end();
   }
-  return s;
+}
+
+// Ein Byte in RESCUE_NS; true, wenn es geschrieben ist
+bool putSaved(const char* key, uint8_t value) {
+  Preferences p;
+  bool ok = false;
+  if (p.begin(RESCUE_NS, false)) {
+    ok = p.putUChar(key, value) == 1;
+    p.end();
+  }
+  return ok;
 }
 
 // savedSteps folgt auch, wenn das Schreiben scheitert: kein neuer Versuch bei jedem Abruf, erst beim nächsten Schritt
 void saveSteps(uint8_t s) {
-  Preferences p;
-  if (p.begin(RESCUE_NS, false)) {
-    p.putUChar("steps", s);
-    p.end();
-  }
+  putSaved("steps", s);
   savedSteps = s;
+}
+
+// Vermerkt einen Rettungsversuch, bevor er beginnt; steht derselbe Schritt schon da, wird nichts geschrieben.
+// false: nicht im NVS, dann kein Versuch (ein Einschalten erlaubte sonst gleich den nächsten)
+bool saveRescueTry(uint8_t step) {
+  if (savedTry == step) return true;
+  if (!putSaved("try", step)) return false;
+  savedTry = step;
+  return true;
 }
 
 struct RescueClock {
@@ -140,6 +156,10 @@ uint64_t streakTick(uint32_t now) {
 void streakReset() {
   if (rtcClock.streakMs || rtcClock.lastTryMs) saveClock(0, 0);
   if (savedSteps) saveSteps(0);
+  if (savedTry != rescue::NO_TRY) {   // einmal; scheitert es, bleibt im NVS der alte Vermerk, und der hält nur auf
+    putSaved("try", rescue::NO_TRY);
+    savedTry = rescue::NO_TRY;
+  }
 }
 
 // ---- Laufendes Image --------------------------------------------------------------------------------------------
@@ -396,11 +416,15 @@ bool rescueUpdate(manifest::Manifest& m) {
 namespace updater {
 
 void begin() {
-  // Rettungs-Uhr: nach dem Einschalten steht Zufall im RTC-Speicher, dann gilt der grobe Stand aus dem NVS
-  savedSteps = loadSteps();
+  // Rettungs-Uhr: nach dem Einschalten steht Zufall im RTC-Speicher, dann gilt der grobe Stand aus dem NVS, samt
+  // letztem Rettungsversuch (der nächste also frühestens RESCUE_RETRY_MS danach, nicht gleich nach dem Start)
+  loadSaved();
   const bool clockOk = esp_reset_reason() != ESP_RST_POWERON && rtcClock.magic == CLOCK_MAGIC &&
                        rtcClock.check == clockCheck(rtcClock);
-  if (!clockOk) saveClock(rescue::restore(savedSteps, RESCUE_AFTER_MS), 0);
+  if (!clockOk) {
+    saveClock(rescue::restore(savedSteps, RESCUE_AFTER_MS),
+              rescue::restoreTry(savedTry, savedSteps, RESCUE_AFTER_MS));
+  }
   streakT0 = millis();
   if (rtcClock.streakMs) {
     Serial.printf("Zertifikat des Servers seit %lu min abgelehnt, Rettungsmodus ab %lu min\n",
@@ -454,10 +478,14 @@ void afterFrame(frame::Result r) {
   }
   if (!net::isHttps() || net::tlsError(nullptr, 0) != MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) return;
   const uint64_t streak = streakTick(now);
-  if (streak < RESCUE_AFTER_MS) return;
-  if (rtcClock.lastTryMs && streak - rtcClock.lastTryMs < RESCUE_RETRY_MS) return;
+  if (!rescue::mayTry(streak, rtcClock.lastTryMs, RESCUE_AFTER_MS, RESCUE_RETRY_MS)) return;
   if (pendingVerify()) return;   // ein unbestätigtes Image rollt der Bootloader zurück; daraus kein Update
   saveClock(streak, streak);     // vor dem Versuch: Ein Absturz darin führt nicht gleich zum nächsten
+  if (!saveRescueTry(rescue::steps(streak, RESCUE_AFTER_MS))) {   // ... und ein Einschalten auch nicht (NVS)
+    Serial.printf("Rettungsmodus: Versuch nicht im NVS vermerkt, nächster in %lu min\n",
+                  (unsigned long)(RESCUE_RETRY_MS / 60000));
+    return;
+  }
   Serial.printf("Rettungsmodus: Zertifikat seit %lu min abgelehnt, Update ohne Zertifikatsprüfung und ohne Token\n",
                 (unsigned long)(streak / 60000));
   manifest::Manifest m;

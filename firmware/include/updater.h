@@ -12,8 +12,8 @@
 //     UPDATE_CHECK_MS.
 //   - Rettungsmodus: Lehnt das Panel das Zertifikat des Servers länger als RESCUE_AFTER_MS ab (veraltete
 //     Vertrauensliste), holt es nur Manifest und Image ohne Zertifikatsprüfung und ohne Token und vertraut dann
-//     allein Signatur, SHA-256 und steigender Version. Höchstens einmal je RESCUE_RETRY_MS. Die Zeit zählt über
-//     Neustarts und das Ausschalten hinweg (RTC-Speicher, stündlich im NVS: rescue.h).
+//     allein Signatur, SHA-256 und steigender Version. Höchstens einmal je RESCUE_RETRY_MS. Die Zeit und der letzte
+//     Versuch zählen über Neustarts und das Ausschalten hinweg (RTC-Speicher, grob im NVS: rescue.h).
 //
 // Ohne fw_pubkey.h sind beide Funktionen leer, und der Arduino-Kern bestätigt ein neues Image wie bisher sofort.
 #include "frame.h"
