@@ -1,0 +1,25 @@
+#pragma once
+// Öffentlicher Schlüssel für signierte Firmware-Updates (ECDSA P-256).
+//
+// Kopieren nach include/fw_pubkey.h (steht in .gitignore) und den Platzhalter unten durch den eigenen öffentlichen
+// Schlüssel ersetzen. Gibt es fw_pubkey.h, baut die Firmware die Update-Prüfung ein (src/fwsig.cpp); ohne die Datei
+// nimmt sie keine Updates über den Server an. Ganze Anleitung: docs/bauanleitung.md, Abschnitt 4, "Signierte Updates".
+//
+// Schlüsselpaar einmal anlegen, außerhalb des Repos und außerhalb jedes synchronisierten Ordners (OneDrive, Dropbox,
+// iCloud ...). openssl fragt nach einer Passphrase; die tippt später bei jedem Release ein Mensch:
+//
+//   mkdir -p ~/flightpanel-signing
+//   openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -aes-256-cbc -out ~/flightpanel-signing/fw_signing.pem
+//   openssl pkey -in ~/flightpanel-signing/fw_signing.pem -pubout
+//
+// Die Ausgabe des letzten Befehls, von BEGIN PUBLIC KEY bis END PUBLIC KEY, ersetzt die drei Zeilen des Platzhalters.
+// Nie den privaten Schlüssel einfügen: Jede firmware.bin ist öffentlich. Steht hier PRIVATE, bricht der Build ab.
+//
+// Mit dem Platzhalter baut die Firmware, nimmt aber kein Update an (der Schlüssel ist nicht lesbar), und
+// tools/fw_release.sh lehnt jedes Release ab: Die Signatur passt nicht zu diesem Schlüssel.
+
+static constexpr char FW_PUBKEY_PEM[] = R"PEM(
+-----BEGIN PUBLIC KEY-----
+HIER-DEN-EIGENEN-OEFFENTLICHEN-SCHLUESSEL-EINSETZEN
+-----END PUBLIC KEY-----
+)PEM";
