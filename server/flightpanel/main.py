@@ -630,15 +630,25 @@ class App:
         return self.issues.report(uptime_h=round((time.time() - self.started) / 3600, 1),
                                   polls_since_start=self.counters, logos_missing=sorted(self.logos.missing()))
 
-    def problems(self, now: float) -> list[str]:
+    def problems(self, now: float, panel: Panel | None = None) -> list[str]:
         """Was gerade nicht stimmt, für GET /ok (Docker-Healthcheck, Uptime-Monitor); leer heißt alles gut. Alte
         Flugdaten zählen, solange ein Panel hell ist; ein ESP32, das nicht mehr abruft, nur am LAN-Port: Ein
-        Freund, der den Stecker zieht, macht den Server nicht ungesund. In der Ruhezeit ist dunkel normal. Eine 421
+        Freund, der den Stecker zieht, macht den Server nicht ungesund. In der Ruhezeit ist dunkel normal. Mit
+        panel (GET /ok?panel=<id>, ein Uptime-Monitor je Panel, auch eines weit weg) nur dieses eine: alte
+        Flugdaten seiner Region und sein ESP32, solange es hell sein sollte. Eine 421
         am LAN-Port in den letzten OK_REFUSED_S ohne Abruf des Panels danach (falscher Hostname, LAN_HOSTS): Sonst
         bliebe /ok grün, obwohl das Panel nie ein Bild bekommt. Mit Zugang
         von außen auch eine veraltete Root-Liste der Firmware (selfcheck.py): Dann blieben alle Panels der Freunde
         dunkel."""
         out = []
+        if panel is not None:
+            if panel.off is None and panel.cfg.brightness(now) > 0:
+                age = now - (panel.last_ok or self.started)
+                if age > OK_STALE_S:
+                    out.append(f"keine frischen Flugdaten seit {age / 60:.0f} min")
+                if panel.frame_count and now - panel.last_frame_fetch > OK_ESP32_S:
+                    out.append(f"ESP32 holt seit {(now - panel.last_frame_fetch) / 60:.0f} min keine Bilder")
+            return out
         if any(p.off is None and p.cfg.brightness(now) > 0 for p in self.panels.values()):
             age = now - (self.last_model_ok or self.started)
             if age > OK_STALE_S:

@@ -611,7 +611,14 @@ class Handlers:
                             content_type="application/json", headers=NO_STORE)
 
     async def ok(self, req: web.Request) -> web.Response:
-        problems = self.app.problems(time.time())
+        pid = req.query.get("panel")            # ?panel=<id>: nur dieses Panel, für seinen eigenen Uptime-Monitor
+        if pid is not None:
+            p = self.app.panels.get(pid)
+            if p is None:
+                raise web.HTTPNotFound(text="kein Panel mit dieser id\n")
+            problems = self.app.problems(time.time(), p)
+        else:
+            problems = self.app.problems(time.time())
         return web.Response(text="\n".join(problems or ["ok"]) + "\n", status=503 if problems else 200,
                             headers={"Cache-Control": "no-store"})
 

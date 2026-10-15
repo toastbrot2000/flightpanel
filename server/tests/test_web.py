@@ -681,3 +681,19 @@ def test_the_panel_renders_at_the_largest_allowed_seconds(tmp_path):
                 assert (await client.get(path)).status == 200, path
 
     asyncio.run(run())
+
+
+def test_ok_for_one_panel(tmp_path):
+    """GET /ok?panel=<id>: der Zustand eines Panels für seinen Uptime-Monitor, auch eines Freundes weit weg (das
+    schlichte /ok zählt nur das ESP32 am LAN-Port). Unbekannt: 404."""
+    async def run():
+        async with lan(tmp_path, quiet_hours=(0, 0)) as (app, client):
+            now = time.time()
+            app.last_model_ok = app.lan.last_ok = now
+            assert (await client.get("/ok?panel=home")).status == 200
+            assert (await client.get("/ok?panel=nope")).status == 404
+            app.lan.frame_count, app.lan.last_frame_fetch = 5, now - 15 * 60      # ESP32 war da, ist weg
+            r = await client.get("/ok?panel=home")
+            assert r.status == 503 and "ESP32" in await r.text()
+
+    asyncio.run(run())

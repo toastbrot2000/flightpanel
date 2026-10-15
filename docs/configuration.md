@@ -189,6 +189,7 @@ Logos are trademarks of their owners; they stay on your server.
 | `/display.json` | display model, plus `nearby`: all aircraft in range with direction, elevation, visibility, landing sequence |
 | `/health` | sources, effective settings, cache, logos, last ESP32 fetch (`esp32.alive=false`: panel stuck), one line per panel under `panels`, nightly maintenance (`dream`), database state, remote access state |
 | `/ok` | `ok` with 200, otherwise 503 and the reasons; for the Docker health check and an uptime monitor |
+| `/ok?panel=<id>` | the same for one panel only (fresh data for its region, its ESP32 fetching while it should be bright): one uptime-monitor entry per panel, also for a panel far away; 404 for an unknown id |
 | `/issues` | collected anomalies (below); `POST /issues/clear` empties the list |
 | `/stats` | daily statistics, collection album, rare sightings, landing direction |
 | `/idle` | idle cards: tier, whether they currently have something to say, which one is showing |

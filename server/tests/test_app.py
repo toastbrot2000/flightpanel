@@ -825,6 +825,8 @@ def test_only_the_lan_panels_esp32_counts_for_ok(tmp_path):
             anna = app.panels["anna"]
             anna.frame_count, anna.last_frame_fetch = 5, now - 3600
             assert app.problems(now) == []
+            assert any("ESP32" in p for p in app.problems(now, anna))      # /ok?panel=anna: ihr Monitor sieht es
+            assert app.problems(now, app.lan) == []
             app.lan.frame_count, app.lan.last_frame_fetch = 5, now - 3600
             assert any("ESP32" in p for p in app.problems(now))
             assert set(app.health()["panels"]) == {"home", "anna"}
