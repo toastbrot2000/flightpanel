@@ -171,3 +171,22 @@ def test_the_path_cache_does_not_grow_without_bound():
     for i in range(airport.PATH_CACHE_MAX + 10):
         path_in_view(make_cfg(home_lat=52.5 + i / 10000), 249, "approach")
     assert 0 < len(airport._PATH_CACHE) <= airport.PATH_CACHE_MAX
+
+
+def test_without_an_airport_nobody_lands_or_departs():
+    """AIRPORT=-: keine Landefolge, keine Abflüge, keine Landerichtung. Auch ein Flug mit Ziel BER ist nur ein Überflug,
+    und eine sinkende Airline ohne Route wird nicht zur Landung geraten (classify guess)."""
+    def at(bearing, km, **kw):
+        lat, lon = destination(52.52, 13.40, bearing, km)
+        return state(lat=lat, lon=lon, **kw)
+
+    cfg = make_cfg(local_airport_iata="", runway_course=None, curfew_hours=None, metar=False, metar_station="",
+                   airport_lat=52.52, airport_lon=13.40)
+    assert not cfg.has_airport
+    states = [at(200, 14, icao="arr", cs="DLH4AB", alt=1000, vrate=-4), at(160, 12, icao="dep", cs="EZY1234",
+              alt=1500, vrate=10), at(0, 4, icao="ovf", cs="UAE45", alt=5000)]
+    adsb = FakeAdsb({"DLH4AB": {"origin": "MUC", "dest": "BER"}, "EZY1234": {"origin": "BER", "dest": "LGW"}})
+    m = asyncio.run(build_model(cfg, states, adsb, NAMES, horizon_s=20))
+    assert len(m.flights) == 3 and {f.status for f in m.flights} == {"OVF"}
+    assert m.landing_course is None and m.course_votes == 0 and m.departures == [] and m.arrivals == []
+    assert all(n["seq"] is None and n["status"] == "OVF" for n in m.nearby)

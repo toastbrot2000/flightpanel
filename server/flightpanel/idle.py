@@ -56,7 +56,7 @@ class Ctx:
     model: Any                                    # model.DisplayModel
     now: float
     stats: Any = None                             # stats.Stats
-    airfield: Any = None                          # airfield.Airfield: Landerichtung, für alle Panels gleich
+    airfield: Any = None                          # airfield.Airfield des Flughafens; None ohne Flughafen
     metar: Any = None                             # metar.MetarSource
     astro: Any = None                             # astro.Iss
     logos: Any = None                             # logos.LogoStore
@@ -65,7 +65,8 @@ class Ctx:
     @property
     def quiet(self) -> bool:
         """Gar nichts los am Platz: seit 15 min kein Start und keine Landung, und in
-        den nächsten 10 min landet keiner. Erst dann kommen Spielereien (Stufe 4)."""
+        den nächsten 10 min landet keiner. Erst dann kommen Spielereien (Stufe 4). Ohne
+        Flughafen zählt als Bewegung, wann zuletzt etwas am Himmel war (main.App)."""
         m = self.model
         if m.departures:
             return False

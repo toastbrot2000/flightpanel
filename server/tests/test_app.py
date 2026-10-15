@@ -886,3 +886,37 @@ def test_two_regions_mean_two_fetches_and_their_own_airfield(tmp_path):
             await app.session.close()
 
     asyncio.run(run())
+
+
+def test_without_an_airport_quiet_means_nothing_in_the_sky(tmp_path):
+    """Ein Panel ohne Flughafen kennt keine Bewegung am Platz: Damit die Spielereien (Stufe 4) nicht ständig laufen,
+    zählt der letzte Abruf, in dem etwas am Himmel war, als letzte Bewegung."""
+    shutil.copy(os.path.join(DATA, "airports.json"), tmp_path)
+    panel_rows(tmp_path, wald={"AIRPORT": "-", "HOME_LAT": "48.00", "HOME_LON": "9.90", "RADIUS_KM": "40",
+                               "QUIET_HOURS": "00:00-00:00"})                         # home ruht, wald ruft ab
+    cfg = make_cfg(data_dir=str(tmp_path), metar=False, iss=False, logo_fetch=False, quiet_hours=(0, 24 * 60),
+                   route_adsbim=False, track_origin=False)
+    sky = [state(icao="o1", cs="UAE45", lat=48.1, lon=9.9, alt=3000)]
+    batches = [sky, [], []]
+
+    async def fetch(lat, lon, radius_km):
+        return batches.pop(0)
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            app.adsb = FakeAdsb()
+            app.adsblol.fetch = fetch
+            wald = app.panels["wald"]
+            assert wald.airfield is None and wald.metar is None and not wald.cfg.has_airport
+            t = time.time()
+            await app.poll_once(t)
+            assert wald.model.flights and wald.model.last_airport_move == t
+            await app.poll_once(t + 20)
+            assert not wald.model.flights and wald.model.last_airport_move == t      # bleibt: zuletzt etwas da
+            assert not wald.idle.context(wald.model, t + 60).quiet                   # noch keine 15 min her
+            assert wald.idle.context(wald.model, t + 1000).quiet
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())

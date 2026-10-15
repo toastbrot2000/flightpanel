@@ -466,3 +466,9 @@ def test_every_card_has_a_name_and_a_known_group():
         title, about = ABOUT[c.id]
         assert title and about.endswith("."), c.id
         assert c.group in GROUPS, c.id
+
+
+def test_without_a_curfew_the_curfew_card_never_comes(tmp_path):
+    """Ein Panel ohne Flughafen (oder ohne CURFEW) hat keine Nachtruhe: Die Karte bleibt weg, auch nachts."""
+    cfg = make_cfg(curfew_hours=None)
+    assert runway.curfew_cond(ctx(ts(2026, 10, 10, 2, 0), cfg=cfg)) is None

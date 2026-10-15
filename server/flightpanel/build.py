@@ -62,9 +62,13 @@ async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, d
         # nur, wer eine Route brauchen kann, nicht der ganze Statistik-Abruf (SCAN_RADIUS_KM)
         b.im = await adsbim.routes([s for s in states if callsign_airline(s.callsign) and needs_route(cfg, s)])
     cands = candidates(cfg, states, horizon_s)
-    # Die Landefolge vor der Auswahl: Wer hier landet, geht Überflügen vor (rank)
-    course, votes = landing_course_votes(cfg, states, cfg.runway_course if prev_course is None else prev_course)
-    b.seq, b.etas = await landing_sequence(cfg, states, names, course, b.route_for)
+    if cfg.has_airport:
+        # Die Landefolge vor der Auswahl: Wer hier landet, geht Überflügen vor (rank)
+        course, votes = landing_course_votes(cfg, states, cfg.runway_course if prev_course is None else prev_course)
+        b.seq, b.etas = await landing_sequence(cfg, states, names, course, b.route_for)
+    else:                               # ohne Flughafen (AIRPORT=-): keine Landerichtung, keine Landefolge
+        course, votes = None, 0
+        b.seq, b.etas = {}, {}
     ranked = await b.rank(cands)
     flights =[await b.flight(s, v, vis, route, airline) for s, v, vis, route, airline in ranked[:cfg.max_flights]]
     flights.sort(key=lambda f: (f.seq is None, f.seq or 0))    # Landende in Landefolge, #1 zuerst
@@ -82,7 +86,7 @@ async def build_model(cfg: Config, states: list[State], adsb, names: dict[str, d
     in_view_ids = {s.icao24 for s, _, vis in cands if vis > 0}
     model = DisplayModel(flights=flights, source=source, empty=not flights,
                          nearby=_nearby(cfg, cands, b.seq, b.etas, preds),
-                         departures=find_departures(cfg, states, routes, names),
+                         departures=find_departures(cfg, states, routes, names) if cfg.has_airport else [],
                          arrivals=_arrivals(states, b.seq, b.etas, routes, in_view_ids, names),
                          landing_course=course, course_votes=votes, alert=find_alert(cfg, states, names))
     await b.upcoming(model, cands, preds, {f.icao24 for f in flights})
@@ -117,7 +121,8 @@ def candidates(cfg: Config, states: list[State], horizon_s: float) -> list[Candi
 def classify(s: State, origin: str, dest: str, local: str, guess: bool = True) -> str:
     """Ankunft, Abflug oder Überflug. Ohne Route raten aus Höhe und Steigrate,
     aber nur bei Airlines (guess): Ein landender Rettungshubschrauber fliegt
-    zur Klinik, nicht zum Flughafen."""
+    zur Klinik, nicht zum Flughafen. Ohne Flughafen (local leer, guess False)
+    ist alles ein Überflug."""
     if dest and dest == local:
         return ARR
     if origin and origin == local:
@@ -162,7 +167,8 @@ def _nearby(cfg: Config, cands: list[Candidate], seq: dict[str, int], etas: dict
              "in_view": ("no", "soon", "now")[vis], "seq": seq.get(s.icao24),
              "land_eta_s": round(etas[s.icao24]) if s.icao24 in etas else None,
              "eta_s": round(preds[s.icao24][0]) if preds[s.icao24] else None,
-             "status": ARR if s.icao24 in seq else classify(s, "", "", cfg.local_airport_iata)}
+             "status": ARR if s.icao24 in seq else classify(s, "", "", cfg.local_airport_iata,
+                                                            guess=cfg.has_airport)}
             for s, v, vis in cands]
 
 
@@ -244,7 +250,7 @@ class _Builder:
             return True
         ok = route_plausible(route, s.lat, s.lon)
         origin, dest = (route.get("origin", ""), route.get("dest", "")) if ok else ("", "")
-        return classify(s, origin, dest, self.cfg.local_airport_iata, guess=airline) != OVF
+        return classify(s, origin, dest, self.cfg.local_airport_iata, guess=airline and self.cfg.has_airport) != OVF
 
     def _once(self, key: str) -> bool:
         """Zum ersten Mal in diesem Abruf (für alle Panels, die ihn teilen)? Dann gilt es ab jetzt als gemeldet."""
@@ -327,7 +333,7 @@ class _Builder:
         f = Flight(
             icao24=s.icao24,
             callsign=s.callsign or s.icao24.upper(),
-            status=classify(s, origin, dest, cfg.local_airport_iata, guess=airline),
+            status=classify(s, origin, dest, cfg.local_airport_iata, guess=airline and cfg.has_airport),
             dist_km=round(v.dist_km, 1),
             bearing=round(v.az),
             alt_ft=int(s.baro_alt_m * FT_PER_M) if s.baro_alt_m is not None else None,

@@ -97,6 +97,7 @@ class Panel:
         self.airfield = app.airfield_for(cfg.local_airport_iata)
         self.metar = app.metar_for(cfg)
         self.last_ok = 0.0              # letzter gelungener Abruf seiner Region (main.App._poll, _age_models)
+        self.last_traffic = 0.0         # zuletzt etwas am Himmel; ohne Flughafen die "Bewegung" für idle.Ctx.quiet
         self.model = DisplayModel(empty=True, source="startup",
                                   landing_course=self.airfield.landing_course if self.airfield else None)
         self.renderer: Renderer | None = None
@@ -153,6 +154,6 @@ class Panel:
         age = now - self.last_frame_fetch if self.last_frame_fetch else None
         return {"flights": len(self.model.flights), "model_stale": self.model.stale,
                 "brightness_now": self.renderer.brightness(now), "off": self.off,
-                "airport": self.cfg.local_airport_iata or "-", "region": self.cfg.region_key,
+                "airport": self.cfg.local_airport_iata or "-",     # nie region_key: ohne Flughafen wäre das die Lage
                 "esp32": {"last_fetch_age_s": round(age) if age is not None else None, "fetches": self.frame_count,
                           "alive": age is not None and age < 300, "diag": dict(self.diag)}}

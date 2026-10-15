@@ -35,6 +35,8 @@ def landing_course_votes(cfg: Config, states: list[State], prev: float) -> tuple
     """Landerichtung aus dem Verkehr: Was tief in Platznähe fliegt, landet oder
     startet gegen den Wind, also parallel zur Piste. Mehrheit entscheidet, ohne
     Verkehr bleibt die letzte. Dazu die Stimmen für die gewählte Richtung."""
+    if cfg.runway_course is None:           # ohne Flughafen (AIRPORT=-) gibt es keine Landerichtung
+        return prev, 0
     votes = {cfg.runway_course % 360: 0, (cfg.runway_course + 180) % 360: 0}
     for s in states:
         alt = s.alt_m

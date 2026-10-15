@@ -153,6 +153,8 @@ def weather_draw(img, ctx, d, t_in, f):
 
 # --------------------------------------------------------- Nachtflugverbot --
 def curfew_cond(ctx: Ctx):
+    if ctx.cfg.curfew_hours is None:        # kein Flughafen oder kein Nachtflugverbot
+        return None
     t = datetime.fromtimestamp(ctx.now)
     if not in_hours(ctx.cfg.curfew_hours, t.hour * 60 + t.minute):
         return None

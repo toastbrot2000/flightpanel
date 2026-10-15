@@ -471,7 +471,7 @@ class App:
 
     def _observe_airfields(self, panels: list[Panel], t0: float) -> None:
         """Je Flughafen einmal nachführen (Landefolge, Abflüge, Landerichtung: in allen seinen Panels gleich) und
-        den Panels die letzte Bewegung am Platz mitgeben."""
+        den Panels die letzte Bewegung am Platz mitgeben; ohne Flughafen, wann zuletzt etwas am Himmel war."""
         seen: set[int] = set()
         for p in panels:
             af = p.airfield
@@ -479,7 +479,9 @@ class App:
                 seen.add(id(af))
                 af.observe(p.model, t0)
         for p in panels:
-            p.model.last_airport_move = p.airfield.last_move if p.airfield else 0.0
+            if p.model.flights or p.model.nearby:
+                p.last_traffic = t0
+            p.model.last_airport_move = p.airfield.last_move if p.airfield else p.last_traffic
 
     def _age_models(self, panels: list[Panel], now: float | None = None) -> None:
         """Ohne frische Daten erst dimmen, dann leeren, in jedem dieser Panels (die einer Region ohne Abruf, oder
@@ -658,10 +660,11 @@ class App:
         return out
 
     def _regions_report(self, now: float) -> list[dict]:
-        """Für /health: die Regionen der Panels, die gerade abrufen, je eine mit ihren Panels und ihrem Umkreis."""
+        """Für /health: die Regionen der Panels, die gerade abrufen, je eine mit ihren Panels und ihrem Umkreis. Als
+        Schlüssel der Flughafen oder -, nie region_key: Der wäre ohne Flughafen die Lage des Fensters."""
         active = [p for p in self.panels.values() if p.active(now)]
         by_cfg = {id(p.cfg): p.id for p in active}
-        return [{"key": cfgs[0].region_key, "panels": [by_cfg[id(c)] for c in cfgs],
+        return [{"key": cfgs[0].local_airport_iata or "-", "panels": [by_cfg[id(c)] for c in cfgs],
                  "fetch_km": round(fetch_circle(cfgs)[2])} for cfgs in regions([p.cfg for p in active])]
 
     def health(self) -> dict:
