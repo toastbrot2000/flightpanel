@@ -157,7 +157,7 @@ PREVIEW_HTML = """<main class="page live">
 <div class="device"><img id="f" class="screen" src="{frame}" alt="Was das Panel gerade zeigt" width="768"
  height="192"></div>
 <p class="state" id="s" data-mode="{mode}" aria-live="polite"{health}><span class="dot" aria-hidden="true"></span><span
- id="s-text">{state}</span></p>
+ id="s-text">{state}</span>{back}</p>
 </section>
 <div class="columns">
 <section class="sky" aria-labelledby="sky-title">
@@ -568,7 +568,8 @@ class Handlers:
 
     async def index(self, req: web.Request) -> web.Response:
         p = self.panel(req)
-        layout = self._layout(req) or p.cfg.layout
+        tried = self._layout(req)                   # ?layout=: eine Probeansicht, auch die eigene Aufteilung
+        layout = tried or p.cfg.layout
         card = req.query.get("card", "")
         if card not in p.idle.cards:
             card = ""
@@ -576,7 +577,7 @@ class Handlers:
         settings = "/settings" in self.links
         if card:
             mode, state = "demo", f"Beispiel: Karte „{ABOUT.get(card, (card,))[0]}“"
-        elif layout != p.cfg.layout:
+        elif tried:
             mode, state = "demo", f"Probeansicht: {LAYOUT_NAMES[layout]}"
         else:
             mode, state = "live", "Live"
@@ -589,7 +590,7 @@ class Handlers:
             # Probeansicht einer anderen Aufteilung: fliegt gerade nichts, mit den Beispielflügen statt der Uhr
             frame=esc(f"/frame.png?layout={layout}&card={card}" + ("&sample=auto" if mode == "demo" and not card
                                                                      else "")),
-            mode=mode, state=esc(state),
+            mode=mode, state=esc(state), back='<a class="back" href="/">zurück zu Live</a>' if mode == "demo" else "",
             health=' data-health="/health"' if "/health" in self.links else "",
             keep=" Dauerhaft unter Einstellungen, Anzeige." if settings else "",
             layouts="".join(f'<a class="seg" href="{esc(f"/?layout={x}")}"{current(x == layout)}>'

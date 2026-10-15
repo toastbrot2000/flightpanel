@@ -393,6 +393,8 @@ def test_trying_a_layout_without_flights_shows_example_flights(tmp_path):
             app.lan.model = DisplayModel()
             html = await (await client.get("/?layout=B")).text()
             assert 'src="/frame.png?layout=B&amp;card=&amp;sample=auto"' in html
+            html = await (await client.get("/?layout=C")).text()                  # auch die eigene Aufteilung
+            assert 'sample=auto' in html and "Probeansicht" in html and 'href="/"' in html
             auto = await (await client.get("/frame.png?layout=B&sample=auto&gap=0&scale=1")).read()
             sample = await (await client.get("/frame.png?layout=B&sample=1&gap=0&scale=1")).read()
             assert auto == sample
