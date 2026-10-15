@@ -386,6 +386,20 @@ def test_a_sample_frame_shows_example_flights_and_leaves_the_rotation_alone(tmp_
     asyncio.run(run())
 
 
+def test_display_json_says_whether_it_is_quiet_time(tmp_path, monkeypatch):
+    """Die Vorschau von außen hat kein /health: Sie liest an display.json ab, ob Ruhezeit ist."""
+    monkeypatch.setattr("flightpanel.web.time", SimpleNamespace(time=lambda: NOON))
+
+    async def run():
+        async with lan(tmp_path, quiet_hours=(0, 24 * 60)) as (_app, client):
+            doc = json.loads(await (await client.get("/display.json")).text())
+            assert doc["quiet"] is True and "flights" in doc
+        async with lan(tmp_path, quiet_hours=(0, 0)) as (_app, client):
+            assert json.loads(await (await client.get("/display.json")).text())["quiet"] is False
+
+    asyncio.run(run())
+
+
 def test_trying_a_layout_without_flights_shows_example_flights(tmp_path):
     """Probeansicht einer anderen Aufteilung: Fliegt gerade nichts, zeigt sie die Beispielflüge statt der Uhr."""
     async def run():

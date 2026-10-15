@@ -35,3 +35,6 @@ __pycache__/
 # Remote panels (docs/remote-panels.md): your compose override (domain, tunnel) and the tunnel token
 compose.override.yml
 cloudflared.env
+
+# Private deployment to the owner's cluster (hostnames, cluster layout)
+homelab/

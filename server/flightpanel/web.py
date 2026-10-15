@@ -606,7 +606,9 @@ class Handlers:
         return web.Response(text=page, content_type="text/html", headers=NO_STORE)
 
     async def display(self, req: web.Request) -> web.Response:
-        return web.Response(text=self.panel(req).model.to_json(), content_type="application/json", headers=NO_STORE)
+        p = self.panel(req)
+        return web.Response(text=p.model.to_json(quiet=p.renderer.brightness(time.time()) == 0),
+                            content_type="application/json", headers=NO_STORE)
 
     async def ok(self, req: web.Request) -> web.Response:
         problems = self.app.problems(time.time())

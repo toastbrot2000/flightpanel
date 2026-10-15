@@ -91,8 +91,9 @@ class DisplayModel:
     upcoming_via: str = ""                             # "approach" (Endanflug) | "track" (geradeaus)
     alert: dict | None = None                          # Notfall-Squawk in der Nähe
 
-    def to_json(self) -> str:
+    def to_json(self, **extra) -> str:
+        """Für /display.json; extra kommt dazu (etwa quiet: Ruhezeit, das weiß nur das Panel)."""
         d = asdict(self)
         for f in d["flights"]:
             f["other_airport"] = f.get("dest") if f["status"] != ARR else f.get("origin")
-        return json.dumps(d, ensure_ascii=False, indent=2)
+        return json.dumps({**d, **extra}, ensure_ascii=False, indent=2)

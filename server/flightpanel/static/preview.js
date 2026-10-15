@@ -144,11 +144,15 @@
       ? flights.length + (flights.length === 1 ? " Flug" : " Flüge") + (seen ? ", " + seen + " im Blick" : "")
       : "";
     if (flights.length) empty.textContent = "";
+    else if (m.quiet) empty.textContent = "Ruhezeit: Das Panel ist dunkel und ruft keine Flugdaten ab.";
     else if (m.stale) empty.textContent = "Gerade keine frischen Flugdaten. Das Panel versucht es weiter.";
     else empty.textContent = "Gerade ist kein Flugzeug nah genug fürs Panel. Es zeigt solange Karten wie Uhr und "
       + "Wetter.";
     if (!upcoming(m)) nextLine.textContent = "";
-    if (!health) setState(m.stale ? "warn" : "live", m.stale ? "Keine frischen Flugdaten" : "Live");
+    if (!health) {
+      if (m.quiet) setState("quiet", "Ruhezeit: Das Panel ist dunkel");
+      else setState(m.stale ? "warn" : "live", m.stale ? "Keine frischen Flugdaten" : "Live");
+    }
   }
 
   async function refresh() {
