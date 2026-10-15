@@ -386,6 +386,25 @@ def test_a_sample_frame_shows_example_flights_and_leaves_the_rotation_alone(tmp_
     asyncio.run(run())
 
 
+def test_trying_a_layout_without_flights_shows_example_flights(tmp_path):
+    """Probeansicht einer anderen Aufteilung: Fliegt gerade nichts, zeigt sie die Beispielflüge statt der Uhr."""
+    async def run():
+        async with lan(tmp_path, quiet_hours=(0, 0)) as (app, client):
+            app.lan.model = DisplayModel()
+            html = await (await client.get("/?layout=B")).text()
+            assert 'src="/frame.png?layout=B&amp;card=&amp;sample=auto"' in html
+            auto = await (await client.get("/frame.png?layout=B&sample=auto&gap=0&scale=1")).read()
+            sample = await (await client.get("/frame.png?layout=B&sample=1&gap=0&scale=1")).read()
+            assert auto == sample
+            app.lan.model = DisplayModel(flights=[Flight("3c0001", "DLH1", "ARR", 5.0, 90, 3000, 160, 270, -700,
+                                                         origin="MUC", dest="BER", airline="Lufthansa")])
+            live = await (await client.get("/frame.png?layout=B&sample=auto&gap=0&scale=1")).read()
+            assert live != sample                                               # mit Flügen die echten
+            assert "sample" not in await (await client.get("/")).text()        # eigene Aufteilung: das echte Bild
+
+    asyncio.run(run())
+
+
 def test_the_preview_has_no_inline_script_or_style(tmp_path):
     async def run():
         async with lan(tmp_path) as (_app, client):

@@ -168,7 +168,8 @@ PREVIEW_HTML = """<main class="page live">
 </section>
 <section class="look" aria-labelledby="look-title">
 <h2 id="look-title">Ansicht ausprobieren</h2>
-<p class="hint">Nur hier in der Vorschau, das Panel selbst bleibt, wie es ist.{keep}</p>
+<p class="hint">Nur hier in der Vorschau, das Panel selbst bleibt, wie es ist. Fliegt gerade nichts, mit
+Beispielflügen.{keep}</p>
 <div class="segmented" role="group" aria-label="Aufteilung">{layouts}</div>
 <h3>Karten im Leerlauf</h3>
 <p class="hint">Was das Panel zeigt, wenn kein Flug zu sehen ist. Passt die Lage gerade nicht, mit Beispieldaten.</p>
@@ -552,7 +553,8 @@ class Handlers:
 
     async def frame_png(self, req: web.Request) -> web.Response:
         p = self.panel(req)
-        if req.query.get("sample") == "1":
+        sample = req.query.get("sample")
+        if sample == "1" or (sample == "auto" and not p.model.flights):    # auto: nur, wenn gerade nichts fliegt
             img = self._sample(p, self._layout(req) or p.cfg.layout)
         else:
             img = self._render(p, self._layout(req), req.query.get("card"))
@@ -584,7 +586,9 @@ class Handlers:
 
         page = page_top("flightpanel", "/", settings, '<script src="/static/preview.js" defer></script>\n')
         page += PREVIEW_HTML.format(
-            frame=esc(f"/frame.png?layout={layout}&card={card}"),
+            # Probeansicht einer anderen Aufteilung: fliegt gerade nichts, mit den Beispielflügen statt der Uhr
+            frame=esc(f"/frame.png?layout={layout}&card={card}" + ("&sample=auto" if mode == "demo" and not card
+                                                                     else "")),
             mode=mode, state=esc(state),
             health=' data-health="/health"' if "/health" in self.links else "",
             keep=" Dauerhaft unter Einstellungen, Anzeige." if settings else "",
