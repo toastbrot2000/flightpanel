@@ -33,7 +33,7 @@ from .adsbim import AdsbIm
 from .adsblol import AdsbLol, Paused
 from .airfield import Airfield
 from .airlines import short_airline
-from .astro import Catalog
+from .astro import STARLINK_URL, Catalog
 from .build import build_model
 from .cache import Cache
 from .config import Config, panel_settings_from_env, too_far
@@ -188,7 +188,7 @@ class App:
                                 auth=None if self.opensky.anonymous else self.opensky.auth_headers)
                         if cfg.track_origin else None)
         self.metars: dict[str, MetarSource] = {}       # je METAR-Station (metar_for)
-        self.catalog = Catalog(self.db, self.session, self.issues) if cfg.iss else None
+        self.catalog = Catalog(self.db, self.session, self.issues, trains_url=STARLINK_URL) if cfg.iss else None
 
         # Anzeige, für alle Panels gemeinsam, und je Flughafen (airfield_for)
         self.logos = make_logo_store(cfg, self.session, self.db)
@@ -727,6 +727,7 @@ class App:
                 "tle_fetched_age_h": (round((now - self.catalog.fetched) / 3600, 1)
                                       if self.catalog.fetched else None),
                 "last_error": self.catalog.last_error,
+                "trains": [{"key": t.key, "n": t.n, "span_deg": t.span} for t in self.catalog.trains],
                 "passes_24h": {cid: len(tr.passes) for cid, tr in lan.sats.items()},
             },
             "idle_card": lan.idle.last_pick,

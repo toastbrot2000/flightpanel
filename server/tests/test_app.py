@@ -932,9 +932,9 @@ def test_trackers_exist_only_for_enabled_satellite_cards(tmp_path):
     async def run():
         app = App(cfg, env={})
         try:
-            assert set(app.lan.sats) == {"iss", "tiangong"} and app.lan.iss is app.lan.sats["iss"]
-            assert set(app.panels["anna"].sats) == {"iss"}
-            assert app.health()["sats"]["passes_24h"] == {"iss": 0, "tiangong": 0}
+            assert set(app.lan.sats) == {"iss", "tiangong", "starlink"} and app.lan.iss is app.lan.sats["iss"]
+            assert set(app.panels["anna"].sats) == {"iss", "starlink"}
+            assert app.health()["sats"]["passes_24h"] == {"iss": 0, "tiangong": 0, "starlink": 0}
         finally:
             await app.session.close()
 

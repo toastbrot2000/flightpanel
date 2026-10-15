@@ -16,8 +16,8 @@ import json
 import logging
 import math
 import time
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 
 import aiohttp
 
@@ -37,6 +37,10 @@ WANTED = {ISS: "ISS", TIANGONG: "Tiangong"}     # was der Katalog aus den Quelle
 STATIONS_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=TLE"   # ISS, Tiangong, ...
 ISS_FALLBACK_URL = "https://tle.ivanstanojevic.me/api/tle/25544"
 TLE_URLS = [STATIONS_URL, ISS_FALLBACK_URL]
+STARLINK_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=TLE"   # Ketten (find_trains)
+TRAIN_MIN_N = 10              # so viele Satelliten mindestens in einer Kette
+TRAIN_MAX_SPAN_DEG = 60.0     # längs der Bahn höchstens so weit auseinander, sonst keine Kette mehr
+TRAIN_NEWEST = 12             # so viele der jüngsten Starts des Jahres werden angesehen
 
 
 # ------------------------------------------------------------------ Sonne --
@@ -283,12 +287,17 @@ class Catalog:
     läuft, auch ohne Netz. Wo ein Satellit von einem Fenster aus steht und wann man ihn dort sieht, rechnet Tracker."""
 
     def __init__(self, db=None, session: aiohttp.ClientSession | None = None, issues=None,
-                 sources: list[str] | None = None):
+                 sources: list[str] | None = None, trains_url: str | None = None):
+        """trains_url: die Starlink-Liste für frische Ketten (STARLINK_URL); ohne gibt es keine."""
         self.db = db
         self.session = session
         self.issues = issues
         self.sources = list(sources if sources is not None else TLE_URLS)
+        self.trains_url = trains_url
+        self.year: int | None = None    # Startjahr für find_trains (Tests), sonst das aktuelle
         self.orbits: dict[int, Orbit] = {}
+        self.trains: list[Train] = []
+        self.trains_version = 0         # zählt neue Ketten: TrainTracker rechnet dann neu
         self.fetched: float = 0
         self.version = 0                # zählt neue Bahndaten irgendeines Satelliten
         self.last_error: str | None = None
@@ -304,6 +313,11 @@ class Catalog:
                 except (KeyError, TypeError, ValueError):
                     continue
             self.fetched = doc.get("fetched", 0) or 0
+            for t in doc.get("trains", []):
+                try:
+                    self.trains.append(Train(**t))
+                except TypeError:
+                    continue
             return
         text = self.db.state_get("tle")                 # Altbestand: nur die ISS
         if text:
@@ -347,7 +361,8 @@ class Catalog:
         if self.db is None:
             return
         sats = {str(n): {"name": o.name, "l1": o.tle[0], "l2": o.tle[1]} for n, o in self.orbits.items() if o.tle}
-        self.db.state_set("tle_sats", {"fetched": self.fetched, "sats": sats})
+        self.db.state_set("tle_sats", {"fetched": self.fetched, "sats": sats,
+                                       "trains": [asdict(t) for t in self.trains]})
 
     def usable(self, now: float) -> bool:
         return any(o.usable(now) for o in self.orbits.values())
@@ -375,6 +390,19 @@ class Catalog:
                     fresh.add(self._take(n, l1, l2))
             except Exception as e:
                 errors.append(f"{url.split('/')[2]}: {e or type(e).__name__}")
+        if self.trains_url:
+            try:
+                async with self.session.get(self.trains_url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                    if r.status >= 400:
+                        raise RuntimeError(f"HTTP {r.status}")
+                    text = await r.text()
+                trains = find_trains(parse_tles(text), time.time(), self.year)
+                if [asdict(t) for t in trains] != [asdict(t) for t in self.trains]:
+                    self.trains, self.trains_version = trains, self.trains_version + 1
+                    log.info("Starlink-Ketten: %s", ", ".join(f"{t.key} ({t.n})" for t in trains) or "keine")
+                fresh.add(0)
+            except Exception as e:
+                errors.append(f"{self.trains_url.split('/')[2]} (starlink): {e or type(e).__name__}")
         if fresh:
             self.fetched = time.time()
             self._save()
@@ -466,6 +494,131 @@ class Tracker:
 
 
 Iss = Tracker          # der alte Name, für Tests und Altlasten
+
+
+# ------------------------------------------------------------------------------- Starlink-Ketten --
+@dataclass
+class Train:
+    """Eine frische Starlink-Kette: der Start (key, YYNNN), wie viele Satelliten, wie weit sie längs der Bahn
+    auseinanderliegen (Grad), und der Vertreter in der Mitte mit seinen Bahndaten."""
+    key: str
+    n: int
+    span: float
+    name: str
+    l1: str
+    l2: str
+
+    def orbit(self) -> Orbit:
+        return Orbit(self.name, (self.l1, self.l2))
+
+
+def _unit(r) -> tuple[float, float, float]:
+    d = math.sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]) or 1.0
+    return r[0] / d, r[1] / d, r[2] / d
+
+
+def _angle(a, b) -> float:
+    return math.degrees(math.acos(max(-1.0, min(1.0, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]))))
+
+
+def find_trains(sats: list[tuple[str, str, str]], now: float, year: int | None = None) -> list[Train]:
+    """Frische Starlink-Ketten in einer Celestrak-Liste: unter den jüngsten Starts des Jahres (internationale
+    Bezeichnung YYNNN) die Gruppen ab TRAIN_MIN_N Satelliten, deren Orte zur Zeit now (SGP4) längs der Bahn
+    höchstens TRAIN_MAX_SPAN_DEG auseinanderliegen: Erst dann sieht man sie als Lichterreihe. Nach Tagen verteilen
+    sie sich über die ganze Bahn, dann ist es keine Kette mehr. Mittlere Anomalien aus den TLE taugen dafür
+    nicht: Jede hat ihre eigene Epoche. year: das Startjahr (Tests), sonst das von now."""
+    if year is None:
+        year = datetime.fromtimestamp(now, UTC).year
+    yy = f"{year % 100:02d}"
+    groups: dict[str, list[tuple[str, str, str]]] = {}
+    for name, l1, l2 in sats:
+        if name.startswith("STARLINK") and l1[9:11] == yy:
+            groups.setdefault(l1[9:14], []).append((name, l1, l2))
+    out: list[Train] = []
+    for key in sorted(groups, reverse=True)[:TRAIN_NEWEST]:
+        g = groups[key]
+        if len(g) < TRAIN_MIN_N:
+            continue
+        pts = []
+        for name, l1, l2 in g:
+            r = Orbit(name, (l1, l2)).position(now)
+            if r is not None:
+                pts.append((name, l1, l2, _unit(r)))
+        if len(pts) < TRAIN_MIN_N:
+            continue
+        span, a, b = max((_angle(p[3], q[3]), p, q) for p in pts for q in pts)
+        if span > TRAIN_MAX_SPAN_DEG:
+            continue
+        mid = min(pts, key=lambda p: abs(_angle(p[3], a[3]) - _angle(p[3], b[3])))     # in der Mitte der Kette
+        out.append(Train(key, len(pts), round(span, 1), mid[0], mid[1], mid[2]))
+    return out
+
+
+class TrainTracker:
+    """Die Starlink-Ketten (Catalog.trains) von einem Fenster aus, mit der Schnittstelle eines Trackers (cards/sky.py):
+    der nächste Überflug irgendeiner Kette, ihr Stand, wie viele Satelliten sie hat (count). Rechnet neu, sobald
+    der Katalog andere Ketten hat (trains_version)."""
+
+    def __init__(self, cfg, catalog: "Catalog"):
+        self.cfg = cfg
+        self.catalog = catalog
+        self.trackers: list[Tracker] = []
+        self.trains: list[Train] = []
+        self.passes_at: float = 0
+        self._version = -1
+        self._current: Train | None = None
+        self._sync()
+
+    def _sync(self) -> None:
+        if self._version != self.catalog.trains_version:
+            self.trains = list(self.catalog.trains)
+            self.trackers = [Tracker(self.cfg, t.orbit()) for t in self.trains]
+            self._version = self.catalog.trains_version
+            self._current = None
+
+    @property
+    def orbit(self) -> Orbit | None:
+        return self.trackers[0].orbit if self.trackers else None
+
+    @property
+    def passes(self) -> list[Pass]:
+        return sorted((p for t in self.trackers for p in t.passes), key=lambda p: p.start)
+
+    @property
+    def count(self) -> int:
+        """Satelliten der Kette, die als Nächstes kommt (nach next_pass), sonst der ersten."""
+        if self._current is not None:
+            return self._current.n
+        return self.trains[0].n if self.trains else 0
+
+    def usable(self, now: float) -> bool:
+        return any(t.usable(now) for t in self.trackers)
+
+    async def update_passes(self, now: float) -> None:
+        self._sync()
+        for t in self.trackers:
+            t.cfg = self.cfg
+            if self.passes_at == 0:
+                t.passes_at = 0
+            await t.update_passes(now)
+        self.passes_at = now
+
+    def _next(self, now: float):
+        best = None
+        for t, train in zip(self.trackers, self.trains, strict=True):
+            p = t.next_pass(now)
+            if p is not None and (best is None or p.start < best[0].start):
+                best = (p, t, train)
+        self._current = best[2] if best else None
+        return best
+
+    def next_pass(self, now: float) -> Pass | None:
+        b = self._next(now)
+        return b[0] if b else None
+
+    def state(self, now: float):
+        b = self._next(now)
+        return b[1].state(now) if b else None
 
 
 def hhmm(t: float) -> str:

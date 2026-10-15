@@ -18,7 +18,7 @@ merkt sich die Diagnose, die es dabei schickt (vier Zahlen, web.parse_diag). Fir
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from .astro import Tracker
+from .astro import Tracker, TrainTracker
 from .cards import CARDS
 from .cards.sky import SATS
 from .config import FW_CHANNELS, Config, in_hours
@@ -117,7 +117,8 @@ class Panel:
         self.stats.cfg = cfg
         app = self.app
         if app.catalog is not None:         # Tracker nur für eingeschaltete Karten: Rechenzeit nur, wo es sie gibt
-            self.sats = {cid: self.sats.get(cid) or Tracker(cfg, app.catalog.orbit_for(sat.norad))
+            self.sats = {cid: self.sats.get(cid) or (Tracker(cfg, app.catalog.orbit_for(sat.norad)) if sat.norad
+                                                     else TrainTracker(cfg, app.catalog))
                          for cid, sat in SATS.items() if cid not in cfg.cards_off}
             for tr in self.sats.values():
                 tr.cfg, tr.passes_at = cfg, 0

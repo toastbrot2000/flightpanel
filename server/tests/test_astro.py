@@ -244,3 +244,66 @@ def test_tiangong_orbit_is_plausible():
     peaks = [i for i in range(1, len(pts) - 1) if pts[i][0] > pts[i - 1][0] and pts[i][0] >= pts[i + 1][0]
              and pts[i][0] > 41]
     assert len(peaks) >= 2 and 91 * 60 <= (peaks[1] - peaks[0]) * 10 <= 94 * 60
+
+
+# --------------------------------------------------------------------------- Starlink-Ketten --
+def _batch_text():
+    with open(os.path.join(FIXTURES, "starlink-batch.tle"), encoding="utf-8") as f:
+        return f.read()
+
+
+def _checksum(line: str) -> str:
+    total = sum(int(c) if c.isdigit() else 1 if c == "-" else 0 for c in line[:68])
+    return line[:68] + str(total % 10)
+
+
+def _string(name_l1_l2, n: int, step_deg: float, year="26", launch="160"):
+    """Eine synthetische Kette: n Kopien eines Satelliten, in der mittleren Anomalie je step_deg versetzt, als
+    neuester Start des Jahres (Bezeichnung YYNNN), NORAD-Nummern fortlaufend."""
+    _name, l1, l2 = name_l1_l2
+    out = []
+    for i in range(n):
+        ma = (float(l2[43:51]) + i * step_deg) % 360
+        norad = f"{70100 + i:05d}"
+        a = _checksum(l1[:2] + norad + l1[7:9] + f"{year}{launch}{chr(65 + i % 26)}  " + l1[17:])
+        b = _checksum(l2[:2] + norad + l2[7:43] + f"{ma:8.4f}" + l2[51:])
+        out.append((f"STARLINK-9{i:04d}", a, b))
+    return out
+
+
+def test_find_trains_takes_a_tight_fresh_string_and_leaves_a_dispersed_batch():
+    from flightpanel.astro import TRAIN_MAX_SPAN_DEG, find_trains, parse_tles
+    batch = parse_tles(_batch_text())                      # ein echter Start, nach Tagen schon weit verteilt
+    assert len(batch) >= 20 and all(n.startswith("STARLINK") for n, _, _ in batch)
+    t = tle_epoch(batch[0][1])
+    assert find_trains(batch, t, year=2026) == []
+    tight = _string(batch[0], 22, 1.5)                     # 22 Satelliten über 31°: eine Kette
+    trains = find_trains(batch + tight, t, year=2026)
+    assert len(trains) == 1 and trains[0].n == 22 and trains[0].key == "26160" and trains[0].span < TRAIN_MAX_SPAN_DEG
+    assert trains[0].name in ("STARLINK-90010", "STARLINK-90011")      # der in der Mitte der Kette
+    assert find_trains(_string(batch[0], 22, 4.0), t, year=2026) == []      # 84°: zu weit auseinander
+    assert find_trains(_string(batch[0], 8, 1.5), t, year=2026) == []       # zu wenige
+    assert find_trains(_string(batch[0], 22, 1.5, year="24"), t, year=2026) == []   # alter Start
+
+
+def test_the_catalog_keeps_trains_and_a_tracker_follows_the_next_one(tmp_path):
+    from flightpanel.astro import Catalog, TrainTracker, parse_tles
+    db = Db(str(tmp_path / "f.db"))
+    batch = parse_tles(_batch_text())
+    tight = _string(batch[0], 22, 1.5)
+    text = "\n".join(f"{n}\n{a}\n{b}" for n, a, b in batch + tight) + "\n"
+    cat = Catalog(db, session=_Session(_Answer(200, _stations_text()), _Answer(200, text)),
+                  trains_url="https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=TLE")
+    cat.year = 2026
+    assert asyncio.run(cat.refresh()) and cat.last_error is None and len(cat.trains) == 1
+    assert len(Catalog(db).trains) == 1 and Catalog(db).trains[0].n == 22        # gespeichert, wieder geladen
+    tr = TrainTracker(make_cfg(home_lat=48.09, home_lon=9.83), cat)
+    assert tr.count == 22 and tr.usable(tle_epoch(tight[0][1]) + 3600)
+    now = tle_epoch(tight[0][1]) + 3600
+    for t in tr.trackers:
+        t._visible = lambda ts, st: st is not None and st[1] >= 10                # Tag und Nacht egal: nur Höhe
+    asyncio.run(tr.update_passes(now))
+    assert tr.next_pass(now) is not None and tr.state(now) is not None
+    cat.trains, cat.trains_version = [], cat.trains_version + 1                    # Kette verteilt: weg
+    asyncio.run(tr.update_passes(now + 3600))
+    assert tr.next_pass(now + 3600) is None and tr.count == 0

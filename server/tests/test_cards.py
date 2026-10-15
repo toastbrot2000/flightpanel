@@ -210,8 +210,8 @@ def test_iss_card_countdown_and_now():
     t = ts(2026, 10, 10, 20, 0)
 
     class FakeIss:
-        def __init__(self, p):
-            self.p = p
+        def __init__(self, p, count=0):
+            self.p, self.count = p, count
 
         def next_pass(self, now):
             return self.p
@@ -228,6 +228,9 @@ def test_iss_card_countdown_and_now():
     # Tiangong: dieselbe Karte mit eigenem Namen; die ISS-Karte sieht ihren Tracker nicht
     assert sky.tiangong_cond(ctx(t, astro={"tiangong": FakeIss(p)})).data["label"] == "Tiangong"
     assert sky.iss_cond(ctx(t, astro={"tiangong": FakeIss(p)})) is None
+    # Starlink-Kette: nie dringend, auch während des Überflugs; nennt die Zahl der Satelliten
+    hit = sky.starlink_cond(ctx(t + 700, astro={"starlink": FakeIss(p, count=23)}))
+    assert hit is not None and not hit.urgent and hit.data["n"] == 23
 
 
 # --------------------------------------------------------------- Rendern --

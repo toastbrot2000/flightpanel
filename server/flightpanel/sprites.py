@@ -83,6 +83,17 @@ SAT = [
     "#.ooo.#",
 ]
 SAT_PAL = {"#": (220, 170, 50), "o": (210, 210, 220)}
+# Eine Starlink-Kette: Lichter in einer Reihe
+TRAIN = [
+    "......#",
+    ".....#.",
+    "....#..",
+    "...#...",
+    "..#....",
+    ".#.....",
+    "#......",
+]
+TRAIN_PAL = {"#": (230, 230, 240)}
 
 # Winzige Buchstaben (5 hoch) für die Himmelsrichtungen im Radar; N und W brauchen
 # 5 Spalten, in 3 sahen beide aus wie M

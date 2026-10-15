@@ -53,6 +53,8 @@ CARDS = [
          demo=album.quiet_demo),
     Card("iss", sky.iss_cond, sky.iss_draw, tier=3, group="himmel", demo=sky.iss_demo),
     Card("tiangong", sky.tiangong_cond, sky.tiangong_draw, tier=3, group="himmel", demo=sky.tiangong_demo),
+    Card("starlink", sky.starlink_cond, sky.starlink_draw, weight=3.0, tier=3, group="himmel",
+         demo=sky.starlink_demo),
     Card("sunset", sky.sunset_cond, sky.sunset_draw, tier=3, group="himmel", demo=sky.sunset_demo),
     Card("sunrise", sky.sunrise_cond, sky.sunrise_draw, tier=3, group="himmel", demo=sky.sunrise_demo),
     Card("santa", fun.santa_cond, fun.santa_draw, tier=3, group="saison", demo=fun.santa_demo),
@@ -82,6 +84,8 @@ ABOUT = {
     "quiet": ("Flaute", "Wie lange schon kein Flugzeug zu sehen war."),
     "iss": ("ISS", "Wann die Raumstation sichtbar vorbeizieht."),
     "tiangong": ("Tiangong", "Wann die chinesische Raumstation sichtbar vorbeizieht."),
+    "starlink": ("Starlink-Kette", "Eine frisch gestartete Reihe von Starlink-Satelliten zieht als Lichterkette "
+                 "vorbei."),
     "sunset": ("Sonnenuntergang", "Kurz bevor die Sonne untergeht."),
     "sunrise": ("Sonnenaufgang", "Kurz bevor die Sonne aufgeht."),
     "santa": ("Weihnachten", "An den Weihnachtstagen."),

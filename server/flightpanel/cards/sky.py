@@ -1,4 +1,4 @@
-"""Tag und Himmel: Uhr, Satelliten-Überflüge (ISS, Tiangong: SATS), Sonnenauf- und -untergang."""
+"""Tag und Himmel: Uhr, Satelliten-Überflüge (ISS, Tiangong, Starlink-Ketten: SATS), Sonnenauf- und -untergang."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,6 +42,7 @@ class SatCard:
 SATS = {
     "iss": SatCard(ISS, "ISS", sprites.ISS, sprites.ISS_PAL),
     "tiangong": SatCard(TIANGONG, "Tiangong", sprites.SAT, sprites.SAT_PAL),
+    "starlink": SatCard(0, "Starlink-Kette", sprites.TRAIN, sprites.TRAIN_PAL),     # 0: die Ketten des Katalogs
 }
 
 
@@ -58,20 +59,23 @@ def sat_cond(cid: str, ctx: Ctx):
     if p is None:
         return None
     label = SATS[cid].label
+    n = getattr(tr, "count", 0)             # Satelliten einer Kette
     if p.start <= ctx.now <= p.end:
         st = tr.state(ctx.now)
         if st is None:
             return None
-        return Hit({"pass": p, "now": True, "az": st[0], "el": st[1], "label": label}, urgent=True)
+        # Eine Kette ist nie dringend: ob sie noch eine ist, weiß nur der Himmel
+        return Hit({"pass": p, "now": True, "az": st[0], "el": st[1], "label": label, "n": n},
+                   urgent=cid != "starlink", weight=3 if cid == "starlink" else None)
     if 0 < p.start - ctx.now <= 30 * 60:
-        return Hit({"pass": p, "now": False, "label": label}, weight=3 if p.start - ctx.now < 600 else 2)
+        return Hit({"pass": p, "now": False, "label": label, "n": n}, weight=3 if p.start - ctx.now < 600 else 2)
     return None
 
 
 def sat_demo(cid: str, ctx: Ctx):
     t = ctx.now + 240
     return {"pass": Pass(start=t, end=t + 300, max_elev=52, max_time=t + 150, az_start=260, az_end=80,
-                         view_start=t + 60), "now": False, "label": SATS[cid].label}
+                         view_start=t + 60), "now": False, "label": SATS[cid].label, "n": 23}
 
 
 def sat_draw(cid: str, img, ctx, d, t_in, f):
@@ -95,7 +99,11 @@ def sat_draw(cid: str, img, ctx, d, t_in, f):
             text(img, FONT_MID, 0, ROW3, f"bis {hhmm(p.end)}, nicht im Fenster", MUTED, f, W)
         return
     head(f"{d['label']} in {minutes(p.start - ctx.now)}")
-    text(img, FONT_MID, 0, ROW2, f"{kompass(p.az_start)} → {kompass(p.az_end)} · max {p.max_elev:.0f}°", INFO, f, W)
+    if cid == "starlink":
+        text(img, FONT_MID, 0, ROW2, f"{d['n']} Satelliten, {kompass(p.az_start)} → {kompass(p.az_end)}", INFO, f, W)
+    else:
+        text(img, FONT_MID, 0, ROW2, f"{kompass(p.az_start)} → {kompass(p.az_end)} · max {p.max_elev:.0f}°", INFO, f,
+             W)
     if p.view_start is not None:
         text(img, FONT_MID, 0, ROW3, f"im Fenster ab {hhmm(p.view_start)}", GOLD, f, W)
     else:
@@ -106,6 +114,8 @@ def sat_draw(cid: str, img, ctx, d, t_in, f):
 iss_cond, iss_draw, iss_demo = partial(sat_cond, "iss"), partial(sat_draw, "iss"), partial(sat_demo, "iss")
 tiangong_cond, tiangong_draw, tiangong_demo = (partial(sat_cond, "tiangong"), partial(sat_draw, "tiangong"),
                                                partial(sat_demo, "tiangong"))
+starlink_cond, starlink_draw, starlink_demo = (partial(sat_cond, "starlink"), partial(sat_draw, "starlink"),
+                                               partial(sat_demo, "starlink"))
 
 
 # ------------------------------------------------------------------- Sonne --
