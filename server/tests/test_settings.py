@@ -267,3 +267,22 @@ def test_the_scripts_never_write_html():
             js = f.read()
         for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
             assert sink not in js, (name, sink)
+
+
+def test_the_airport_is_set_by_the_owner_only(tmp_path):
+    """AIRPORT, RUNWAY und CURFEW (Region) stellt nur der Betreiber mit panels set: Über die Seite könnte ein Freund
+    sein Panel sonst irgendwohin legen (PANEL_MAX_KM umgehen) und dem Server je Panel einen eigenen Abruf aufzwingen.
+    Die Seite zeigt sie, aber nicht zum Ändern; ein Speichern mit ihnen wird abgelehnt, nichts wird gespeichert."""
+    async def run():
+        async with page(tmp_path) as (app, client):
+            text = await (await client.get("/settings")).text()
+            for key in ("AIRPORT", "RUNWAY", "CURFEW"):
+                assert re.search(rf'id="f-{key}" data-key="{key}"[^>]* disabled', text), key
+            assert "panels set" in text
+            for key, value in (("AIRPORT", "FMM"), ("RUNWAY", "240"), ("CURFEW", "00:00-05:00")):
+                r = await save(client, {"HOME_LAT": "52.45", key: value})
+                doc = await r.json()
+                assert r.status == 400 and "panels set" in doc["error"] and doc["key"] == key, key
+                assert stored(app) == {}
+
+    asyncio.run(run())

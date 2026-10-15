@@ -94,6 +94,7 @@
   function collect() {
     const settings = {};
     for (const control of form.querySelectorAll("[data-key]")) {
+      if (control.disabled) continue;              // stellt nur der Betreiber ein (panels set)
       const key = control.dataset.key;
       const fallback = control.dataset.default;
       let value = control.type === "checkbox" ? (control.checked ? "1" : "0") : control.value.trim();

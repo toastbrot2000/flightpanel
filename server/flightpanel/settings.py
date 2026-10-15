@@ -38,6 +38,7 @@ from .config import (
     _pages,
     card_off,
     default_text,
+    is_owner_key,
     is_panel_key,
     panel_fields,
     parse_layout,
@@ -57,6 +58,7 @@ INTRO = {
     "Standort": "Wo das Fenster ist und welche Flugzeuge in Frage kommen.",
     "Sichtfeld": ("Was man vom Fenster aus sieht. Am einfachsten unten eichen, mit einem Flugzeug, das gerade am "
                   "Rand des Fensters vorbeifliegt."),
+    "Flughafen": "Welcher Flughafen zu diesem Panel gehört. Das stellt der Betreiber des Servers ein.",
     "Anzeige": "Wie das Panel Flüge zeigt und wie lange.",
     "Helligkeit": "Wie hell das Panel leuchtet, und wann es dunkel bleibt.",
 }
@@ -190,6 +192,8 @@ def _changes(body: bytes) -> dict[str, str | None]:
     for key, value in doc["settings"].items():
         if key != key.strip().upper() or not is_panel_key(key):
             raise Refused(f"{key}: keine Panel-Einstellung")
+        if is_owner_key(key):
+            raise Refused(f"{key}: stellt nur der Betreiber ein, mit panels set", _shown(key))
         try:
             check_card(key)
         except ValueError as e:
@@ -283,6 +287,12 @@ def _field(f: Field, settings: Mapping[str, object]) -> str:
     hidden = f'<input type="hidden" id="f-{key}" data-key="{key}" data-default="{default}" value="{esc(raw)}">\n'
     head = f'<div class="field" id="row-{key}">\n'
     group_label = f'<p class="label" id="label-{key}">{esc(ui.label)}</p>\n{hint}'
+    if f.metadata.get("owner"):                     # nur zu sehen: settings.js lässt gesperrte Felder weg
+        return (f'{head}<label class="label" for="f-{key}">{esc(ui.label)}</label>\n{hint}'
+                f'<div class="input"><input type="text" id="f-{key}" data-key="{key}" value="{esc(raw)}" '
+                f'placeholder="{default or "wie der Server"}" disabled aria-describedby="{described} owner-{key}">'
+                f'</div>\n'
+                f'<p class="hint" id="owner-{key}">Stellt der Betreiber ein (panels set).</p>\n{error}</div>\n')
     if isinstance(f.default, bool):
         on = parse(raw) if raw else f.default
         return (f'<div class="field switch-field" id="row-{key}">\n<label class="switch">'

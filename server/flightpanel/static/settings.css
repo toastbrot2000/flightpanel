@@ -64,6 +64,7 @@ input[type="text"] {
 input[type="text"]:hover { border-color: var(--edge-hover); }
 input[type="text"]:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
 input::placeholder { color: var(--faint); opacity: 1; }
+input[type="text"]:disabled { color: var(--muted); background: var(--bg); border-style: dashed; cursor: not-allowed; }
 .error { margin: 8px 0 0; color: var(--bad); font-size: 0.9375rem; overflow-wrap: anywhere; }
 .invalid input[type="text"] { border-color: var(--bad); }
 .invalid input[type="text"]:focus { box-shadow: 0 0 0 3px var(--bad-soft); }

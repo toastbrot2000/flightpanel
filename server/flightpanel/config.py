@@ -204,14 +204,16 @@ class Ui:
     can_off: bool = False       # Uhrzeiten mit Schalter: aus speichert 00:00-00:00, ein leeres Fenster
 
 
-def _env(name: str, default, parse=None, panel: tuple[str, str] | None = None, ui: Ui | None = None):
+def _env(name: str, default, parse=None, panel: tuple[str, str] | None = None, ui: Ui | None = None,
+         owner: bool = False):
     """Ein Feld aus der Umgebungsvariablen name (Server-Einstellung, .env) oder, mit
     panel=(Gruppe, Erklärung), eine Panel-Einstellung (Datenbank, panels.py; beim ersten
     Start einmalig aus einer älteren .env übernommen). parse wandelt den Text; ohne parse
-    der Typ des Defaults. ui: wie die Einstellungsseite das Feld zeigt."""
+    der Typ des Defaults. ui: wie die Einstellungsseite das Feld zeigt. owner: stellt nur der
+    Betreiber ein (panels set), die Einstellungsseite zeigt es nur (is_owner_key)."""
     if parse is None:
         parse = _bool if isinstance(default, bool) else type(default)
-    return field(default=default, metadata={"env": name, "parse": parse, "panel": panel, "ui": ui})
+    return field(default=default, metadata={"env": name, "parse": parse, "panel": panel, "ui": ui, "owner": owner})
 
 
 CARD_PREFIX = "CARD_"
@@ -313,16 +315,17 @@ class Config:
     metar: bool = _env("METAR", True)                       # Wetter von aviationweather.gov
     metar_station: str = _env("METAR_STATION", "EDDB", str.upper)   # ohne Angabe aus airports.json
     # --- Flughafen eines Panels (Region): leer = der des Servers; ein Code aus airports.json ersetzt ihn samt
-    # Position, Höhe und METAR-Station; - heißt keiner (nur Überflüge und der Himmel). Siehe _panel_airport.
-    airport: str = _env("AIRPORT", "", _iata_or_none,
+    # Position, Höhe und METAR-Station; - heißt keiner (nur Überflüge und der Himmel). Siehe _panel_airport. Nur der
+    # Betreiber (owner): Jede Region ist ein eigener Abruf, und ein Freund könnte sein Fenster sonst überallhin legen.
+    airport: str = _env("AIRPORT", "", _iata_or_none, owner=True,
                         panel=("Flughafen", "IATA-Code, z. B. FMM; - = kein Flughafen; leer = der des Servers"),
                         ui=Ui("Flughafen", "Dessen Starts und Landungen das Panel zeigt, als Kürzel wie FMM. Ein "
                               "Strich: keiner in der Nähe."))
-    runway: float | None = _env("RUNWAY", None, _deg,
+    runway: float | None = _env("RUNWAY", None, _deg, owner=True,
                                 panel=("Flughafen", "Endanflugkurs einer Landerichtung, Grad, z. B. 240 für Piste 24"),
                                 ui=Ui("Landerichtung", "Kurs des Endanflugs einer Piste, etwa 240 für Piste 24. Die "
                                       "Gegenrichtung erkennt das Panel selbst.", "°"))
-    curfew: tuple[int, int] | None = _env("CURFEW", None, _hours,
+    curfew: tuple[int, int] | None = _env("CURFEW", None, _hours, owner=True,
                                           panel=("Flughafen", "Nachtflugverbot von-bis, z. B. 00:00-05:00"),
                                           ui=Ui("Nachtflugverbot", "In dieser Zeit startet und landet dort nichts.",
                                                 can_off=True))
@@ -577,6 +580,11 @@ def too_far(server: Config, panel: Config) -> str | None:
 def panel_fields() -> list[Field]:
     """Die Panel-Einstellungen (Felder mit panel=...), in der Reihenfolge der Klasse."""
     return [f for f in fields(Config) if f.metadata.get("panel")]
+
+
+def is_owner_key(key: str) -> bool:
+    """Eine Panel-Einstellung, die nur der Betreiber setzt (panels set), nie die Einstellungsseite."""
+    return any(f.metadata["env"] == key and f.metadata.get("owner") for f in panel_fields())
 
 
 def is_panel_key(key: str) -> bool:
