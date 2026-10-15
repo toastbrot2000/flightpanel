@@ -42,7 +42,7 @@ class SatCard:
 SATS = {
     "iss": SatCard(ISS, "ISS", sprites.ISS, sprites.ISS_PAL),
     "tiangong": SatCard(TIANGONG, "Tiangong", sprites.SAT, sprites.SAT_PAL),
-    "starlink": SatCard(0, "Starlink-Kette", sprites.TRAIN, sprites.TRAIN_PAL),     # 0: die Ketten des Katalogs
+    "starlink": SatCard(0, "Starlink", sprites.TRAIN, sprites.TRAIN_PAL),     # 0: die Ketten des Katalogs
 }
 
 
@@ -99,8 +99,8 @@ def sat_draw(cid: str, img, ctx, d, t_in, f):
             text(img, FONT_MID, 0, ROW3, f"bis {hhmm(p.end)}, nicht im Fenster", MUTED, f, W)
         return
     head(f"{d['label']} in {minutes(p.start - ctx.now)}")
-    if cid == "starlink":
-        text(img, FONT_MID, 0, ROW2, f"{d['n']} Satelliten, {kompass(p.az_start)} → {kompass(p.az_end)}", INFO, f, W)
+    if cid == "starlink":                                   # Kette: wie viele, woher wohin (kleiner, wenn es eng wird)
+        line(img, 0, ROW2, f"Kette aus {d['n']}, {kompass(p.az_start)} → {kompass(p.az_end)}", INFO, f)
     else:
         text(img, FONT_MID, 0, ROW2, f"{kompass(p.az_start)} → {kompass(p.az_end)} · max {p.max_elev:.0f}°", INFO, f,
              W)
