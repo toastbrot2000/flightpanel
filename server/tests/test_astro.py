@@ -7,7 +7,18 @@ import time
 from datetime import UTC, datetime
 
 from conftest import FIXTURES, make_cfg
-from flightpanel.astro import TLE_URLS, Iss, Orbit, parse_tle, sun_crossing, sun_day, sun_position, sun_radec, tle_epoch
+from flightpanel.astro import (
+    TLE_URLS,
+    Catalog,
+    Iss,
+    Orbit,
+    parse_tle,
+    sun_crossing,
+    sun_day,
+    sun_position,
+    sun_radec,
+    tle_epoch,
+)
 from flightpanel.db import Db
 from flightpanel.issues import Issues
 
@@ -77,11 +88,12 @@ def test_parse_tle_formats():
 def test_tle_lives_in_the_database(tmp_path):
     db = Db(str(tmp_path / "f.db"))
     text = _tle_text()
-    orbit = Orbit(db)
-    assert orbit.sat is None and orbit.needs_tle(0)
-    assert orbit.set_tle_text(text, fetched=1791654544)
-    again = Orbit(db)
-    assert again.tle == orbit.tle and again.tle_fetched == 1791654544 and not again.needs_tle(1791654544 + 3600)
+    cat = Catalog(db)
+    assert not cat.orbits and cat.needs_tle(0)
+    assert cat.set_tle_text(text, fetched=1791654544)
+    again = Catalog(db)
+    assert again.get(25544).tle == cat.get(25544).tle and again.fetched == 1791654544
+    assert not again.needs_tle(1791654544 + 3600)
     assert not again.set_tle_text("Too many requests", fetched=0)
 
 
@@ -116,13 +128,13 @@ def test_refresh_tle_stores_the_answer_in_the_database(tmp_path):
     """Die erste Quelle meldet einen HTTP-Fehler, die zweite liefert Bahndaten: sie liegen danach in der Datenbank."""
     db = Db(str(tmp_path / "f.db"))
     session = _Session(_Answer(503, "Service Unavailable"), _Answer(200, _tle_text()))
-    orbit = Orbit(db, session=session)
+    cat = Catalog(db, session=session)
     before = time.time()
-    assert asyncio.run(orbit.refresh_tle())
-    assert session.urls == TLE_URLS and orbit.last_error is None
-    assert before <= orbit.tle_fetched <= time.time() and not orbit.needs_tle(time.time())
-    again = Orbit(db)                                                   # nach einem Neustart
-    assert again.tle == orbit.tle and again.tle_fetched == orbit.tle_fetched
+    assert asyncio.run(cat.refresh())
+    assert session.urls == TLE_URLS and "HTTP 503" in cat.last_error    # Teilerfolg: die Ersatzquelle brachte die ISS
+    assert before <= cat.fetched <= time.time() and not cat.needs_tle(time.time())
+    again = Catalog(db)                                                 # nach einem Neustart
+    assert again.get(25544).tle == cat.get(25544).tle and again.fetched == cat.fetched
 
 
 def test_refresh_tle_failures_are_reported_until_the_next_success(tmp_path):
@@ -131,20 +143,19 @@ def test_refresh_tle_failures_are_reported_until_the_next_success(tmp_path):
     db = Db(str(tmp_path / "f.db"))
     issues = Issues(db)
     session = _Session(_Answer(429, "Too many requests"), _Answer(200, "Too many requests"))
-    orbit = Orbit(db, session=session, issues=issues)
-    assert not asyncio.run(orbit.refresh_tle())
+    cat = Catalog(db, session=session, issues=issues)
+    assert not asyncio.run(cat.refresh())
     error = "celestrak.org: HTTP 429; tle.ivanstanojevic.me: keine Bahnelemente in der Antwort"
-    assert orbit.last_error == error and issues.items["rate_limit:tle"]["example"] == {"error": error}
-    assert orbit.sat is None and db.state_get("tle") is None and db.state_get("tle_fetched") is None
-    session.answers = [_Answer(200, _tle_text())]
-    assert asyncio.run(orbit.refresh_tle()) and orbit.last_error is None and db.state_get("tle") is not None
+    assert cat.last_error == error and issues.items["rate_limit:tle"]["example"] == {"error": error}
+    assert not cat.orbits and db.state_get("tle_sats") is None
+    session.answers = [_Answer(200, _stations_text())]
+    assert asyncio.run(cat.refresh()) and cat.last_error is None and db.state_get("tle_sats") is not None
 
 
 def test_passes_are_computed_in_a_thread_without_touching_the_database(tmp_path):
     """update_passes ruft compute_passes in einem eigenen Thread auf, die Datenbank gehört aber dem Thread der
     Event-Loop: Griffe compute_passes darauf zu, scheiterte SQLite hier."""
-    iss = Iss(make_cfg(home_lat=BERLIN[0], home_lon=BERLIN[1]),
-              Orbit(Db(str(tmp_path / "f.db")), tle_text=_tle_text()))
+    iss = Iss(make_cfg(home_lat=BERLIN[0], home_lon=BERLIN[1]), Orbit(tle_text=_tle_text()))
     now = tle_epoch(iss.orbit.tle[0]) + 86400
     asyncio.run(iss.update_passes(now))
     assert iss.passes_at == now
@@ -174,3 +185,62 @@ def test_the_sun_cache_has_room_for_many_windows():
     for i in range(20):
         sun_day(1791654544, 52.0 + i / 100, 13.4)
     assert len(astro._SUN_CACHE) == 20
+
+
+# ------------------------------------------------------------------- Katalog: mehrere Satelliten --
+def _stations_text():
+    with open(os.path.join(FIXTURES, "stations.tle"), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_parse_tles_reads_a_celestrak_group_and_plain_pairs():
+    from flightpanel.astro import norad_of, parse_tles
+    sats = parse_tles(_stations_text())
+    assert [s[0] for s in sats] == ["ISS (ZARYA)", "CSS (TIANHE)"]
+    assert [norad_of(s[2]) for s in sats] == [25544, 48274]
+    l1, l2 = parse_tle(_tle_text())
+    assert parse_tles(_tle_text()) == [("ISS (ZARYA)", l1, l2)]
+    assert parse_tles(f"{l1}\n{l2}\n") == [("", l1, l2)]                            # zwei Zeilen ohne Namen
+    assert parse_tles("Too many requests") == []
+
+
+def test_the_catalog_keeps_iss_and_tiangong_and_seeds_from_the_old_key(tmp_path):
+    """Die Bahndaten aller Satelliten liegen unter tle_sats; der alte Schlüssel tle (nur die ISS) sät den Katalog
+    einmalig, sodass die ISS über das Update hinweg läuft, auch ohne Netz."""
+    from flightpanel.astro import Catalog
+    db = Db(str(tmp_path / "f.db"))
+    db.state_set("tle", _tle_text())
+    db.state_set("tle_fetched", 1791654544)
+    cat = Catalog(db)
+    assert set(cat.orbits) == {25544} and cat.fetched == 1791654544 and cat.get(25544).usable(1791654544)
+    cat.session = _Session(_Answer(200, _stations_text()))
+    assert asyncio.run(cat.refresh()) and cat.last_error is None
+    assert set(cat.orbits) == {25544, 48274} and cat.get(48274).name == "CSS (TIANHE)"
+    assert set(db.state_get("tle_sats")["sats"]) == {"25544", "48274"}
+    again = Catalog(db)
+    assert set(again.orbits) == {25544, 48274} and not again.needs_tle(time.time())
+
+
+def test_a_failing_source_is_reported_and_the_others_still_count(tmp_path):
+    from flightpanel.astro import Catalog
+    db = Db(str(tmp_path / "f.db"))
+    issues = Issues(db)
+    cat = Catalog(db, session=_Session(_Answer(429, "Too many requests"), _Answer(200, _tle_text())), issues=issues)
+    assert asyncio.run(cat.refresh())                                     # stations weg, die ISS-Ersatzquelle da
+    assert set(cat.orbits) == {25544} and "celestrak.org: HTTP 429" in cat.last_error
+    assert "rate_limit:tle" in issues.items
+    cat.session = _Session(_Answer(503, "x"), _Answer(200, "Too many requests"))
+    assert not asyncio.run(cat.refresh()) and "HTTP 503" in cat.last_error and set(cat.orbits) == {25544}
+
+
+def test_tiangong_orbit_is_plausible():
+    """Ohne Fremdquelle: Breite gipfelt bei der Inklination (41,47°), Höhe 370-400 km, Umlauf 92-93 min."""
+    from flightpanel.astro import Orbit, Tracker, parse_tles
+    name, l1, l2 = next(s for s in parse_tles(_stations_text()) if "TIANHE" in s[0])
+    tr = Tracker(make_cfg(home_lat=48.09, home_lon=9.83), Orbit(name, (l1, l2)))
+    epoch = tle_epoch(l1)
+    pts = [tr.subpoint(epoch + i * 10) for i in range(0, 200 * 6)]
+    assert 41.3 < max(p[0] for p in pts) < 41.7 and 370 < min(p[2] for p in pts) and max(p[2] for p in pts) < 400
+    peaks = [i for i in range(1, len(pts) - 1) if pts[i][0] > pts[i - 1][0] and pts[i][0] >= pts[i + 1][0]
+             and pts[i][0] > 41]
+    assert len(peaks) >= 2 and 91 * 60 <= (peaks[1] - peaks[0]) * 10 <= 94 * 60

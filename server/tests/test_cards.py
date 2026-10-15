@@ -220,11 +220,14 @@ def test_iss_card_countdown_and_now():
             return (250.0, 35.0, 700.0, True)
 
     p = Pass(start=t + 600, end=t + 900, max_elev=50, max_time=t + 750, az_start=260, az_end=80)
-    assert not sky.iss_cond(ctx(t, astro=FakeIss(p))).urgent
-    assert sky.iss_cond(ctx(t + 700, astro=FakeIss(p))).urgent
-    assert sky.iss_cond(ctx(t - 3600, astro=FakeIss(p))) is None
-    assert sky.iss_cond(ctx(t, astro=FakeIss(None))) is None
-    assert sky.iss_cond(ctx(t, astro=None)) is None
+    assert not sky.iss_cond(ctx(t, astro={"iss": FakeIss(p)})).urgent
+    assert sky.iss_cond(ctx(t + 700, astro={"iss": FakeIss(p)})).urgent
+    assert sky.iss_cond(ctx(t - 3600, astro={"iss": FakeIss(p)})) is None
+    assert sky.iss_cond(ctx(t, astro={"iss": FakeIss(None)})) is None
+    assert sky.iss_cond(ctx(t, astro=None)) is None and sky.iss_cond(ctx(t, astro={})) is None
+    # Tiangong: dieselbe Karte mit eigenem Namen; die ISS-Karte sieht ihren Tracker nicht
+    assert sky.tiangong_cond(ctx(t, astro={"tiangong": FakeIss(p)})).data["label"] == "Tiangong"
+    assert sky.iss_cond(ctx(t, astro={"tiangong": FakeIss(p)})) is None
 
 
 # --------------------------------------------------------------- Rendern --

@@ -39,7 +39,7 @@ Copy `.env.example` to `.env`; every setting is explained there. Missing or empt
 | `POLL_INTERVAL` | `20` | seconds between fetches (minimum 5) |
 | `ADSBIM`, `TRACK_ORIGIN` | `1`, `1` | routes from adsb.im before adsbdb; origin airport from the OpenSky track when no route is known |
 | `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET` | empty | OpenSky API client; anonymous gets 400 credits a day, with an account 4000 |
-| `ISS` | `1` | ISS orbit data from CelesTrak once a day, for the `iss` card |
+| `ISS` | `1` | satellite orbit data from CelesTrak once a day (ISS, Tiangong), for the `iss` and `tiangong` cards |
 | `WIDTH`, `HEIGHT` | `128`, `32` | display size; must match the firmware (`firmware/include/config.h`), and the layouts assume 32 px height |
 | `LOGO_FETCH`, `LOGO_SIZE`, `LOGO_MAX_ASPECT` | `1`, `32`, `1.5` | see [Airline logos](#airline-logos) |
 | `LOGO_URLS` | built-in list | own logo sources, comma-separated templates with `{iata}` or `{icao}`, optional `\|aspect` |

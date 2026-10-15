@@ -1,9 +1,11 @@
-"""Tag und Himmel: Uhr, ISS-Überflüge, Sonnenauf- und -untergang."""
+"""Tag und Himmel: Uhr, Satelliten-Überflüge (ISS, Tiangong: SATS), Sonnenauf- und -untergang."""
 
+from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 
 from .. import sprites
-from ..astro import Pass, hhmm, sun_day
+from ..astro import ISS, TIANGONG, Pass, hhmm, sun_day
 from ..colors import ARR_C, CLOCK, CYAN, GOLD, HORIZON, INFO, MUTED, dim
 from ..draw import ROW1, ROW2, ROW3, line, minutes, text
 from ..fonts import FONT_BIG, FONT_CLOCK, FONT_MID, FONT_SMALL
@@ -27,37 +29,64 @@ def clock_draw(img, ctx, data, t_in, f):
     FONT_SMALL.draw(img, (img.width - FONT_SMALL.text_width(date)) // 2, 22, date, dim(MUTED, 0.6 * f))
 
 
-# --------------------------------------------------------------------- ISS --
-def iss_cond(ctx: Ctx):
-    iss = ctx.astro
-    if iss is None:
+# -------------------------------------------------------------- Satelliten --
+@dataclass(frozen=True)
+class SatCard:
+    """Eine Satelliten-Karte: welcher Satellit (NORAD, astro.WANTED), wie er heißt und aussieht."""
+    norad: int
+    label: str
+    sprite: list[str]
+    pal: dict
+
+
+SATS = {
+    "iss": SatCard(ISS, "ISS", sprites.ISS, sprites.ISS_PAL),
+    "tiangong": SatCard(TIANGONG, "Tiangong", sprites.SAT, sprites.SAT_PAL),
+}
+
+
+def _tracker(cid: str, ctx: Ctx):
+    """Der Tracker dieser Karte (ctx.astro: je Karten-id einer, panel.py); None ohne oder bei abgeschalteter Karte."""
+    return ctx.astro.get(cid) if isinstance(ctx.astro, dict) else None
+
+
+def sat_cond(cid: str, ctx: Ctx):
+    tr = _tracker(cid, ctx)
+    if tr is None:
         return None
-    p = iss.next_pass(ctx.now)
+    p = tr.next_pass(ctx.now)
     if p is None:
         return None
+    label = SATS[cid].label
     if p.start <= ctx.now <= p.end:
-        st = iss.state(ctx.now)
+        st = tr.state(ctx.now)
         if st is None:
             return None
-        return Hit({"pass": p, "now": True, "az": st[0], "el": st[1]}, urgent=True)
+        return Hit({"pass": p, "now": True, "az": st[0], "el": st[1], "label": label}, urgent=True)
     if 0 < p.start - ctx.now <= 30 * 60:
-        return Hit({"pass": p, "now": False}, weight=3 if p.start - ctx.now < 600 else 2)
+        return Hit({"pass": p, "now": False, "label": label}, weight=3 if p.start - ctx.now < 600 else 2)
     return None
 
 
-def iss_demo(ctx: Ctx):
+def sat_demo(cid: str, ctx: Ctx):
     t = ctx.now + 240
     return {"pass": Pass(start=t, end=t + 300, max_elev=52, max_time=t + 150, az_start=260, az_end=80,
-                         view_start=t + 60), "now": False}
+                         view_start=t + 60), "now": False, "label": SATS[cid].label}
 
 
-def iss_draw(img, ctx, d, t_in, f):
+def sat_draw(cid: str, img, ctx, d, t_in, f):
     p = d["pass"]
     W = img.width
-    sprites.blit(img, sprites.ISS, W - 8, 2, sprites.ISS_PAL, f)
+    sat = SATS[cid]
+    sprites.blit(img, sat.sprite, W - 8, 2, sat.pal, f)
+    room = W - 10                                           # links vom Sprite
+
+    def head(s: str) -> None:                               # groß, wenn es passt (ISS), sonst mittel (Tiangong)
+        text(img, FONT_BIG if FONT_BIG.text_width(s) <= room else FONT_MID, 0, ROW1, s, CYAN, f, room)
+
     if d["now"]:
         if ctx.blink_on:
-            FONT_BIG.draw(img, 0, ROW1, "ISS jetzt!", dim(CYAN, f))
+            head(f"{d['label']} jetzt!")
         text(img, FONT_MID, 0, ROW2, f"{kompass(d['az'])}, {d['el']:.0f}° hoch", INFO, f, W)
         if in_cone(ctx, d["az"], d["el"]):
             arrow = side_arrow(ctx, d["az"])
@@ -65,12 +94,18 @@ def iss_draw(img, ctx, d, t_in, f):
         else:
             text(img, FONT_MID, 0, ROW3, f"bis {hhmm(p.end)}, nicht im Fenster", MUTED, f, W)
         return
-    FONT_BIG.draw(img, 0, ROW1, f"ISS in {minutes(p.start - ctx.now)}", dim(CYAN, f))
+    head(f"{d['label']} in {minutes(p.start - ctx.now)}")
     text(img, FONT_MID, 0, ROW2, f"{kompass(p.az_start)} → {kompass(p.az_end)} · max {p.max_elev:.0f}°", INFO, f, W)
     if p.view_start is not None:
         text(img, FONT_MID, 0, ROW3, f"im Fenster ab {hhmm(p.view_start)}", GOLD, f, W)
     else:
         text(img, FONT_MID, 0, ROW3, f"{hhmm(p.start)}-{hhmm(p.end)}, nicht im Fenster", MUTED, f, W)
+
+
+# Je Karte ihre drei Funktionen (cards/__init__.py); die Namen bleiben, Tests und Doku nennen sie
+iss_cond, iss_draw, iss_demo = partial(sat_cond, "iss"), partial(sat_draw, "iss"), partial(sat_demo, "iss")
+tiangong_cond, tiangong_draw, tiangong_demo = (partial(sat_cond, "tiangong"), partial(sat_draw, "tiangong"),
+                                               partial(sat_demo, "tiangong"))
 
 
 # ------------------------------------------------------------------- Sonne --

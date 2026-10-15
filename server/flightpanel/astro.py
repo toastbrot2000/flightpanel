@@ -3,12 +3,13 @@ System wie die Flugzeuge (0° = Nord, 90° = Ost, Höhenwinkel über dem Horizon
 also passend zum geeichten Sichtfeld.
 
 Sonne: rein gerechnet (Näherung nach dem Astronomical Almanac, ~0,01°), kein Netz.
-ISS: Bahnelemente (TLE) von Celestrak, ersatzweise einer zweiten Quelle, einmal
-am Tag für alle Panels (Orbit); zwischengespeichert in der Datenbank (state) und
-bis 14 Tage nach ihrer Epoche genutzt. Daraus je Fenster (Iss) mit SGP4 die
-Überflüge der nächsten 24 h, die man sehen kann: ISS mindestens 10° hoch, von der
+Satelliten (ISS, Tiangong: WANTED): Bahnelemente (TLE) von Celestrak, für die ISS
+ersatzweise einer zweiten Quelle, einmal am Tag für alle Panels (Catalog, je
+Satellit ein Orbit); zwischengespeichert in der Datenbank (state) und bis 14 Tage
+nach ihrer Epoche genutzt. Daraus je Fenster und Satellit (Tracker) mit SGP4 die
+Überflüge der nächsten 24 h, die man sehen kann: mindestens 10° hoch, von der
 Sonne beschienen, beim Beobachter schon dunkel. Ohne gültige Bahnelemente gibt es
-keine ISS-Karten, sonst ändert sich nichts."""
+keine Satelliten-Karten, sonst ändert sich nichts."""
 
 import asyncio
 import json
@@ -31,10 +32,11 @@ PASS_STEP_S = 20
 PASS_HOURS = 24
 TLE_MAX_AGE_D = 14
 TLE_REFRESH_S = 24 * 3600
-TLE_URLS = [
-    "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE",
-    "https://tle.ivanstanojevic.me/api/tle/25544",
-]
+ISS, TIANGONG = 25544, 48274          # NORAD-Nummern
+WANTED = {ISS: "ISS", TIANGONG: "Tiangong"}     # was der Katalog aus den Quellen behält (cards/sky.py SATS)
+STATIONS_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=TLE"   # ISS, Tiangong, ...
+ISS_FALLBACK_URL = "https://tle.ivanstanojevic.me/api/tle/25544"
+TLE_URLS = [STATIONS_URL, ISS_FALLBACK_URL]
 
 
 # ------------------------------------------------------------------ Sonne --
@@ -178,22 +180,44 @@ def tle_epoch(line1: str) -> float:
     return (datetime(year, 1, 1) - datetime(1970, 1, 1)).total_seconds() + (doy - 1) * 86400
 
 
-def parse_tle(text: str) -> tuple[str, str] | None:
-    """Zwei TLE-Zeilen aus Text oder aus JSON {"line1", "line2"}."""
+def norad_of(line2: str) -> int:
+    """Die NORAD-Nummer aus Zeile 2 (Spalten 3-7)."""
+    return int(line2[2:7])
+
+
+def parse_tles(text: str) -> list[tuple[str, str, str]]:
+    """Alle Satelliten aus Text (3-zeilig mit Namenszeile wie Celestrak, oder nur die zwei Zeilen) oder aus JSON
+    {"name", "line1", "line2"}: (Name, Zeile 1, Zeile 2) je Satellit, der Name leer, wenn keiner dasteht."""
     text = text.strip()
     if text.startswith("{"):
         try:
             j = json.loads(text)
             l1, l2 = j.get("line1", ""), j.get("line2", "")
         except Exception:
-            return None
-    else:
-        lines = [ln.strip() for ln in text.splitlines()]
-        l1 = next((ln for ln in lines if ln.startswith("1 ")), "")
-        l2 = next((ln for ln in lines if ln.startswith("2 ")), "")
-    if len(l1) >= 69 and len(l2) >= 69:
-        return l1, l2
-    return None
+            return []
+        return [(str(j.get("name", "")), l1, l2)] if len(l1) >= 69 and len(l2) >= 69 else []
+    out: list[tuple[str, str, str]] = []
+    name, l1 = "", ""
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if ln.startswith("1 ") and len(ln) >= 69:
+            l1 = ln
+        elif ln.startswith("2 ") and len(ln) >= 69 and l1:
+            try:
+                norad_of(ln)
+            except ValueError:
+                continue
+            out.append((name, l1, ln))
+            name, l1 = "", ""
+        elif ln:
+            name, l1 = (ln[2:].strip() if ln.startswith("0 ") else ln), ""
+    return out
+
+
+def parse_tle(text: str) -> tuple[str, str] | None:
+    """Die zwei TLE-Zeilen des ersten Satelliten im Text (parse_tles)."""
+    sats = parse_tles(text)
+    return (sats[0][1], sats[0][2]) if sats else None
 
 
 @dataclass
@@ -208,44 +232,30 @@ class Pass:
 
 
 class Orbit:
-    """Die Bahndaten der ISS (TLE), einmal für alle Panels: von Celestrak, ersatzweise einer zweiten Quelle, einmal
-    am Tag; zwischengespeichert in der Datenbank (state: tle, tle_fetched). Wo die ISS von einem Fenster aus steht
-    und wann man sie dort sieht, rechnet Iss."""
+    """Die Bahndaten eines Satelliten (TLE) und sein Ort daraus (SGP4): einer je Satellit, für alle Panels gemeinsam
+    (Catalog). version zählt neue Bahndaten: Ein Tracker rechnet seine Überflüge dann neu. Ohne Bahndaten (ein
+    Platzhalter, bis die Quelle sie liefert) ist er nicht usable."""
 
-    def __init__(self, db=None, session: aiohttp.ClientSession | None = None, issues=None,
-                 tle_text: str | None = None):
-        """db: Bahndaten aus der Datenbank (state: tle, tle_fetched); tle_text: fertige
-        Bahndaten, für Tests."""
-        self.db = db
-        self.session = session
-        self.issues = issues
+    def __init__(self, name: str = "", tle: tuple[str, str] | None = None, tle_text: str | None = None):
+        self.name = name
         self.tle: tuple[str, str] | None = None
         self.sat = None
-        self.tle_fetched: float = 0
-        self.version = 0                # zählt neue Bahndaten: Iss rechnet seine Überflüge dann neu
-        self.last_error: str | None = None
-        if tle_text is not None:
-            self.set_tle_text(tle_text, time.time())
-        elif db is not None:
-            self._load()
-
-    def _load(self) -> None:
-        text = self.db.state_get("tle")
-        tle = parse_tle(text) if text else None
-        if tle:
+        self.version = 0
+        if tle is not None:
             self._set(tle)
-            self.tle_fetched = self.db.state_get("tle_fetched", 0)
+        elif tle_text is not None:
+            self.set_tle_text(tle_text)
 
-    def set_tle_text(self, text: str, fetched: float) -> bool:
-        """Bahndaten übernehmen (Celestrak-Antwort oder alte tle.txt) und merken."""
+    @property
+    def norad(self) -> int:
+        return norad_of(self.tle[1]) if self.tle else 0
+
+    def set_tle_text(self, text: str, fetched: float | None = None) -> bool:
+        """Bahndaten aus Text übernehmen (die ersten zwei TLE-Zeilen darin)."""
         tle = parse_tle(text)
         if not tle:
             return False
         self._set(tle)
-        self.tle_fetched = fetched
-        if self.db is not None:
-            self.db.state_set("tle", "ISS (ZARYA)\n" + "\n".join(tle) + "\n")
-            self.db.state_set("tle_fetched", fetched)
         return True
 
     def _set(self, tle: tuple[str, str]) -> None:
@@ -257,31 +267,8 @@ class Orbit:
     def usable(self, now: float) -> bool:
         return self.sat is not None and now - tle_epoch(self.tle[0]) < TLE_MAX_AGE_D * 86400
 
-    async def refresh_tle(self) -> bool:
-        errors = []
-        for url in TLE_URLS:
-            try:
-                async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                    if r.status >= 400:
-                        raise RuntimeError(f"HTTP {r.status}")
-                    text = await r.text()
-                if not self.set_tle_text(text, time.time()):
-                    raise RuntimeError("keine Bahnelemente in der Antwort")
-                self.last_error = None
-                return True
-            except Exception as e:
-                errors.append(f"{url.split('/')[2]}: {e or type(e).__name__}")
-        self.last_error = "; ".join(errors)
-        log.warning("ISS-Bahnelemente: %s", self.last_error)
-        if self.issues is not None:
-            self.issues.source_error("tle", self.last_error[:300])
-        return False
-
-    def needs_tle(self, now: float) -> bool:
-        return self.sat is None or now - self.tle_fetched > TLE_REFRESH_S
-
     def position(self, t: float) -> tuple[float, float, float] | None:
-        """Ort der ISS zur Zeit t (TEME, km); None ohne Bahndaten oder wenn SGP4 scheitert."""
+        """Ort des Satelliten zur Zeit t (TEME, km); None ohne Bahndaten oder wenn SGP4 scheitert."""
         if self.sat is None:
             return None
         days = t / 86400.0
@@ -289,9 +276,122 @@ class Orbit:
         return None if err else r
 
 
-class Iss:
-    """Die ISS von einem Fenster aus (cfg: Standort und Sichtfeld eines Panels), aus den gemeinsamen Bahndaten
-    (orbit): wo sie gerade steht und die Überflüge der nächsten 24 h, die man von dort sieht."""
+class Catalog:
+    """Die Bahndaten aller Satelliten, die Karten zeigen (WANTED), einmal für alle Panels: von Celestrak (Gruppe
+    stations: ISS und Tiangong), für die ISS ersatzweise eine zweite Quelle, einmal am Tag; in der Datenbank (state
+    tle_sats). Der alte Schlüssel tle (nur die ISS) sät den Katalog einmalig, sodass die ISS über das Update hinweg
+    läuft, auch ohne Netz. Wo ein Satellit von einem Fenster aus steht und wann man ihn dort sieht, rechnet Tracker."""
+
+    def __init__(self, db=None, session: aiohttp.ClientSession | None = None, issues=None,
+                 sources: list[str] | None = None):
+        self.db = db
+        self.session = session
+        self.issues = issues
+        self.sources = list(sources if sources is not None else TLE_URLS)
+        self.orbits: dict[int, Orbit] = {}
+        self.fetched: float = 0
+        self.version = 0                # zählt neue Bahndaten irgendeines Satelliten
+        self.last_error: str | None = None
+        if db is not None:
+            self._load()
+
+    def _load(self) -> None:
+        doc = self.db.state_get("tle_sats")
+        if isinstance(doc, dict):
+            for s in doc.get("sats", {}).values():
+                try:
+                    self._take(s["name"], s["l1"], s["l2"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+            self.fetched = doc.get("fetched", 0) or 0
+            return
+        text = self.db.state_get("tle")                 # Altbestand: nur die ISS
+        if text:
+            self.set_tle_text(text, self.db.state_get("tle_fetched", 0) or 0)
+
+    def _take(self, name: str, l1: str, l2: str) -> int:
+        """Bahndaten eines Satelliten übernehmen: in sein Orbit-Objekt, damit Tracker, die es halten, neu rechnen."""
+        norad = norad_of(l2)
+        o = self.orbits.get(norad)
+        if o is None:
+            self.orbits[norad] = Orbit(name or WANTED.get(norad, ""), (l1, l2))
+        else:
+            o._set((l1, l2))
+            if name:
+                o.name = name
+        self.version += 1
+        return norad
+
+    def orbit_for(self, norad: int) -> Orbit:
+        """Das Orbit-Objekt eines Satelliten, notfalls ein Platzhalter ohne Bahndaten (bis die Quelle sie liefert)."""
+        o = self.orbits.get(norad)
+        if o is None:
+            o = self.orbits[norad] = Orbit(WANTED.get(norad, ""))
+        return o
+
+    def get(self, norad: int) -> Orbit | None:
+        o = self.orbits.get(norad)
+        return o if o is not None and o.tle else None
+
+    def set_tle_text(self, text: str, fetched: float) -> bool:
+        """Bahndaten aus Text übernehmen (Antwort einer Quelle oder eine alte tle.txt), beliebig viele Satelliten
+        darin, nur die gewollten (WANTED); merken."""
+        taken = [self._take(n, l1, l2) for n, l1, l2 in parse_tles(text) if norad_of(l2) in WANTED]
+        if not taken:
+            return False
+        self.fetched = fetched
+        self._save()
+        return True
+
+    def _save(self) -> None:
+        if self.db is None:
+            return
+        sats = {str(n): {"name": o.name, "l1": o.tle[0], "l2": o.tle[1]} for n, o in self.orbits.items() if o.tle}
+        self.db.state_set("tle_sats", {"fetched": self.fetched, "sats": sats})
+
+    def usable(self, now: float) -> bool:
+        return any(o.usable(now) for o in self.orbits.values())
+
+    def needs_tle(self, now: float) -> bool:
+        return not any(o.tle for o in self.orbits.values()) or now - self.fetched > TLE_REFRESH_S
+
+    async def refresh(self) -> bool:
+        """Alle Quellen der Reihe nach; die Ersatzquelle für die ISS nur, wenn die Gruppe sie nicht brachte. Ein
+        Teilerfolg zählt: Was eine Quelle liefert, gilt, der Ausfall der anderen steht in last_error und /issues."""
+        errors: list[str] = []
+        fresh: set[int] = set()
+        for url in self.sources:
+            if url == ISS_FALLBACK_URL and ISS in fresh:
+                continue
+            try:
+                async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                    if r.status >= 400:
+                        raise RuntimeError(f"HTTP {r.status}")
+                    text = await r.text()
+                sats = [(n, l1, l2) for n, l1, l2 in parse_tles(text) if norad_of(l2) in WANTED]
+                if not sats:
+                    raise RuntimeError("keine Bahnelemente in der Antwort")
+                for n, l1, l2 in sats:
+                    fresh.add(self._take(n, l1, l2))
+            except Exception as e:
+                errors.append(f"{url.split('/')[2]}: {e or type(e).__name__}")
+        if fresh:
+            self.fetched = time.time()
+            self._save()
+        self.last_error = "; ".join(errors) or None
+        if errors:
+            log.warning("Bahnelemente: %s", self.last_error)
+            if self.issues is not None:
+                self.issues.source_error("tle", self.last_error[:300])
+        return bool(fresh)
+
+    async def refresh_tle(self) -> bool:
+        return await self.refresh()
+
+
+class Tracker:
+    """Ein Satellit von einem Fenster aus (cfg: Standort und Sichtfeld eines Panels), aus den gemeinsamen Bahndaten
+    (orbit): wo er gerade steht und die Überflüge der nächsten 24 h, die man von dort sieht."""
 
     def __init__(self, cfg, orbit: Orbit):
         self.cfg = cfg
@@ -312,7 +412,7 @@ class Iss:
         return az, el, rng, sunlit(r, t)
 
     def subpoint(self, t: float) -> tuple[float, float, float] | None:
-        """(Breite, Länge, Höhe km) unter der ISS."""
+        """(Breite, Länge, Höhe km) unter dem Satelliten."""
         r = self.orbit.position(t)
         return None if r is None else ecef_to_geodetic(*teme_to_ecef(r, t))
 
@@ -357,12 +457,15 @@ class Iss:
         version = self.orbit.version
         self.passes = await asyncio.to_thread(self.compute_passes, now - 600)
         self.passes_at, self._version = now, version
-        log.info("ISS: %d sichtbare Überflüge in %d h", len(self.passes), PASS_HOURS)
+        log.info("%s: %d sichtbare Überflüge in %d h", self.orbit.name or "Satellit", len(self.passes), PASS_HOURS)
 
     def next_pass(self, now: float) -> Pass | None:
         if not self.usable(now):
             return None
         return next((p for p in self.passes if p.end >= now), None)
+
+
+Iss = Tracker          # der alte Name, für Tests und Altlasten
 
 
 def hhmm(t: float) -> str:

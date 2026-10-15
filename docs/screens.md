@@ -66,7 +66,7 @@ Rendered with demo data (`tools/screenshots.py`), in the same LED look as the br
 | | `new` | "NEU!" (new) with logo | airline seen for the first time, not in the first 6 h after the very first start |
 | | `rare` | far away but rare (e.g. an A380 70 km southeast), or a VIP visit | type from `data/rare.json`, or government/military (`airlines.json` label, plus callsigns from `rare.json`) within the scan radius |
 | | `quiet` | lull and daily record | from 10 min without an aircraft in the view field; the timer restarts after a fetch gap |
-| | `iss` | ISS pass: direction, elevation, whether through the window | visible pass within 30 min, or happening now (urgent) |
+| | `iss`, `tiangong` | ISS or Tiangong pass: direction, elevation, whether through the window | visible pass within 30 min, or happening now (urgent) |
 | | `sunset`, `sunrise` | time; "Gegenlicht" (backlight) when the sun is in the view field | 2 h before sunset, 90 min before sunrise |
 | | `santa` | Santa's sleigh on approach, with distance | December 24 from 15:00 until the next morning |
 | | `fireworks` | fireworks and a New Year greeting with the current year | January 1; at midnight five minutes ahead of everything except an emergency, even in quiet hours |

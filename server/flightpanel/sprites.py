@@ -76,6 +76,13 @@ ISS = [
     "##.#.##",
 ]
 ISS_PAL = {"#": (60, 110, 200), "o": (200, 200, 210)}
+# Ein anderer Satellit (Tiangong): Flügel golden, Rumpf hell
+SAT = [
+    "#.ooo.#",
+    "##o#o##",
+    "#.ooo.#",
+]
+SAT_PAL = {"#": (220, 170, 50), "o": (210, 210, 220)}
 
 # Winzige Buchstaben (5 hoch) für die Himmelsrichtungen im Radar; N und W brauchen
 # 5 Spalten, in 3 sahen beide aus wie M

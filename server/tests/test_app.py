@@ -41,13 +41,13 @@ def test_old_json_files_are_taken_over_once(tmp_path):
         try:
             assert app.cache.get("route:EZY1") == {"origin": "LGW"}
             assert "exception:x" in app.issues.items and "easyJet" in app.lan.stats.dex and app.airfield.course == 249
-            assert app.logos.missing() == ["FX"] and app.orbit.tle is not None
+            assert app.logos.missing() == ["FX"] and app.catalog.get(25544) is not None
             assert app.airfield.landing_course == 249  # Startwert des ersten Abrufs ist schon die übernommene Piste
             for name in ("cache.json", "issues.json", "stats.json", "tle.txt", "logos/.missing.json"):
                 assert not (tmp_path / name).exists() and (tmp_path / f"{name}.imported").exists(), name
             again = App(cfg, env={})                      # zweiter Start: alles aus der Datenbank
             assert "easyJet" in again.lan.stats.dex and again.cache.get("route:EZY1")
-            assert again.orbit.tle == app.orbit.tle
+            assert again.catalog.get(25544).tle == app.catalog.get(25544).tle
             assert again.issues.since == app.issues.since and again.airfield.landing_course == 249
             await again.session.close()
         finally:
@@ -375,7 +375,7 @@ def test_an_unusable_tle_file_is_left_alone_and_the_rest_is_taken(tmp_path, capl
         with caplog.at_level("WARNING"):
             app = App(cfg, env={})
         try:
-            assert app.orbit.tle is None and app.cache.get("route:EZY1") == {"origin": "LGW"}
+            assert app.catalog.get(25544) is None and app.cache.get("route:EZY1") == {"origin": "LGW"}
             assert (tmp_path / "tle.txt").read_bytes() == content and not (tmp_path / "tle.txt.imported").exists()
             assert not (tmp_path / "cache.json").exists() and (tmp_path / "cache.json.imported").exists()
             assert "tle.txt nicht übernommen" in caplog.text
@@ -918,6 +918,23 @@ def test_without_an_airport_quiet_means_nothing_in_the_sky(tmp_path):
             assert not wald.model.flights and wald.model.last_airport_move == t      # bleibt: zuletzt etwas da
             assert not wald.idle.context(wald.model, t + 60).quiet                   # noch keine 15 min her
             assert wald.idle.context(wald.model, t + 1000).quiet
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())
+
+
+def test_trackers_exist_only_for_enabled_satellite_cards(tmp_path):
+    """Je Panel ein Tracker je Satelliten-Karte, aber nur für eingeschaltete: Rechenzeit nur, wo es die Karte gibt."""
+    panel_rows(tmp_path, anna={**ANNA, "CARD_TIANGONG": "0"})
+    cfg = make_cfg(data_dir=str(tmp_path), metar=False, iss=True, logo_fetch=False, quiet_hours=(0, 0))
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            assert set(app.lan.sats) == {"iss", "tiangong"} and app.lan.iss is app.lan.sats["iss"]
+            assert set(app.panels["anna"].sats) == {"iss"}
+            assert app.health()["sats"]["passes_24h"] == {"iss": 0, "tiangong": 0}
         finally:
             await app.session.close()
 

@@ -5,8 +5,8 @@ Region (regions: derselbe Flughafen, oder nah genug beieinander), ein Abruf je R
 Fenster (fetch_circle, union_bbox); das Wetter und was am Flughafen geschieht (airfield.py) gelten je Flughafen
 (App.metar_for, App.airfield_for). Jedes Panel hat seine Einstellungen (Config.for_panel aus der Datenbank, gesetzt
 mit panels.py), sein Display-Modell, seinen Renderer und seine Leerlauf-Karten, seine Statistik und sein Album
-(stats.py) und die ISS-Überflüge über seinem Fenster (astro.Iss). Das Panel am LAN-Port (LAN_PANEL) ist eines
-davon; weitere legt panels add an.
+(stats.py) und die Satelliten-Überflüge über seinem Fenster (astro.Tracker, je eingeschalteter Karte einer).
+Das Panel am LAN-Port (LAN_PANEL) ist eines davon; weitere legt panels add an.
 
 Ein Panel ruht in seiner Ruhezeit (QUIET_HOURS) und wenn es aus ist: Ein weiteres Panel, dessen Fenster weiter als
 PANEL_MAX_KM von seinem Flughafen liegt (config.too_far), ruft nicht ab, statt den Abruf für alle zu vergrößern.
@@ -18,8 +18,9 @@ merkt sich die Diagnose, die es dabei schickt (vier Zahlen, web.parse_diag). Fir
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from .astro import Iss
+from .astro import Tracker
 from .cards import CARDS
+from .cards.sky import SATS
 from .config import FW_CHANNELS, Config, in_hours
 from .geo import haversine_km
 from .idle import IdleScreen
@@ -86,14 +87,15 @@ def fw_channel(stored) -> str:
 class Panel:
     def __init__(self, app: "App", pid: str, cfg: Config, created: float = 0.0, updated: float = 0.0,
                  off: str | None = None, channel: str = "stable"):
-        """app: was alle Panels teilen (db, names, rare, logos, orbit) und je Flughafen (metar_for, airfield_for).
+        """app: was alle Panels teilen (db, names, rare, logos, catalog) und je Flughafen (metar_for, airfield_for).
         created und updated: die Zeitstempel seiner Zeile in der Datenbank, an denen main.App Änderungen erkennt.
         off: warum es nicht abruft (config.too_far), sonst None. channel: sein Firmware-Kanal (fw_channel)."""
         self.app = app
         self.id = pid
         self.created = created
         self.stats = Stats(app.db, pid, cfg, app.names, app.rare)
-        self.iss = Iss(cfg, app.orbit) if app.orbit is not None else None
+        self.sats: dict[str, Tracker] = {}      # je eingeschalteter Satelliten-Karte (configure)
+        self.iss: Tracker | None = None
         self.airfield = app.airfield_for(cfg.local_airport_iata)
         self.metar = app.metar_for(cfg)
         self.last_ok = 0.0              # letzter gelungener Abruf seiner Region (main.App._poll, _age_models)
@@ -113,15 +115,24 @@ class Panel:
         self.cfg, self.updated, self.off = cfg, updated, off
         self.channel = fw_channel(channel)
         self.stats.cfg = cfg
-        if self.iss is not None:
-            self.iss.cfg, self.iss.passes_at = cfg, 0
         app = self.app
+        if app.catalog is not None:         # Tracker nur für eingeschaltete Karten: Rechenzeit nur, wo es sie gibt
+            self.sats = {cid: self.sats.get(cid) or Tracker(cfg, app.catalog.orbit_for(sat.norad))
+                         for cid, sat in SATS.items() if cid not in cfg.cards_off}
+            for tr in self.sats.values():
+                tr.cfg, tr.passes_at = cfg, 0
+        self.iss = self.sats.get("iss")
         self.airfield = app.airfield_for(cfg.local_airport_iata)    # der Flughafen kann gewechselt haben
         self.metar = app.metar_for(cfg)
-        self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=self.metar, astro=self.iss, logos=app.logos,
+        self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=self.metar, astro=self.sats, logos=app.logos,
                                names=app.names, airfield=self.airfield)
         self.renderer = Renderer(cfg, app.logos, idle=self.idle,
                                  rotation=self.renderer.rotation if self.renderer is not None else None)
+
+    async def update_passes(self, now: float) -> None:
+        """Die Überflüge jedes Satelliten über diesem Fenster (main.App.astro_loop)."""
+        for tr in self.sats.values():
+            await tr.update_passes(now)
 
     def active(self, now: float) -> bool:
         """Ruft es gerade ab? Nicht in seiner Ruhezeit (im Mock-Modus nie) und nicht, wenn es aus ist."""

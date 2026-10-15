@@ -58,7 +58,7 @@ class Ctx:
     stats: Any = None                             # stats.Stats
     airfield: Any = None                          # airfield.Airfield des Flughafens; None ohne Flughafen
     metar: Any = None                             # metar.MetarSource
-    astro: Any = None                             # astro.Iss
+    astro: Any = None                             # dict Karten-id -> astro.Tracker (nur eingeschaltete Karten)
     logos: Any = None                             # logos.LogoStore
     names: dict = field(default_factory=dict)     # data/airlines.json
 

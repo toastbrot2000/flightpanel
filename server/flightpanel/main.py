@@ -33,7 +33,7 @@ from .adsbim import AdsbIm
 from .adsblol import AdsbLol, Paused
 from .airfield import Airfield
 from .airlines import short_airline
-from .astro import Orbit
+from .astro import Catalog
 from .build import build_model
 from .cache import Cache
 from .config import Config, panel_settings_from_env, too_far
@@ -77,7 +77,7 @@ def dream_due(cfg: Config, last_day: str | None, now: float) -> bool:
 
 
 def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, airfield: Airfield, logos: LogoStore,
-                  orbit: Orbit | None) -> list[str]:
+                  catalog: Catalog | None) -> list[str]:
     """Zustand aus den JSON-Dateien früherer Fassungen (bis Oktober 2026) einmalig übernehmen. Aus stats.json nimmt
     Stats Album und Statistik, Airfield die Landerichtung.
     Gibt die übernommenen Dateien zurück; App benennt sie in *.imported um, sobald das
@@ -101,10 +101,10 @@ def absorb_legacy(data_dir: str, cache: Cache, issues: Issues, stats: Stats, air
             continue
         taken.append(path)
     path = os.path.join(data_dir, "tle.txt")
-    if orbit is not None and os.path.exists(path):
+    if catalog is not None and os.path.exists(path):
         try:
             with open(path, encoding="utf-8") as f:
-                if not orbit.set_tle_text(f.read(), os.path.getmtime(path)):
+                if not catalog.set_tle_text(f.read(), os.path.getmtime(path)):
                     raise ValueError("keine Bahndaten darin")
         except Exception as e:                          # kein Text oder keine Bahndaten darin
             log.warning("tle.txt nicht übernommen (%s), bleibt liegen", e)
@@ -188,7 +188,7 @@ class App:
                                 auth=None if self.opensky.anonymous else self.opensky.auth_headers)
                         if cfg.track_origin else None)
         self.metars: dict[str, MetarSource] = {}       # je METAR-Station (metar_for)
-        self.orbit = Orbit(self.db, self.session, self.issues) if cfg.iss else None
+        self.catalog = Catalog(self.db, self.session, self.issues) if cfg.iss else None
 
         # Anzeige, für alle Panels gemeinsam, und je Flughafen (airfield_for)
         self.logos = make_logo_store(cfg, self.session, self.db)
@@ -221,7 +221,7 @@ class App:
 
         # Alte JSON-Dateien einmalig übernehmen: Album und Statistik ins Panel am LAN-Port, die Landerichtung an
         # den Flughafen (Startwert des ersten Abrufs)
-        taken = absorb_legacy(data, self.cache, self.issues, self.lan.stats, self.airfield, self.logos, self.orbit)
+        taken = absorb_legacy(data, self.cache, self.issues, self.lan.stats, self.airfield, self.logos, self.catalog)
         if taken:
             # Erst gespeichert, dann umbenannt: ein Absturz dazwischen verliert nichts.
             self.save()
@@ -546,16 +546,17 @@ class App:
             await asyncio.sleep(METAR_EVERY_S)
 
     async def astro_loop(self) -> None:
-        """Bahndaten der ISS einmal am Tag für alle, die Überflüge je Panel stündlich (astro.Iss)."""
+        """Bahndaten der Satelliten einmal am Tag für alle (astro.Catalog), die Überflüge je Panel und Satellit
+        stündlich (astro.Tracker)."""
         while not self._stop.is_set():
             now = time.time()
             try:
-                if self.orbit.needs_tle(now):
-                    await self.orbit.refresh_tle()
+                if self.catalog.needs_tle(now):
+                    await self.catalog.refresh()
                 for p in list(self.panels.values()):
-                    await p.iss.update_passes(now)
+                    await p.update_passes(now)
             except Exception as e:
-                log.warning("ISS: %s", e)
+                log.warning("Satelliten: %s", e)
             await asyncio.sleep(ISS_EVERY_S)
 
     async def save_loop(self) -> None:
@@ -721,12 +722,12 @@ class App:
             "metar": {st: {"age_s": m.age_s(now), "last_error": m.last_error,
                            "raw": m.current.raw if m.current else None} for st, m in self.metars.items()} or None,
             "airfields": {iata: af.report() for iata, af in self.airfields.items()},
-            "iss": None if not self.orbit else {
-                "usable": self.orbit.usable(now),
-                "tle_fetched_age_h": (round((now - self.orbit.tle_fetched) / 3600, 1)
-                                      if self.orbit.tle_fetched else None),
-                "last_error": self.orbit.last_error,
-                "visible_passes_24h": len(lan.iss.passes),
+            "sats": None if not self.catalog else {
+                "usable": sorted(o.name for o in self.catalog.orbits.values() if o.usable(now)),
+                "tle_fetched_age_h": (round((now - self.catalog.fetched) / 3600, 1)
+                                      if self.catalog.fetched else None),
+                "last_error": self.catalog.last_error,
+                "passes_24h": {cid: len(tr.passes) for cid, tr in lan.sats.items()},
             },
             "idle_card": lan.idle.last_pick,
             "logos": self.logos.available(),
@@ -757,7 +758,7 @@ class App:
         loops = [self.poll_loop(), self.save_loop()]
         if cfg.metar and not cfg.mock:
             loops.append(self.metar_loop())
-        if self.orbit and not cfg.mock:
+        if self.catalog and not cfg.mock:
             loops.append(self.astro_loop())
         if cfg.public:
             loops += await self._start_public()
