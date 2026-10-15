@@ -11,8 +11,8 @@
   --surface: oklch(0.195 0.013 215);       /* Felder, Gerät, Abschnitte */
   --surface-2: oklch(0.235 0.014 215);     /* gedrückt, ausgewählt ohne Akzent */
   --line: oklch(0.285 0.014 215);          /* Trennlinien */
-  --edge: oklch(0.4 0.015 215);            /* Ränder von Feldern und Knöpfen: 3:1 auf --bg */
-  --edge-hover: oklch(0.52 0.016 215);
+  --edge: oklch(0.5 0.016 215);            /* Ränder von Feldern und Knöpfen: 3:1 auf --bg und --surface */
+  --edge-hover: oklch(0.62 0.018 215);
   --text: oklch(0.89 0.008 215);
   --strong: oklch(0.97 0.004 215);
   --muted: oklch(0.73 0.014 215);          /* Erklärungen: 7:1 auf --bg, 6:1 auf --surface */
@@ -229,3 +229,7 @@ h3 { margin: 28px 0 0; font-size: 1rem; line-height: 1.35; font-weight: 650; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* Gruppen der Leerlauf-Karten in der Vorschau */
+.chip-group { margin: 18px 0 0; color: var(--muted); font-size: 0.8125rem; font-weight: 600; }
+.chip-group + .chips { margin-top: 8px; }

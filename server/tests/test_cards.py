@@ -457,3 +457,12 @@ def test_rare_flight_gets_a_gold_dot():
     plain, vip = fl(icao="a"), replace(fl(icao="b"), callsign="KRH01", rare=True, bearing=200)
     dots = _renderer(cfg)._sky_dots(DisplayModel(source="test", flights=[plain, vip]), plain)
     assert sorted(col for col, _ in dots) == sorted([GOLD, STATUS_COLORS[plain.status]])
+
+
+def test_every_card_has_a_name_and_a_known_group():
+    """Vorschau und Einstellungsseite zeigen Namen statt der ids; eine neue Karte ohne Namen fiele dort auf."""
+    from flightpanel.cards import ABOUT, CARDS, GROUPS
+    for c in CARDS:
+        title, about = ABOUT[c.id]
+        assert title and about.endswith("."), c.id
+        assert c.group in GROUPS, c.id

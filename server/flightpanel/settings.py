@@ -281,14 +281,15 @@ def _field(f: Field, settings: Mapping[str, object]) -> str:
     described = f"err-{key}" + (f" hint-{key}" if ui.hint else "")
     error = f'<p class="error" id="err-{key}" hidden></p>\n'
     hidden = f'<input type="hidden" id="f-{key}" data-key="{key}" data-default="{default}" value="{esc(raw)}">\n'
-    head = f'<div class="field" id="row-{key}" title="{key}">\n'
+    head = f'<div class="field" id="row-{key}">\n'
     group_label = f'<p class="label" id="label-{key}">{esc(ui.label)}</p>\n{hint}'
     if isinstance(f.default, bool):
         on = parse(raw) if raw else f.default
-        return (f'<div class="field switch-field" id="row-{key}" title="{key}">\n<label class="switch">'
-                f'<span class="switch-text"><span class="label">{esc(ui.label)}</span>{_span_hint(ui.hint, key)}'
-                f'</span><input type="checkbox" role="switch" data-default="{"1" if f.default else "0"}" '
-                f'id="f-{key}" data-key="{key}" aria-describedby="{described}"{" checked" if on else ""}>'
+        return (f'<div class="field switch-field" id="row-{key}">\n<label class="switch">'
+                f'<span class="switch-text"><span class="label" id="label-{key}">{esc(ui.label)}</span>'
+                f'{_span_hint(ui.hint, key)}</span><input type="checkbox" role="switch" '
+                f'data-default="{"1" if f.default else "0"}" id="f-{key}" data-key="{key}" '
+                f'aria-labelledby="label-{key}" aria-describedby="{described}"{" checked" if on else ""}>'
                 f'</label>\n{error}</div>\n')
     if parse is parse_layout:
         current = _layout(raw) or f.default
@@ -318,7 +319,8 @@ def _field(f: Field, settings: Mapping[str, object]) -> str:
         if ui.can_off:                                  # Schalter statt zweimal derselben Uhrzeit
             group_label = (f'<label class="switch"><span class="switch-text"><span class="label" id="label-{key}">'
                            f'{esc(ui.label)}</span>{_span_hint(ui.hint, key)}</span><input type="checkbox" '
-                           f'role="switch" class="times-on" data-for="{key}" aria-describedby="err-{key}"'
+                           f'role="switch" class="times-on" data-for="{key}" aria-labelledby="label-{key}" '
+                     f'aria-describedby="err-{key}{f" hint-{key}" if ui.hint else ""}"'
                            f'{"" if off else " checked"}></label>\n')
         return (f'{head}{group_label}<div class="times" role="group" aria-labelledby="label-{key}" '
                 f'data-for="{key}"{" hidden" if off else ""}>{times}</div>\n{hidden}{error}</div>\n')
@@ -375,9 +377,10 @@ def _cards(settings: Mapping[str, object]) -> str:
         checked = "" if card_off(settings.get(key)) else " checked"
         by_group.setdefault(c.group, []).append(
             f'<div class="field switch-field" id="row-{key}"><label class="switch">'
-            f'<span class="switch-text"><span class="label">{html.escape(title)}</span>'
-            f'<span class="hint">{html.escape(about)}</span></span>'
-            f'<input type="checkbox" role="switch" data-default="1" id="f-{key}" data-key="{key}"{checked}>'
+            f'<span class="switch-text"><span class="label" id="label-{key}">{html.escape(title)}</span>'
+            f'<span class="hint" id="hint-{key}">{html.escape(about)}</span></span>'
+            f'<input type="checkbox" role="switch" aria-labelledby="label-{key}" aria-describedby="hint-{key}" '
+            f'data-default="1" id="f-{key}" data-key="{key}"{checked}>'
             f'</label><p class="error" hidden></p></div>\n')
     return "".join(f'<h3 class="card-group">{html.escape(GROUPS.get(g, g))}</h3>\n<div class="cards">\n'
                    f'{"".join(rows)}</div>\n' for g, rows in by_group.items())

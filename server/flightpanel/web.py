@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 from PIL import Image
 
-from .cards import ABOUT
+from .cards import ABOUT, GROUPS
 from .config import LAYOUT_NAMES, LAYOUTS, parse_layout
 from .model import ARR, DEP, DisplayModel, Flight
 from .render import Renderer
@@ -131,6 +131,14 @@ HEAD = """<!doctype html>
 """
 
 
+def _by_group(cards) -> list[tuple[str, list]]:
+    """Leerlauf-Karten nach Gruppe, in der Reihenfolge ihres ersten Auftretens."""
+    groups: dict[str, list] = {}
+    for c in cards:
+        groups.setdefault(c.group, []).append(c)
+    return list(groups.items())
+
+
 def page_top(title: str, current: str, settings: bool, extra: str = "") -> str:
     """Kopf jeder Seite: Titel, Stile und Skripte (extra), die Marke und, mit Einstellungsseite, die zwei Reiter.
     current: "/" oder "/settings"."""
@@ -148,7 +156,7 @@ PREVIEW_HTML = """<main class="page live">
 <section class="stage" aria-label="Das Panel">
 <div class="device"><img id="f" class="screen" src="{frame}" alt="Was das Panel gerade zeigt" width="768"
  height="192"></div>
-<p class="state" id="s" data-mode="{mode}"{health}><span class="dot" aria-hidden="true"></span><span
+<p class="state" id="s" data-mode="{mode}" aria-live="polite"{health}><span class="dot" aria-hidden="true"></span><span
  id="s-text">{state}</span></p>
 </section>
 <div class="columns">
@@ -164,7 +172,8 @@ PREVIEW_HTML = """<main class="page live">
 <div class="segmented" role="group" aria-label="Aufteilung">{layouts}</div>
 <h3>Karten im Leerlauf</h3>
 <p class="hint">Was das Panel zeigt, wenn kein Flug zu sehen ist. Passt die Lage gerade nicht, mit Beispieldaten.</p>
-<div class="chips">{cards}</div>
+<div class="chips">{live}</div>
+{cards}
 </section>
 </div>
 </main>
@@ -581,9 +590,12 @@ class Handlers:
             keep=" Dauerhaft unter Einstellungen, Anzeige." if settings else "",
             layouts="".join(f'<a class="seg" href="{esc(f"/?layout={x}")}"{current(x == layout)}>'
                             f'{esc(LAYOUT_NAMES[x])}</a>' for x in LAYOUTS),
-            cards=f'<a class="chip" href="{esc(f"/?layout={layout}")}"{current(not card)}>Live</a>' + "".join(
-                f'<a class="chip" href="{esc(f"/?layout={layout}&card={c}")}"{current(c == card)}>'
-                f'{esc(ABOUT.get(c, (c,))[0])}</a>' for c in p.idle.cards),
+            live=f'<a class="chip" href="{esc(f"/?layout={layout}")}"{current(not card)}>Live</a>',
+            cards="".join(f'<p class="chip-group" id="cg-{i}">{esc(GROUPS.get(g, g))}</p>'
+                          f'<div class="chips" role="group" aria-labelledby="cg-{i}">' + "".join(
+                              f'<a class="chip" href="{esc(f"/?layout={layout}&card={c.id}")}"'
+                              f'{current(c.id == card)}>{esc(ABOUT.get(c.id, (c.id,))[0])}</a>' for c in cards)
+                          + "</div>" for i, (g, cards) in enumerate(_by_group(p.idle.cards.values()))),
             links="".join(f'<li><a href="{esc(path)}">{esc(LINK_NAMES.get(path, path))}</a></li>'
                           for path in self.links if path != "/settings"))
         return web.Response(text=page, content_type="text/html", headers=NO_STORE)

@@ -195,6 +195,7 @@
     const show = () => {
       const share = Number(range.value) / Number(range.max || 1);
       out.textContent = Math.round(share * 100) + " %";
+      range.setAttribute("aria-valuetext", out.textContent);
     };
     range.addEventListener("input", show);
     show();
