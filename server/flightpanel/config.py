@@ -44,6 +44,14 @@ def _hhmm(s: str) -> int:
     return int(h) * 60 + int(m)
 
 
+def _iata_or_none(s: str) -> str:
+    """AIRPORT eines Panels: ein IATA-Code (3 Buchstaben) oder - für keinen Flughafen."""
+    s = s.strip().upper()
+    if s == "-" or re.fullmatch(r"[A-Z]{3}", s):
+        return s
+    raise ValueError("ein IATA-Code aus 3 Buchstaben, etwa FMM, oder - für keinen Flughafen")
+
+
 def _hours(s: str) -> tuple[int, int]:
     """"23:00-06:30" -> (1380, 390): Minuten des Tages, von bis."""
     try:
@@ -300,10 +308,24 @@ class Config:
     airport_lat: float = _env("AIRPORT_LAT", 52.3617, _lat)     # ohne Angabe aus airports.json
     airport_lon: float = _env("AIRPORT_LON", 13.5023, _lon)
     airport_alt_m: float = _env("AIRPORT_ALT_M", 48.0)
-    runway_course: float = _env("RUNWAY_COURSE", 249.0, _deg)   # Endanflug einer Landerichtung, BER 25
-    curfew_hours: tuple[int, int] = _env("CURFEW_HOURS", (0, 5 * 60), _hours)   # Nachtflugverbot
+    runway_course: float | None = _env("RUNWAY_COURSE", 249.0, _deg)   # Endanflug einer Landerichtung, BER 25
+    curfew_hours: tuple[int, int] | None = _env("CURFEW_HOURS", (0, 5 * 60), _hours)   # Nachtflugverbot
     metar: bool = _env("METAR", True)                       # Wetter von aviationweather.gov
     metar_station: str = _env("METAR_STATION", "EDDB", str.upper)   # ohne Angabe aus airports.json
+    # --- Flughafen eines Panels (Region): leer = der des Servers; ein Code aus airports.json ersetzt ihn samt
+    # Position, Höhe und METAR-Station; - heißt keiner (nur Überflüge und der Himmel). Siehe _panel_airport.
+    airport: str = _env("AIRPORT", "", _iata_or_none,
+                        panel=("Flughafen", "IATA-Code, z. B. FMM; - = kein Flughafen; leer = der des Servers"),
+                        ui=Ui("Flughafen", "Dessen Starts und Landungen das Panel zeigt, als Kürzel wie FMM. Ein "
+                              "Strich: keiner in der Nähe."))
+    runway: float | None = _env("RUNWAY", None, _deg,
+                                panel=("Flughafen", "Endanflugkurs einer Landerichtung, Grad, z. B. 240 für Piste 24"),
+                                ui=Ui("Landerichtung", "Kurs des Endanflugs einer Piste, etwa 240 für Piste 24. Die "
+                                      "Gegenrichtung erkennt das Panel selbst.", "°"))
+    curfew: tuple[int, int] | None = _env("CURFEW", None, _hours,
+                                          panel=("Flughafen", "Nachtflugverbot von-bis, z. B. 00:00-05:00"),
+                                          ui=Ui("Nachtflugverbot", "In dieser Zeit startet und landet dort nichts.",
+                                                can_off=True))
 
     # --- Datenquellen. adsblol: Community-Netz ohne Account; fällt es aus, springt
     # OpenSky ein. opensky: nur OpenSky.
@@ -432,6 +454,7 @@ class Config:
         if problems is not None:
             problems += [(k, f"{k}: keine Panel-Einstellung") for k in unknown]
         values = _parse(panel, settings, problems)
+        _panel_airport(server, values, problems)
         if remote:
             _cap_radii(server, settings, values, problems)
         if "radius_km" in values and "scan_radius_km" not in values:
@@ -455,6 +478,16 @@ class Config:
     @property
     def fetch_radius_km(self) -> float:
         return max(self.radius_km, self.scan_radius_km)
+
+    @property
+    def has_airport(self) -> bool:
+        """Gibt es einen Flughafen (AIRPORT nicht -)? Ohne: keine Landefolge, keine Abflüge, keine Landerichtung."""
+        return bool(self.local_airport_iata)
+
+    @property
+    def region_key(self) -> str:
+        """Wer sich einen Abruf teilt (panel.regions): der Flughafen; ohne einen das Fenster, auf 0,1° gerundet."""
+        return self.local_airport_iata or f"{self.home_lat:.1f},{self.home_lon:.1f}"
 
     @property
     def public(self) -> bool:
@@ -530,13 +563,14 @@ def _cap_radii(server: Config, settings: Mapping[str, str], values: dict,
 
 
 def too_far(server: Config, panel: Config) -> str | None:
-    """Liegt das Fenster eines weiteren Panels (nicht das am LAN-Port) zu weit vom Heimatflughafen? Ein Abruf deckt
-    alle Panels ab, und ein Fenster weit weg machte ihn für alle größer. None, wenn es passt; sonst der Satz für
-    panels.py, Log und /issues."""
-    d = haversine_km(server.airport_lat, server.airport_lon, panel.home_lat, panel.home_lon)
+    """Liegt das Fenster eines weiteren Panels (nicht das am LAN-Port) zu weit von seinem Flughafen? Panels mit
+    demselben Flughafen teilen sich einen Abruf, und ein Fenster weit weg machte ihn für alle größer. Ohne Flughafen
+    (AIRPORT=-) zählt das Fenster selbst, also nie zu weit. None, wenn es passt; sonst der Satz für panels.py, Log
+    und /issues."""
+    d = haversine_km(panel.airport_lat, panel.airport_lon, panel.home_lat, panel.home_lon)
     if d <= server.panel_max_km:
         return None
-    return (f"HOME_LAT/HOME_LON liegen {d:.0f} km von {server.local_airport_iata}, für weitere Panels höchstens "
+    return (f"HOME_LAT/HOME_LON liegen {d:.0f} km von {panel.local_airport_iata}, für weitere Panels höchstens "
             f"{server.panel_max_km:g} km (PANEL_MAX_KM)")
 
 
@@ -553,6 +587,8 @@ def is_panel_key(key: str) -> bool:
 def default_text(f: Field) -> str:
     """Default eines Feldes, so wie man ihn setzen würde ("08:00-19:00", "eta,alt", "1")."""
     v = f.default
+    if v is None:
+        return ""
     if isinstance(v, bool):
         return "1" if v else "0"
     if f.metadata["parse"] is _hours:
@@ -572,13 +608,52 @@ def panel_settings_from_env(env: Mapping[str, str]) -> dict[str, str]:
     return out
 
 
+def _find_airport(iata: str, data_dir: str):
+    return next((a for a in load_airports(data_dir) if a.iata == iata), None)
+
+
+def _panel_airport(server: "Config", values: dict, problems: list[tuple[str, str]] | None) -> None:
+    """Der Flughafen eines Panels (for_panel): AIRPORT=<Code> wird in airports.json nachgeschlagen und ersetzt die
+    Flughafenfelder des Servers (Position, Höhe, METAR-Station), die Landerichtung kommt aus RUNWAY (Pflicht), die
+    Nachtruhe aus CURFEW (ohne: keine). AIRPORT=- heißt kein Flughafen: Position = Fenster, kein Wetter, keine
+    Landerichtung. Ohne AIRPORT bleibt der des Servers, RUNWAY und CURFEW überschreiben dann nur seine Werte."""
+    code = values.get("airport", "")
+    runway, curfew = values.get("runway"), values.get("curfew")
+    try:
+        if code == "-":
+            values.update(local_airport_iata="", metar=False, metar_station="", runway_course=None, curfew_hours=None,
+                          airport_lat=values.get("home_lat", server.home_lat),
+                          airport_lon=values.get("home_lon", server.home_lon),
+                          airport_alt_m=values.get("home_alt_m", server.home_alt_m))
+        elif code:
+            ap = _find_airport(code, server.data_dir)
+            if ap is None:
+                raise ValueError(f"AIRPORT={code} steht nicht in data/airports.json")
+            if runway is None:
+                raise ValueError(f"AIRPORT={code} braucht RUNWAY (Endanflugkurs einer Landerichtung, z. B. 240 für "
+                                 "Piste 24)")
+            values.update(local_airport_iata=code, airport_lat=ap.lat, airport_lon=ap.lon,
+                          airport_alt_m=float(ap.elev_m or 0), metar_station=ap.icao or "",
+                          metar=server.metar and bool(ap.icao), runway_course=runway, curfew_hours=curfew)
+        else:
+            if runway is not None:
+                values["runway_course"] = runway
+            if curfew is not None:
+                values["curfew_hours"] = curfew
+    except ValueError as e:
+        if problems is None:
+            raise
+        problems.append(("AIRPORT", str(e)))
+        values.pop("airport", None)
+
+
 def _airport_from_list(values: dict, data_dir: str) -> None:
     """Position, Höhe und METAR-Station des Heimatflughafens aus data/airports.json,
     soweit nicht gesetzt. Fehlt der Flughafen dort, müssen sie in .env stehen; ohne
     METAR-Station gibt es dann kein Wetter. Passt Gesetztes nicht zur Liste (alte
     .env nach einem Flughafenwechsel), steht das im Log."""
     iata = values.get("local_airport_iata", Config.local_airport_iata)
-    ap = next((a for a in load_airports(data_dir) if a.iata == iata), None)
+    ap = _find_airport(iata, data_dir)
     if ap is None:
         if iata == Config.local_airport_iata:
             return                  # BER ohne airports.json: die Defaults sind BER

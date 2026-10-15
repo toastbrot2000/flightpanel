@@ -335,3 +335,47 @@ def test_lan_hosts_are_a_list_of_names():
     assert cfg.lan_hosts == ("nas.fritz.box", "laptop")
     with pytest.raises(ValueError, match="LAN_HOSTS="):
         Config.from_env({"LAN_HOSTS": "nas/x", "DATA_DIR": DATA})
+
+
+# ------------------------------------------------------------------------- Flughafen je Panel (Regionen) --
+BIBERACH = {"HOME_LAT": "48.09", "HOME_LON": "9.83"}       # 500 km von BER, 37 km von FMM
+
+
+def test_a_panel_may_have_its_own_airport():
+    server = Config.from_env(env())
+    fmm = Config.for_panel(server, {"AIRPORT": "fmm", "RUNWAY": "240", **BIBERACH})
+    assert (fmm.local_airport_iata, fmm.metar_station, fmm.runway_course) == ("FMM", "EDJA", 240)
+    assert fmm.curfew_hours is None
+    assert abs(fmm.airport_lat - 47.988) < 0.01 and abs(fmm.airport_lon - 10.238) < 0.01 and fmm.airport_alt_m == 633
+    assert fmm.has_airport and fmm.metar and fmm.region_key == "FMM"
+    assert too_far(server, fmm) is None                                     # gemessen vom eigenen Flughafen
+    with pytest.raises(ValueError, match="RUNWAY"):
+        Config.for_panel(server, {"AIRPORT": "FMM"})
+    with pytest.raises(ValueError, match=r"airports.json"):
+        Config.for_panel(server, {"AIRPORT": "XYZ", "RUNWAY": "240"})
+    problems: list = []
+    kept = Config.for_panel(server, {"AIRPORT": "XYZ", "RUNWAY": "240", "VIEW_FROM": "45"}, problems)
+    assert kept.local_airport_iata == "BER" and kept.view_from == 45 and [p[0] for p in problems] == ["AIRPORT"]
+    own = Config.for_panel(server, {"RUNWAY": "69", "CURFEW": "23:00-06:00"})     # nur Landerichtung und Nachtruhe
+    assert own.local_airport_iata == "BER" and own.runway_course == 69 and own.curfew_hours == (23 * 60, 6 * 60)
+
+
+def test_a_panel_may_have_no_airport():
+    server = Config.from_env(env())
+    none = Config.for_panel(server, {"AIRPORT": "-", **BIBERACH})
+    assert not none.has_airport and none.local_airport_iata == "" and none.metar is False and none.metar_station == ""
+    assert (none.airport_lat, none.airport_lon) == (48.09, 9.83)
+    assert none.runway_course is None and none.curfew_hours is None
+    assert too_far(server, none) is None and none.region_key not in ("BER", "")
+
+
+def test_without_airport_keys_a_panel_is_as_before():
+    server = Config.from_env(env())
+    same = Config.for_panel(server, {})
+    assert same == server and same.has_airport and same.region_key == "BER"
+    by_env = {f.metadata["env"]: f for f in panel_fields()}
+    assert {"AIRPORT", "RUNWAY", "CURFEW"} <= set(by_env)
+    assert default_text(by_env["AIRPORT"]) == "" and default_text(by_env["RUNWAY"]) == ""
+    assert default_text(by_env["CURFEW"]) == ""
+    munich = Config.for_panel(server, {"HOME_LAT": "48.35", "HOME_LON": "11.79"}, remote=True)
+    assert "BER" in too_far(server, munich)                                 # ohne eigenen Flughafen wie bisher
