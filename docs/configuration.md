@@ -107,6 +107,9 @@ docker compose exec flightpanel python3 -m flightpanel.panels set home VIEW_FROM
 | `VIEW_MAX_KM` | `100` | visibility range, km |
 | `VIEW_ONLY` | `0` | `1`: only show what is in the view field |
 | `SHOW_OTHER` | `1` | private aircraft, helicopters, police, military in the rotation, with a symbol instead of a logo |
+| `AIRPORT` | = server | the panel's own airport (IATA code from `data/airports.json`), `-` = none; owner only, see below |
+| `RUNWAY` | – | final approach course of one landing direction, degrees (e.g. `240` for runway 24); required with `AIRPORT` |
+| `CURFEW` | – | night curfew `from-to`, e.g. `00:00-05:00`; without it, no curfew card |
 | `LAYOUT` | `C` | `C` logo and three lines, `A` no logo, `B` two flights |
 | `MAX_FLIGHTS` | `3` | how many flights rotate (1 to 10) |
 | `CALM` | `0` | `1`: calm mode, see below |
@@ -123,7 +126,9 @@ docker compose exec flightpanel python3 -m flightpanel.panels set home VIEW_FROM
 
 **Calm mode** (`CALM=1`) changes defaults only: info pages 10 s, each flight at least 20 s, idle cards 30 s, no blinking except emergencies, only arrival time and altitude/speed in the info line. Values you set explicitly still win.
 
-**Additional panels** (`panels add`, e.g. for friends) share the server's single fetch, so they must be near the airport: their window at most `PANEL_MAX_KM` from it, `RADIUS_KM` and `SCAN_RADIUS_KM` at most `PANEL_MAX_RADIUS_KM`. `panels set` rejects values beyond that; the LAN panel is exempt.
+**Additional panels** (`panels add`, e.g. for friends) share one fetch per region, so they must be near their airport: their window at most `PANEL_MAX_KM` from it, `RADIUS_KM` and `SCAN_RADIUS_KM` at most `PANEL_MAX_RADIUS_KM`. `panels set` rejects values beyond that; the LAN panel is exempt.
+
+**Regions (another airport).** A panel far away, e.g. at your parents' place, gets its own airport: `panels set eltern AIRPORT=FMM RUNWAY=240` (the runway course of one landing direction; the server detects the other one from traffic), optionally `CURFEW=00:00-05:00`. Position, elevation and METAR station come from `data/airports.json`; the panel then has its own landing sequence, departures, landing direction and weather. Panels with the same airport, or close enough together, share one fetch; every further region is one more fetch per poll from adsb.lol (two regions: two requests every 20 s). `AIRPORT=-` means no airport at all: only overflights and the sky cards, nothing lands or departs. With cruising traffic overhead, raise `MAX_ALT_M` (e.g. `13000`). These three keys are set by the owner with `panels set` only; the settings page shows them but doesn't change them, so nobody can move their panel across the country or add fetches. `/health` → `source.regions` lists the regions currently fetching.
 
 ---
 

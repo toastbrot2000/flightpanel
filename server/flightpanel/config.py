@@ -6,9 +6,11 @@ werden sie mit panels.py oder der Einstellungsseite, mit denselben Parsern und F
 Tests bauen Config(...) direkt.
 
 Alles Ortsabhängige steht hier und nirgends sonst: Standort und Sichtfeld
-(HOME_*, VIEW_*) und der Heimatflughafen (LOCAL_AIRPORT_IATA, RUNWAY_COURSE ...).
+(HOME_*, VIEW_*) und der Flughafen des Servers (LOCAL_AIRPORT_IATA, RUNWAY_COURSE ...).
 Position, Höhe und METAR-Station des Flughafens kommen aus data/airports.json, wenn
-sie nicht gesetzt sind. Die Defaults sind Berlin und BER. Unsinnige Werte (etwa
+sie nicht gesetzt sind. Die Defaults sind Berlin und BER. Ein Panel kann einen eigenen
+Flughafen haben (AIRPORT, RUNWAY, CURFEW: eine Region mit eigenem Abruf, _panel_airport)
+oder keinen (AIRPORT=-); das setzt nur der Betreiber (owner, is_owner_key). Unsinnige Werte (etwa
 PAGE_SECONDS=0) brechen den Start mit dem Namen der Variablen ab; Verdächtiges
 steht als Warnung im Log.
 

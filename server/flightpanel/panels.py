@@ -14,13 +14,18 @@
   backup <datei> [--force]    Kopie der Datenbank, auch im laufenden Betrieb; eine vorhandene
                               Datei ersetzt sie nur mit --force, die Datenbank selbst nie
 
-Panel-Einstellungen sind Standort, Sichtfeld, Anzeige, Helligkeit und Ruhezeit und die
-Leerlauf-Karten (CARD_<ID>=0); sie liegen je Panel in DATA_DIR/flightpanel.db. Alles
-andere (Flughafen, Quellen, Logos, Betrieb) steht in .env.
+Panel-Einstellungen sind Standort, Sichtfeld, Flughafen, Anzeige, Helligkeit und Ruhezeit
+und die Leerlauf-Karten (CARD_<ID>=0); sie liegen je Panel in DATA_DIR/flightpanel.db. Alles
+andere (Quellen, Logos, Betrieb, der Flughafen des Servers) steht in .env.
+
+Der Flughafen eines Panels (AIRPORT, RUNWAY, CURFEW) ist eine Region: Panels mit demselben
+Flughafen teilen sich einen Abruf, jede weitere Region ist ein eigener. AIRPORT=- heißt kein
+Flughafen (nur Überflüge und der Himmel). Das setzt nur der Betreiber mit set, nie die
+Einstellungsseite (config.is_owner_key).
 
 Für weitere Panels (nicht das am LAN-Port) lehnt set Werte ab, die gegen die Grenzen aus .env
-verstoßen: das Fenster höchstens PANEL_MAX_KM vom Flughafen, RADIUS_KM und SCAN_RADIUS_KM
-höchstens PANEL_MAX_RADIUS_KM.
+verstoßen: das Fenster höchstens PANEL_MAX_KM von seinem Flughafen, RADIUS_KM und
+SCAN_RADIUS_KM höchstens PANEL_MAX_RADIUS_KM.
 
 Namen gelten in jeder Schreibweise (home_lat wie HOME_LAT). set und unset treffen auch einen
 Schlüssel, der von Hand klein geschrieben in die Datenbank kam, und räumen ihn weg.
@@ -109,18 +114,23 @@ def _seen(p: dict) -> str:
 
 
 def _note(cfg: Config, p: dict) -> str:
-    """Für list: das Panel am LAN-Port, oder ein weiteres, das nicht abruft, weil sein Fenster zu weit vom Flughafen
-    liegt (geprüft wie im Server; Einstellungen, die er übergeht, zählen dabei nicht)."""
+    """Für list: das Panel am LAN-Port; sonst sein eigener Flughafen (AIRPORT), und ob es nicht abruft, weil sein
+    Fenster zu weit davon liegt (geprüft wie im Server; Einstellungen, die er übergeht, zählen dabei nicht)."""
     if p["id"] == cfg.lan_panel:
         return " (LAN-Port)"
-    why = too_far(cfg, Config.for_panel(cfg, p["settings"], [], remote=True))
-    return f" (ruft nicht ab: {why})" if why else ""
+    panel = Config.for_panel(cfg, p["settings"], [], remote=True)
+    out = ""
+    if any(k.strip().upper() == "AIRPORT" for k in p["settings"]):
+        out = f", Flughafen {panel.local_airport_iata}" if panel.has_airport else ", ohne Flughafen"
+    why = too_far(cfg, panel)
+    return out + (f" (ruft nicht ab: {why})" if why else "")
 
 
 def cmd_keys(db: Db, cfg: Config, args) -> None:
     for f in panel_fields():
         group, text = f.metadata["panel"]
-        print(f"{f.metadata['env']:<18} {default_text(f):<22} {group}: {text}")
+        owner = "  [nur panels set, nicht die Einstellungsseite]" if f.metadata.get("owner") else ""
+        print(f"{f.metadata['env']:<18} {default_text(f):<22} {group}: {text}{owner}")
     print(f"{'CARD_<ID>':<18} {'1':<22} Karten: 0 schaltet eine Leerlauf-Karte ab ({', '.join(CARD_IDS)})")
 
 

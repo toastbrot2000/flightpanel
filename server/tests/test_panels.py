@@ -347,3 +347,23 @@ def test_channel(run):
     assert run("channel", "home", "canary")[0] == 0
     assert "canary" in run("list")[1]
     assert run("channel", "home", "beta")[0] == 2
+
+
+def test_list_and_keys_show_the_panel_airport(run, tmp_path):
+    """Ein weiteres Panel mit eigenem Flughafen (Region) darf weit weg stehen; list nennt den Flughafen, keys
+    kennzeichnet, was nur der Betreiber setzt (die Einstellungsseite lässt es nicht zu)."""
+    import shutil
+
+    from conftest import DATA
+    shutil.copy(os.path.join(DATA, "airports.json"), tmp_path)       # der Flughafen wird dort nachgeschlagen
+    run("add", "eltern")
+    assert run("set", "eltern", "AIRPORT=FMM", "RUNWAY=240", "HOME_LAT=48.09", "HOME_LON=9.83")[0] == 0
+    code, _, err = run("set", "eltern", "AIRPORT=XYZ")
+    assert code == 2 and "airports.json" in err
+    assert re.search(r"^eltern .*Flughafen FMM", run("list")[1], re.M)
+    run("add", "wald")
+    assert run("set", "wald", "AIRPORT=-", "HOME_LAT=48.0", "HOME_LON=9.9")[0] == 0
+    assert re.search(r"^wald .*ohne Flughafen", run("list")[1], re.M)
+    keys = run("keys")[1]
+    assert re.search(r"^AIRPORT .*nur panels set", keys, re.M) and re.search(r"^RUNWAY .*nur panels set", keys, re.M)
+    assert not re.search(r"^HOME_LAT .*nur panels set", keys, re.M)

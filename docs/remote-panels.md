@@ -1,10 +1,10 @@
 # Remote panels (Cloudflare Tunnel + Access)
 
-Run panels for other people, e.g. friends living near the same airport. Each panel sits on its owner's Wi-Fi and fetches its frames from your server over the internet, without a VPN, through Cloudflare Access and a Cloudflare Tunnel. Server and panel are covered in [configuration.md](configuration.md) and [hardware.md](hardware.md); this page only describes what remote panels add.
+Run panels for other people, e.g. friends living near the same airport, or family near another one ([regions](configuration.md#per-panel-settings)). Each panel sits on its owner's Wi-Fi and fetches its frames from your server over the internet, without a VPN, through Cloudflare Access and a Cloudflare Tunnel. Server and panel are covered in [configuration.md](configuration.md) and [hardware.md](hardware.md); this page only describes what remote panels add.
 
 > **Status:** written against the Cloudflare documentation of October 2026 and not yet run through end to end. Dashboard labels change from time to time; what matters is what a setting does. Feedback welcome.
 
-This is entirely optional. Without the remote-access settings in `.env` the server doesn't even load the code for it and opens no second port. Remote panels share the server's single fetch, so their windows must be within `PANEL_MAX_KM` (default 60 km) of the airport.
+This is entirely optional. Without the remote-access settings in `.env` the server doesn't even load the code for it and opens no second port. Remote panels share one fetch per region, so their windows must be within `PANEL_MAX_KM` (default 60 km) of their airport: the server's, or one you give the panel with `panels set <id> AIRPORT=… RUNWAY=…` (owner only).
 
 **Placeholders:** `flightpanel.example.com` is your hostname, `<team>` your Zero Trust team name, `<AUD-tag>` the audience tag of the Access application, `alice@example.com` a friend's address. Keep your real values in `.env`, `compose.override.yml`, `cloudflared.env` and the database, never in a public repository.
 
@@ -228,7 +228,7 @@ One panel, one service token, one or more addresses. The commands run on the ser
    docker compose exec flightpanel python3 -m flightpanel.panels token alice <client-id>
    docker compose exec flightpanel python3 -m flightpanel.panels email alice alice@example.com
    ```
-   The client ID looks like `0123456789abcdef0123456789abcdef.access`. A panel can have several addresses (run `email` again), but an address belongs to one panel only. Your friend sets location and view field themselves (item 5); you can also preset them with `panels set alice HOME_LAT=<lat> HOME_LON=<lon>`.
+   The client ID looks like `0123456789abcdef0123456789abcdef.access`. A panel can have several addresses (run `email` again), but an address belongs to one panel only. Your friend sets location and view field themselves (item 5); you can also preset them with `panels set alice HOME_LAT=<lat> HOME_LON=<lon>`. For a panel near another airport, set that airport yourself now: `panels set alice AIRPORT=FMM RUNWAY=240` (not possible from the settings page).
 3. **Add the address to the group** `flightpanel` (Policies → Rule groups → `flightpanel` → Emails). Both are needed: the group gets your friend past Cloudflare, `panels email` tells the server which panel is theirs.
 4. **Prepare the panel** before it leaves: flash it once over USB with firmware built without `secrets.h` and with your `fw_pubkey.h` ([hardware.md](hardware.md#7-signed-firmware-updates)), so it can receive signed updates later. Then open the setup portal: it opens by itself if nothing is set up, otherwise hold BOOT for 3 seconds at power-on (keep the button reachable when building the case). Join `flightpanel-XXXX` by scanning the QR code on the panel or with the password it shows, choose your own Wi-Fi for the test, and under **Erweitert** (Advanced) enter server `https://flightpanel.example.com`, client ID and secret. Your friend never sees client ID or secret.
 
