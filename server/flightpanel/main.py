@@ -46,7 +46,7 @@ from .mock import mock_model
 from .model import State
 from .opensky import OpenSky
 from .origins import Origins
-from .panel import Panel, active_seconds, fetch_circle, fw_channel, union_bbox
+from .panel import Panel, active_seconds, fetch_circle, fw_channel, regions, union_bbox
 from .stats import Stats
 from .storage import read_json
 from .web import make_public_app, make_web_app
@@ -187,13 +187,13 @@ class App:
         self.origins = (Origins(self.session, self.cache, load_airports(data), self.issues,
                                 auth=None if self.opensky.anonymous else self.opensky.auth_headers)
                         if cfg.track_origin else None)
-        self.metar = MetarSource(self.session, cfg.metar_station, self.issues) if cfg.metar else None
+        self.metars: dict[str, MetarSource] = {}       # je METAR-Station (metar_for)
         self.orbit = Orbit(self.db, self.session, self.issues) if cfg.iss else None
 
-        # Anzeige, für alle Panels gemeinsam
+        # Anzeige, für alle Panels gemeinsam, und je Flughafen (airfield_for)
         self.logos = make_logo_store(cfg, self.session, self.db)
         self.rare = load_rare(data, self.names)
-        self.airfield = Airfield(self.db)
+        self.airfields: dict[str, Airfield] = {}
 
         # Zustand
         self.started = time.time()
@@ -201,7 +201,7 @@ class App:
         self.adsblol_failing = False
         self.opensky_last_try = 0.0
         self.last_model_ok = 0.0                # letzter gelungener Abruf, für alle Panels
-        self.counters = {"polls": 0, "ok": 0, "adsblol": 0, "opensky": 0}
+        self.counters = {"polls": 0, "ok": 0, "fetches": 0, "adsblol": 0, "opensky": 0}
         self.refused = 0                        # Anfragen am LAN-Port, die web.lan_guard mit 421 abwies: nur die Zahl,
         self.refused_at = 0.0                   # und wann die letzte kam; der Host selbst wird nie gemerkt
         self.last_dream: dict | None = None     # was das letzte nächtliche Aufräumen getan hat
@@ -236,6 +236,36 @@ class App:
     def lan(self) -> Panel:
         """Das Panel am LAN-Port (LAN_PANEL): /panel/frame, die Vorschau, /stats und /idle auf :8080."""
         return self.panels[self.server_cfg.lan_panel]
+
+    def airfield_for(self, iata: str) -> Airfield | None:
+        """Der Flughafen eines Panels (Config.local_airport_iata), für alle Panels mit ihm derselbe; None ohne
+        Flughafen (AIRPORT=-). Der des Servers übernimmt einmalig die Landerichtung aus der Zeit mit einem
+        Flughafen für alle (Airfield legacy)."""
+        if not iata:
+            return None
+        af = self.airfields.get(iata)
+        if af is None:
+            af = self.airfields[iata] = Airfield(self.db, iata, legacy=iata == self.server_cfg.local_airport_iata)
+        return af
+
+    def metar_for(self, cfg: Config) -> MetarSource | None:
+        """Das Wetter eines Panels, je METAR-Station eines; None ohne Station oder mit METAR=0."""
+        if not cfg.metar or not cfg.metar_station:
+            return None
+        m = self.metars.get(cfg.metar_station)
+        if m is None:
+            m = self.metars[cfg.metar_station] = MetarSource(self.session, cfg.metar_station, self.issues)
+        return m
+
+    @property
+    def airfield(self) -> Airfield:
+        """Der Flughafen des Servers (.env), der des Panels am LAN-Port ohne eigenes AIRPORT."""
+        return self.airfield_for(self.server_cfg.local_airport_iata)
+
+    @property
+    def metar(self) -> MetarSource | None:
+        """Das Wetter am Flughafen des Servers."""
+        return self.metar_for(self.server_cfg)
 
     def _sync_panels(self) -> None:
         """Die Panels, wie sie in der Datenbank stehen. panels.py schreibt neben dem laufenden Server, und was es
@@ -325,9 +355,10 @@ class App:
     def opensky_interval(self) -> int:
         """Mindestabstand zwischen OpenSky-Abrufen: nie kürzer als POLL_INTERVAL, aber so lang, dass das
         Tagesbudget für alle Stunden reicht, in denen ein Panel abruft (außerhalb seiner Ruhezeit; anonym: 400
-        Credits -> rund alle 2,5 min). Wird es trotzdem knapp, doppelt so lang."""
+        Credits -> rund alle 2,5 min), je Region ein Abruf. Wird es trotzdem knapp, doppelt so lang."""
         budget = self.opensky.daily_credits
-        need = active_seconds([p.cfg for p in self.panels.values() if p.off is None]) / (budget * 0.95)
+        cfgs = [p.cfg for p in self.panels.values() if p.off is None]
+        need = sum(active_seconds(r) for r in regions(cfgs)) / (budget * 0.95)     # ein Abruf je Region
         interval = max(self.server_cfg.poll_interval, int(need + 0.999))
         rem = self.opensky.credits_remaining
         if rem is not None and rem < budget * 0.1:
@@ -382,12 +413,14 @@ class App:
             self.counters["ok"] += 1
         except Exception as e:
             self._note_poll_error(e)
-            self._age_models(active)
+            self._age_models(active, t0)
         return max(5, self.poll_interval() - (time.time() - t0))
 
     async def _poll(self, t0: float, active: list[Panel] | None = None) -> None:
-        """Ein Abruf für die Panels, die gerade nicht ruhen (ohne Angabe: alle solchen): Flugzeuge einmal holen,
-        je Panel das Modell bauen, einmal den Flughafen nachführen, je Panel die Statistik."""
+        """Die Panels, die gerade nicht ruhen (ohne Angabe: alle solchen), je Region (panel.regions) ein Abruf,
+        nacheinander: Flugzeuge holen, je Panel das Modell bauen, je Flughafen einmal nachführen, je Panel die
+        Statistik. Fällt der Abruf einer Region aus, altern nur ihre Panels (_age_models); nur wenn keine Region
+        gelang, gilt der Durchgang als gescheitert (poll_once)."""
         if active is None:
             active = [p for p in self.panels.values() if p.active(t0)]
         if not active:
@@ -395,34 +428,64 @@ class App:
         if self.server_cfg.mock:
             for p in active:
                 p.model = mock_model(p.cfg, seed=int(t0 // 20))
-            self.airfield.observe(active[0].model, t0)
+                p.last_ok = t0
+            self._observe_airfields(active, t0)
             for p in active:
                 p.stats.observe([], p.model, t0)
         else:
-            states = await self.fetch_states([p.cfg for p in active])
-            noted: set[str] = set()         # jede Auffälligkeit einmal je Abruf, nicht je Panel
-            for p in active:
-                p.model = await build_model(p.cfg, states, self.adsb, self.names, horizon_s=self.refresh_period(),
-                                            prev_course=self.airfield.landing_course, issues=self.issues,
-                                            adsbim=self.adsbim, origins=self.origins, source=self.active_source,
-                                            recent=self.airfield.recent, rare=self.rare, noted=noted)
-            self.airfield.observe(active[0].model, t0)     # Landefolge, Abflüge, Landerichtung: in jedem gleich
-            self.counters[self.active_source] += 1
-            for p in active:
-                p.model.last_airport_move = self.airfield.last_move
-                await self._observe(p, states, t0)
-            log.info("%s: %d empfangen. %s. Nächster Abruf in %d s", self.active_source, len(states),
-                     "; ".join(_seen(p) for p in active), self.poll_interval())
+            by_cfg = {id(p.cfg): p for p in active}
+            failed: list[Exception] = []
+            ok = 0
+            for cfgs in regions([p.cfg for p in active]):
+                group = [by_cfg[id(c)] for c in cfgs]
+                try:
+                    states = await self.fetch_states(cfgs)
+                except Exception as e:
+                    failed.append(e)
+                    self._note_poll_error(e)
+                    self._age_models(group, t0)
+                    continue
+                ok += 1
+                self.counters["fetches"] += 1
+                noted: set[str] = set()         # jede Auffälligkeit einmal je Abruf, nicht je Panel
+                for p in group:
+                    af = p.airfield
+                    p.model = await build_model(p.cfg, states, self.adsb, self.names,
+                                                horizon_s=self.refresh_period(),
+                                                prev_course=af.landing_course if af else None, issues=self.issues,
+                                                adsbim=self.adsbim, origins=self.origins, source=self.active_source,
+                                                recent=af.recent if af else None, rare=self.rare, noted=noted)
+                    p.last_ok = t0
+                self._observe_airfields(group, t0)
+                self.counters[self.active_source] += 1
+                for p in group:
+                    await self._observe(p, states, t0)
+                log.info("%s: %d empfangen. %s. Nächster Abruf in %d s", self.active_source, len(states),
+                         "; ".join(_seen(p) for p in group), self.poll_interval())
+            if failed and not ok:
+                raise failed[0]
         for p in active:
             for f in p.model.flights:
                 if f.kind == "airline":
                     self.logos.ensure(f.airline_iata, f.airline_icao)   # holt fehlende Logos im Hintergrund
 
-    def _age_models(self, panels: list[Panel]) -> None:
-        """Ohne frische Daten erst dimmen, dann leeren, in jedem Panel, das gerade abruft. Die Schwellen sind nie
-        kürzer als ein paar Abrufintervalle, sonst dimmt das Bild bei langsamem (anonymem) Abruf nach jedem
-        Fehlversuch. In /issues einmal, nicht je Panel."""
-        age = time.time() - self.last_model_ok
+    def _observe_airfields(self, panels: list[Panel], t0: float) -> None:
+        """Je Flughafen einmal nachführen (Landefolge, Abflüge, Landerichtung: in allen seinen Panels gleich) und
+        den Panels die letzte Bewegung am Platz mitgeben."""
+        seen: set[int] = set()
+        for p in panels:
+            af = p.airfield
+            if af is not None and id(af) not in seen:
+                seen.add(id(af))
+                af.observe(p.model, t0)
+        for p in panels:
+            p.model.last_airport_move = p.airfield.last_move if p.airfield else 0.0
+
+    def _age_models(self, panels: list[Panel], now: float | None = None) -> None:
+        """Ohne frische Daten erst dimmen, dann leeren, in jedem dieser Panels (die einer Region ohne Abruf, oder
+        alle). Die Schwellen sind nie kürzer als ein paar Abrufintervalle, sonst dimmt das Bild bei langsamem
+        (anonymem) Abruf nach jedem Fehlversuch. In /issues einmal, nicht je Panel."""
+        age = (now if now is not None else time.time()) - max((p.last_ok for p in panels), default=0.0)
         period = self.refresh_period()
         cfg = self.server_cfg
         if age > max(cfg.empty_after, 4 * period):
@@ -469,14 +532,15 @@ class App:
 
     # ---------------------------------------------------- Wetter, ISS, Platte --
     async def metar_loop(self) -> None:
-        """Alle 20 min das METAR, solange ein Panel abruft; ruhen alle, nur, solange noch keins da ist."""
+        """Alle 20 min das METAR jeder Station, deren Panel abruft; ruhen alle, nur, solange noch keins da ist."""
         while not self._stop.is_set():
             now = time.time()
-            if any(p.active(now) for p in self.panels.values()) or self.metar.current is None:
-                try:
-                    await self.metar.refresh()
-                except Exception as e:
-                    log.warning("METAR: %s", e)
+            for m in list(self.metars.values()):
+                if m.current is None or any(p.active(now) and p.metar is m for p in self.panels.values()):
+                    try:
+                        await m.refresh()
+                    except Exception as e:
+                        log.warning("METAR %s: %s", m.station, e)
             await asyncio.sleep(METAR_EVERY_S)
 
     async def astro_loop(self) -> None:
@@ -510,7 +574,8 @@ class App:
         with self.db.transaction():
             self.cache.save()
             self.issues.save()
-            self.airfield.save()
+            for af in self.airfields.values():
+                af.save()
             for p in self.panels.values():
                 if p.last_frame_fetch:
                     self.db.panel_seen(p.id, p.last_frame_fetch, p.diag)
@@ -592,6 +657,13 @@ class App:
                        f"({self.tls.stale}), siehe /issues")
         return out
 
+    def _regions_report(self, now: float) -> list[dict]:
+        """Für /health: die Regionen der Panels, die gerade abrufen, je eine mit ihren Panels und ihrem Umkreis."""
+        active = [p for p in self.panels.values() if p.active(now)]
+        by_cfg = {id(p.cfg): p.id for p in active}
+        return [{"key": cfgs[0].region_key, "panels": [by_cfg[id(c)] for c in cfgs],
+                 "fetch_km": round(fetch_circle(cfgs)[2])} for cfgs in regions([p.cfg for p in active])]
+
     def health(self) -> dict:
         """Für GET /health: Quellen, Logos, das Panel am LAN-Port (Modell, Anzeige, ESP32) und eine Zeile je Panel."""
         now = time.time()
@@ -617,6 +689,7 @@ class App:
                 "poll_interval_s": self.poll_interval(),
                 "adsblol_last_ok_age_s": round(now - self.adsblol.last_ok) if self.adsblol.last_ok else None,
                 "adsblol_last_error": self.adsblol.last_error,
+                "regions": self._regions_report(now),
             },
             "opensky": None if cfg.mock else {
                 "anonymous": self.opensky.anonymous,
@@ -632,11 +705,9 @@ class App:
             "issues": self.issues.report()["counts"],
             "dream": self.last_dream,
             "database": {"copy": self._copy_time(), "put_aside": self._asides()},
-            "metar": None if not self.metar else {
-                "age_s": self.metar.age_s(now),
-                "last_error": self.metar.last_error,
-                "raw": self.metar.current.raw if self.metar.current else None,
-            },
+            "metar": {st: {"age_s": m.age_s(now), "last_error": m.last_error,
+                           "raw": m.current.raw if m.current else None} for st, m in self.metars.items()} or None,
+            "airfields": {iata: af.report() for iata, af in self.airfields.items()},
             "iss": None if not self.orbit else {
                 "usable": self.orbit.usable(now),
                 "tle_fetched_age_h": (round((now - self.orbit.tle_fetched) / 3600, 1)
@@ -671,7 +742,7 @@ class App:
         await runner.setup()
         await web.TCPSite(runner, "0.0.0.0", cfg.http_port).start()
         loops = [self.poll_loop(), self.save_loop()]
-        if self.metar and not cfg.mock:
+        if cfg.metar and not cfg.mock:
             loops.append(self.metar_loop())
         if self.orbit and not cfg.mock:
             loops.append(self.astro_loop())

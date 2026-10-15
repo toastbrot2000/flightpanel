@@ -832,3 +832,57 @@ def test_only_the_lan_panels_esp32_counts_for_ok(tmp_path):
             await app.session.close()
 
     asyncio.run(run())
+
+
+ELTERN = {"AIRPORT": "FMM", "RUNWAY": "240", "HOME_LAT": "48.09", "HOME_LON": "9.83", "RADIUS_KM": "40"}
+
+
+def test_two_regions_mean_two_fetches_and_their_own_airfield(tmp_path):
+    """Ein Panel in Biberach mit Flughafen FMM: ein eigener Abruf um sein Fenster (nicht ein Kreis über Berlin und
+    Biberach), eine eigene Landerichtung und ein eigenes METAR; fällt sein Abruf aus, bleibt Berlin frisch."""
+    shutil.copy(os.path.join(DATA, "airports.json"), tmp_path)
+    panel_rows(tmp_path, eltern=ELTERN)
+    cfg = make_cfg(data_dir=str(tmp_path), metar=True, iss=False, logo_fetch=False, quiet_hours=(0, 0),
+                   route_adsbim=False, track_origin=False)
+    calls = []
+    fail = set()
+
+    async def fetch(lat, lon, radius_km):
+        calls.append((round(lat, 2), round(lon, 2), radius_km))
+        if lat < 50 and "south" in fail:
+            raise RuntimeError("adsb.lol: 503")
+        return []
+
+    async def no_opensky(*a):
+        raise RuntimeError("OpenSky: 503")
+
+    async def run():
+        app = App(cfg, env={})
+        try:
+            app.adsb = FakeAdsb()
+            app.adsblol.fetch = fetch
+            app.opensky.fetch = no_opensky
+            eltern, home = app.panels["eltern"], app.lan
+            assert eltern.off is None and eltern.cfg.local_airport_iata == "FMM"
+            assert eltern.airfield is not home.airfield and eltern.airfield.key == "course:FMM"
+            assert home.airfield is app.airfield and home.airfield.key == "course:BER"
+            assert eltern.metar.station == "EDJA" and home.metar.station == "EDDB" and app.metar is home.metar
+            t = time.time()
+            await app.poll_once(t)
+            assert len(calls) == 2 and calls[0][:2] == (round(home.cfg.home_lat, 2), round(home.cfg.home_lon, 2))
+            assert calls[1] == (48.09, 9.83, 40) and app.counters["fetches"] == 2
+            assert not home.model.stale and not eltern.model.stale
+            health = app.health()
+            assert set(health["metar"]) == {"EDDB", "EDJA"} and set(health["airfields"]) == {"BER", "FMM"}
+            assert [r["key"] for r in health["source"]["regions"]] == ["BER", "FMM"]
+            assert health["panels"]["eltern"]["airport"] == "FMM" and health["panels"]["home"]["airport"] == "BER"
+            fail.add("south")
+            app.server_cfg = replace(app.server_cfg, stale_after=0, empty_after=0)   # sofort altern
+            await app.poll_once(t + 2000)      # weit genug: ohne adsb.lol gelten die OpenSky-Abstände
+            assert len(calls) == 4 and not home.model.stale and eltern.model.stale    # nur Biberach dimmt
+            assert app.last_model_ok == t + 2000 and app.counters["ok"] == 2
+            assert app.opensky_interval() >= 2 * App(replace(cfg, data_dir=str(tmp_path)), env={}).poll_interval()
+        finally:
+            await app.session.close()
+
+    asyncio.run(run())

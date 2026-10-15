@@ -1,13 +1,15 @@
 """Ein Panel: ein Fenster mit seinem LED-Panel. Der Server bedient mehrere mit einem Abruf (main.App).
 
-Gemeinsam haben alle Panels die Flugdaten (ein Abruf in einem Umkreis um alle: fetch_circle, union_bbox), Routen,
-Wetter, Logos, die Bahndaten der ISS und was am Flughafen geschieht (airfield.py). Jedes Panel hat seine
-Einstellungen (Config.for_panel aus der Datenbank, gesetzt mit panels.py), sein Display-Modell, seinen Renderer und
-seine Leerlauf-Karten, seine Statistik und sein Album (stats.py) und die ISS-Überflüge über seinem Fenster
-(astro.Iss). Das Panel am LAN-Port (LAN_PANEL) ist eines davon; weitere legt panels add an.
+Gemeinsam haben alle Panels Routen, Logos und die Bahndaten der ISS. Die Flugdaten teilen sich die Panels einer
+Region (regions: derselbe Flughafen, oder nah genug beieinander), ein Abruf je Region in einem Umkreis um ihre
+Fenster (fetch_circle, union_bbox); das Wetter und was am Flughafen geschieht (airfield.py) gelten je Flughafen
+(App.metar_for, App.airfield_for). Jedes Panel hat seine Einstellungen (Config.for_panel aus der Datenbank, gesetzt
+mit panels.py), sein Display-Modell, seinen Renderer und seine Leerlauf-Karten, seine Statistik und sein Album
+(stats.py) und die ISS-Überflüge über seinem Fenster (astro.Iss). Das Panel am LAN-Port (LAN_PANEL) ist eines
+davon; weitere legt panels add an.
 
 Ein Panel ruht in seiner Ruhezeit (QUIET_HOURS) und wenn es aus ist: Ein weiteres Panel, dessen Fenster weiter als
-PANEL_MAX_KM vom Flughafen liegt (config.too_far), ruft nicht ab, statt den Abruf für alle zu vergrößern.
+PANEL_MAX_KM von seinem Flughafen liegt (config.too_far), ruft nicht ab, statt den Abruf für alle zu vergrößern.
 
 Sein ESP32 holt das Bild über web.py (/panel/frame): Panel.fetched zählt die Abrufe, meldet Lücken in /issues und
 merkt sich die Diagnose, die es dabei schickt (vier Zahlen, web.parse_diag). Firmware bekommt es aus seinem Kanal
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
     from .main import App
 
 MAX_FETCH_KM = 250 * 1.852      # adsb.lol liefert höchstens 250 nm um einen Punkt
+REGION_MERGE_KM = 150           # Panels verschiedener Flughäfen teilen sich einen Abruf, wenn er so klein bleibt
 DAY_MIN = 24 * 60
 ESP32_GAP_S = 30                # so lange ohne Abruf des Bildes: eine Lücke in /issues (esp32_gap)
 
@@ -49,6 +52,25 @@ def union_bbox(cfgs: list[Config]) -> tuple[float, float, float, float]:
     return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
+def regions(cfgs: list[Config]) -> list[list[Config]]:
+    """Wer sich einen Abruf teilt: Panels mit demselben region_key (Flughafen, sonst Fenster) immer; verschiedene
+    Gruppen werden zusammengelegt, solange der gemeinsame Abruf (fetch_circle) höchstens REGION_MERGE_KM weit
+    reicht. So bleibt Berlin ein Abruf, ein Panel 500 km weiter ein eigener, und nie zieht einer einen Kreis über
+    beides. Reihenfolge wie cfgs."""
+    groups: dict[str, list[Config]] = {}
+    for c in cfgs:
+        groups.setdefault(c.region_key, []).append(c)
+    out: list[list[Config]] = []
+    for g in groups.values():
+        for o in out:
+            if fetch_circle(o + g)[2] <= REGION_MERGE_KM:
+                o.extend(g)
+                break
+        else:
+            out.append(list(g))
+    return out
+
+
 def active_seconds(cfgs: list[Config]) -> int:
     """Sekunden pro Tag, in denen mindestens eines dieser Panels abruft (außerhalb seiner Ruhezeit): So lange muss
     das OpenSky-Budget reichen. Minute für Minute gezählt, Ruhezeiten über Mitternacht gehen auch."""
@@ -64,15 +86,19 @@ def fw_channel(stored) -> str:
 class Panel:
     def __init__(self, app: "App", pid: str, cfg: Config, created: float = 0.0, updated: float = 0.0,
                  off: str | None = None, channel: str = "stable"):
-        """app: was alle Panels teilen (db, names, rare, logos, metar, orbit, airfield). created und updated: die
-        Zeitstempel seiner Zeile in der Datenbank, an denen main.App Änderungen erkennt. off: warum es nicht
-        abruft (config.too_far), sonst None. channel: sein Firmware-Kanal (fw_channel)."""
+        """app: was alle Panels teilen (db, names, rare, logos, orbit) und je Flughafen (metar_for, airfield_for).
+        created und updated: die Zeitstempel seiner Zeile in der Datenbank, an denen main.App Änderungen erkennt.
+        off: warum es nicht abruft (config.too_far), sonst None. channel: sein Firmware-Kanal (fw_channel)."""
         self.app = app
         self.id = pid
         self.created = created
         self.stats = Stats(app.db, pid, cfg, app.names, app.rare)
         self.iss = Iss(cfg, app.orbit) if app.orbit is not None else None
-        self.model = DisplayModel(empty=True, source="startup", landing_course=app.airfield.landing_course)
+        self.airfield = app.airfield_for(cfg.local_airport_iata)
+        self.metar = app.metar_for(cfg)
+        self.last_ok = 0.0              # letzter gelungener Abruf seiner Region (main.App._poll, _age_models)
+        self.model = DisplayModel(empty=True, source="startup",
+                                  landing_course=self.airfield.landing_course if self.airfield else None)
         self.renderer: Renderer | None = None
         self.last_frame_fetch = 0.0     # setzt fetched() bei jedem Abruf des Bildes
         self.frame_count = 0
@@ -89,8 +115,10 @@ class Panel:
         if self.iss is not None:
             self.iss.cfg, self.iss.passes_at = cfg, 0
         app = self.app
-        self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=app.metar, astro=self.iss, logos=app.logos,
-                               names=app.names, airfield=app.airfield)
+        self.airfield = app.airfield_for(cfg.local_airport_iata)    # der Flughafen kann gewechselt haben
+        self.metar = app.metar_for(cfg)
+        self.idle = IdleScreen(cfg, CARDS, stats=self.stats, metar=self.metar, astro=self.iss, logos=app.logos,
+                               names=app.names, airfield=self.airfield)
         self.renderer = Renderer(cfg, app.logos, idle=self.idle,
                                  rotation=self.renderer.rotation if self.renderer is not None else None)
 
@@ -125,5 +153,6 @@ class Panel:
         age = now - self.last_frame_fetch if self.last_frame_fetch else None
         return {"flights": len(self.model.flights), "model_stale": self.model.stale,
                 "brightness_now": self.renderer.brightness(now), "off": self.off,
+                "airport": self.cfg.local_airport_iata or "-", "region": self.cfg.region_key,
                 "esp32": {"last_fetch_age_s": round(age) if age is not None else None, "fetches": self.frame_count,
                           "alive": age is not None and age < 300, "diag": dict(self.diag)}}

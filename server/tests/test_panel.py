@@ -38,3 +38,22 @@ def test_the_fetch_runs_while_any_panel_is_awake():
     assert active_seconds([early]) == 16 * 3600
     assert active_seconds([early, late]) == 18 * 3600                  # alle dunkel nur 00:00-06:00
     assert active_seconds([early, owl]) == 24 * 3600
+
+
+def test_regions_share_a_fetch_only_when_it_stays_small():
+    """Regionen: Panels mit demselben Flughafen holen gemeinsam; andere kommen dazu, solange der gemeinsame Abruf
+    höchstens REGION_MERGE_KM reicht. Berlin bleibt ein Abruf, Biberach (500 km weiter) ein eigener."""
+    from flightpanel.config import Config
+    from flightpanel.panel import REGION_MERGE_KM, regions
+    server = Config.from_env({"DATA_DIR": "../data"})
+    home = Config.for_panel(server, {})
+    anna = Config.for_panel(server, {"HOME_LAT": "52.40", "HOME_LON": "14.05", "RADIUS_KM": "10"})
+    eltern = Config.for_panel(server, {"AIRPORT": "FMM", "RUNWAY": "240", "HOME_LAT": "48.09", "HOME_LON": "9.83"})
+    see = Config.for_panel(server, {"AIRPORT": "FDH", "RUNWAY": "240", "HOME_LAT": "47.70", "HOME_LON": "9.60"})
+    wald = Config.for_panel(server, {"AIRPORT": "-", "HOME_LAT": "48.00", "HOME_LON": "9.90"})
+    assert regions([home]) == [[home]]
+    assert regions([home, anna]) == [[home, anna]]
+    assert regions([home, anna, eltern]) == [[home, anna], [eltern]]
+    south = regions([eltern, see, wald])                                   # FMM, FDH und ohne: nah beieinander
+    assert len(south) == 1 and fetch_circle(south[0])[2] <= REGION_MERGE_KM
+    assert len(regions([home, eltern, see, wald, anna])) == 2

@@ -92,3 +92,24 @@ def test_report_shows_the_course_like_stats_did(tmp_path):
     assert af.report() == {"now": None, "prev": None, "since": None}
     af.observe(DisplayModel(landing_course=249, course_votes=2), ts(2026, 10, 10, 12, 0))
     assert af.report() == {"now": 249, "prev": None, "since": "2026-10-10 12:00"}
+
+
+def test_each_airport_has_its_own_course_and_the_old_key_is_taken_over_once(tmp_path):
+    """Regionen: je Flughafen ein Airfield mit Schlüssel course:<IATA>; der alte Schlüssel "course" (ein Flughafen
+    für alle) wird einmalig für den Flughafen des Servers übernommen und beim Speichern unter dem neuen abgelegt."""
+    db = make_db(tmp_path)
+    t = ts(2026, 10, 10, 12, 0)
+    db.state_set("course", {"now": 249, "prev": None, "since": t, "seen": t})
+    ber = Airfield(db, "BER", legacy=True)
+    assert ber.course == 249 and ber.key == "course:BER" and ber.dirty            # übernommen, noch nicht geschrieben
+    fmm = Airfield(db, "FMM", legacy=False)
+    assert fmm.course is None and fmm.key == "course:FMM"
+    fmm.observe(DisplayModel(landing_course=240, course_votes=2), t)
+    with db.transaction():
+        ber.save()
+        fmm.save()
+    assert db.state_get("course:BER")["now"] == 249 and db.state_get("course:FMM")["now"] == 240
+    assert Airfield(db, "BER", legacy=True).course == 249 and Airfield(db, "FMM").course == 240
+    db.state_set("course", {"now": 69, "prev": None, "since": t, "seen": t})       # alt geändert: zählt nicht mehr
+    assert Airfield(db, "BER", legacy=True).course == 249
+    assert Airfield(db).key == "course"                                            # ohne Flughafen wie bisher

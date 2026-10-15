@@ -1,12 +1,14 @@
-"""Was am Heimatflughafen über Abrufe hinweg gilt, für alle Panels gleich. main.App hält eines und rechnet jeden
-Abruf einmal ein (observe): Landefolge, Abflüge und Landerichtung hängen nur vom Flughafen ab, nicht vom Fenster.
+"""Was an einem Flughafen über Abrufe hinweg gilt, für alle Panels mit diesem Flughafen gleich. main.App hält eines
+je Flughafen (airfield_for) und rechnet jeden Abruf einmal ein (observe): Landefolge, Abflüge und Landerichtung
+hängen nur vom Flughafen ab, nicht vom Fenster.
 
   recent          wer in den letzten Minuten hier landete oder startete (airport.Recent), für build_model
   landing_course  Landerichtung des letzten Abrufs, Startwert für den nächsten (build_model prev_course)
   course          bestätigte Landerichtung für die Pistenkarten (cards/runway.py): Ein Wechsel gilt erst nach
                   COURSE_CONFIRM Abrufen in Folge. Dazu die vorige, seit wann sie gilt (course_since) und wann
-                  Verkehr sie zuletzt bestätigt hat (course_seen). Liegt in der Datenbank (state "course") und
-                  übersteht Neustarts; nach einem Neustart ist sie auch der erste Startwert.
+                  Verkehr sie zuletzt bestätigt hat (course_seen). Liegt in der Datenbank (state "course:<IATA>";
+                  aus der Zeit mit einem Flughafen für alle "course", einmalig übernommen) und übersteht Neustarts;
+                  nach einem Neustart ist sie auch der erste Startwert.
   last_move       letzter Start oder letzte Landung am Platz (idle.Ctx.quiet: erst danach Spielereien)"""
 
 import logging
@@ -32,8 +34,11 @@ def _usable(c) -> bool:
 
 
 class Airfield:
-    def __init__(self, db: Db):
+    def __init__(self, db: Db, iata: str = "", legacy: bool = False):
+        """iata: der Flughafen, Schlüssel course:<IATA> in der Datenbank (ohne: "course", wie früher). legacy: fehlt
+        der eigene Schlüssel, den alten "course" einmalig übernehmen; das gilt für den Flughafen des Servers."""
         self.db = db
+        self.key = f"course:{iata}" if iata else "course"
         self.recent = Recent()
         self.last_move = 0.0
         self.course: float | None = None
@@ -42,7 +47,10 @@ class Airfield:
         self.course_seen = 0.0
         self._pending: tuple[float, int] | None = None
         self.dirty = False
-        c = db.state_get("course")
+        c = db.state_get(self.key)
+        if c is None and legacy and self.key != "course":
+            c = db.state_get("course")
+            self.dirty = c is not None          # beim nächsten Speichern unter dem eigenen Schlüssel
         if c is not None and not _usable(c):
             log.warning("Gespeicherte Landerichtung unbrauchbar (%s), beginne ohne", c)
         elif c is not None:
@@ -99,7 +107,7 @@ class Airfield:
         synchron)."""
         if not self.dirty:
             return
-        self.db.state_set("course", {"now": self.course, "prev": self.prev_course, "since": self.course_since,
+        self.db.state_set(self.key, {"now": self.course, "prev": self.prev_course, "since": self.course_since,
                                      "seen": self.course_seen})
         self.db.after_commit(self._saved)
 
