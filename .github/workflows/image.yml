@@ -1,0 +1,51 @@
+# Image: baut den Server wie server.yml, testet ihn darin und veröffentlicht ihn nur dann auf GHCR
+# (ghcr.io/<owner>/flightpanel:<commit> und :main). Der Homelab-Cluster zieht das Image von dort,
+# jeder Knoten kann es also starten (Failover ohne eigene Registry je Knoten).
+# Kein fremder Action-Code mit Schreibrechten: nur checkout (gepinnt) und die docker-CLI des Runners.
+name: image
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["firmware/**", "docs/**", "**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Container bauen
+        run: >
+          docker build -t flightpanel
+          --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}"
+          --label "org.opencontainers.image.revision=${{ github.sha }}"
+          server
+      - name: Lint und Tests im Container
+        # Als root: Das Image läuft ohne Rechte (uid 1000) und dürfte die Entwicklungspakete sonst nicht installieren.
+        run: >
+          docker run --rm --user root -v "$PWD:/repo" -w /repo flightpanel sh -c
+          "pip install -q --root-user-action=ignore --require-hashes -r server/requirements-dev.lock
+          && ruff check . && python -m pytest -p no:cacheprovider"
+      - name: Auf GHCR veröffentlichen
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')/flightpanel"
+          tag=$(git rev-parse --short=7 HEAD)
+          echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for t in "$tag" main; do docker tag flightpanel "$image:$t" && docker push -q "$image:$t"; done
+          docker logout ghcr.io
+          echo "### $image:$tag" >> "$GITHUB_STEP_SUMMARY"
