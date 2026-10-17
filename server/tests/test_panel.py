@@ -3,7 +3,7 @@ Panel genau wie bisher."""
 
 from dataclasses import replace
 
-from conftest import make_cfg
+from conftest import DATA, make_cfg
 from flightpanel.geo import haversine_km
 from flightpanel.panel import MAX_FETCH_KM, active_seconds, fetch_circle, union_bbox
 
@@ -45,7 +45,7 @@ def test_regions_share_a_fetch_only_when_it_stays_small():
     höchstens REGION_MERGE_KM reicht. Berlin bleibt ein Abruf, Biberach (500 km weiter) ein eigener."""
     from flightpanel.config import Config
     from flightpanel.panel import REGION_MERGE_KM, regions
-    server = Config.from_env({"DATA_DIR": "../data"})
+    server = Config.from_env({"DATA_DIR": DATA})
     home = Config.for_panel(server, {})
     anna = Config.for_panel(server, {"HOME_LAT": "52.40", "HOME_LON": "14.05", "RADIUS_KM": "10"})
     eltern = Config.for_panel(server, {"AIRPORT": "FMM", "RUNWAY": "240", "HOME_LAT": "48.09", "HOME_LON": "9.83"})
